@@ -115,6 +115,15 @@ Target_Control_Handle *TargetHandler()
 		    sizeof("BMC_PLTRST_B"));
 	state->gpios[BMC_PLTRST_B].direction = GPIO_DIRECTION_IN;
 	state->gpios[BMC_PLTRST_B].edge = GPIO_EDGE_BOTH;
+	// TODO: Remove this when we can share the pin or the Peci WA has been
+	// removed (file://0071-peci-add-a-temporary-workaround.patch)
+	// Open BMC team recently added a workaround for ICX where BMC cannot
+	// communicate over PECI while the PLTRST is asserted. In the WA PECI
+	// driver claims this pin and handle it to WA the issue, as a side effect
+	// no one else can export the gpio 46(BMC_PLTRST_B).
+	// We are going to fake initialization to avoid GPIO setup by telling
+	// target handler that this pin will be handled by DBUS.
+	state->gpios[BMC_PLTRST_B].type = PIN_DBUS;
 
 	strcpy_safe(state->gpios[BMC_SYSPWROK].name,
 		    sizeof(state->gpios[BMC_SYSPWROK].name), "BMC_SYSPWROK",

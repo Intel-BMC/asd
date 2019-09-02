@@ -37,6 +37,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <poll.h>
 
 #define POLL_GPIO (POLLPRI + POLLERR)
+#define CHIP_BUFFER_SIZE 32
 
 typedef enum {
 	READ_TYPE_MIN = -1,
@@ -97,7 +98,7 @@ typedef struct pollfd target_fdarr_t[NUM_GPIOS + NUM_DBUS_FDS];
 
 typedef STATUS (*TargetHandlerEventFunctionPtr)(void *, ASD_EVENT *);
 
-typedef enum { PIN_GPIO, PIN_DBUS } Pin_Type;
+typedef enum { PIN_GPIO, PIN_DBUS, PIN_GPIOD } Pin_Type;
 
 typedef struct Target_Control_GPIO {
 	char name[20];
@@ -106,6 +107,8 @@ typedef struct Target_Control_GPIO {
 	int fd;
 	GPIO_DIRECTION direction;
 	GPIO_EDGE edge;
+	struct gpiod_line *line;
+	struct gpiod_chip *chip;
 	bool active_low;
 	Pin_Type type;
 } Target_Control_GPIO;
@@ -133,6 +136,5 @@ STATUS target_event(Target_Control_Handle *state, struct pollfd poll_fd,
 STATUS target_wait_sync(Target_Control_Handle *state, uint16_t timeout,
 			uint16_t delay);
 STATUS on_power_event(Target_Control_Handle *state, ASD_EVENT *event);
-STATUS initialize_powergood_pin_handler(Target_Control_Handle *state,
-					Pin_Type PinType);
+STATUS initialize_powergood_pin_handler(Target_Control_Handle *state);
 #endif // _TARGET_CONTROL_HANDLER_H_

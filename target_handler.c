@@ -195,6 +195,7 @@ STATUS target_initialize(Target_Control_Handle *state)
 {
 	STATUS result;
 	int value = 0;
+	int rv = 0;
 	if (state == NULL || state->initialized)
 		return ST_ERR;
 
@@ -215,7 +216,15 @@ STATUS target_initialize(Target_Control_Handle *state)
 
 	// specifically drive debug enable to assert
 	if (result == ST_OK) {
-		result = gpio_set_value(state->gpios[BMC_DEBUG_EN_N].fd, 1);
+		if (state->gpios[BMC_DEBUG_EN_N].type == PIN_GPIO) {
+			result = gpio_set_value(state->gpios[BMC_DEBUG_EN_N].fd, 1);
+		} else if (state->gpios[BMC_DEBUG_EN_N].type == PIN_GPIOD) {
+			rv = gpiod_line_set_value(state->gpios[BMC_DEBUG_EN_N].line,1);
+			if(rv == 0)
+				result = ST_OK;
+			else
+				result = ST_ERR;
+		}
 		if (result != ST_OK) {
 			ASD_log(ASD_LogLevel_Error, stream, option,
 				"Failed to assert debug enable");
@@ -666,6 +675,7 @@ STATUS on_platform_reset_event(Target_Control_Handle *state, ASD_EVENT *event)
 {
 	STATUS result;
 	int value;
+	int rv = 0;
 
 	result = gpio_get_value(state->gpios[BMC_PLTRST_B].fd, &value);
 	if (result != ST_OK) {
@@ -683,7 +693,15 @@ STATUS on_platform_reset_event(Target_Control_Handle *state, ASD_EVENT *event)
 				"ResetBreak detected PLT_RESET "
 				"assert, asserting PREQ");
 #endif
-			result = gpio_set_value(state->gpios[BMC_PREQ_N].fd, 1);
+			if (state->gpios[BMC_PREQ_N].type == PIN_GPIO) {
+				result = gpio_set_value(state->gpios[BMC_PREQ_N].fd, 1);
+			} else if (state->gpios[BMC_PREQ_N].type == PIN_GPIOD) {
+				rv = gpiod_line_set_value(state->gpios[BMC_PREQ_N].line,1);
+				if(rv == 0)
+					result = ST_OK;
+				else
+					result = ST_ERR;
+			}
 			if (result != ST_OK) {
 				ASD_log(ASD_LogLevel_Error, stream, option,
 					"Failed to assert PREQ");
@@ -703,6 +721,7 @@ STATUS on_platform_reset_event(Target_Control_Handle *state, ASD_EVENT *event)
 STATUS on_prdy_event(Target_Control_Handle *state, ASD_EVENT *event)
 {
 	STATUS result = ST_OK;
+	int rv = 0;
 
 #ifdef ENABLE_DEBUG_LOGGING
 	ASD_log(ASD_LogLevel_Debug, stream, option,
@@ -714,7 +733,15 @@ STATUS on_prdy_event(Target_Control_Handle *state, ASD_EVENT *event)
 		ASD_log(ASD_LogLevel_Debug, stream, option,
 			"BreakAll detected PRDY, asserting PREQ");
 #endif
-		result = gpio_set_value(state->gpios[BMC_PREQ_N].fd, 1);
+		if (state->gpios[BMC_PREQ_N].type == PIN_GPIO) {
+			result = gpio_set_value(state->gpios[BMC_PREQ_N].fd, 1);
+		} else if (state->gpios[BMC_PREQ_N].type == PIN_GPIOD) {
+			rv = gpiod_line_set_value(state->gpios[BMC_PREQ_N].line,1);
+			if(rv == 0)
+				result = ST_OK;
+			else
+				result = ST_ERR;
+		}
 		if (result != ST_OK) {
 			ASD_log(ASD_LogLevel_Error, stream, option,
 				"Failed to assert PREQ");
@@ -724,7 +751,15 @@ STATUS on_prdy_event(Target_Control_Handle *state, ASD_EVENT *event)
 			ASD_log(ASD_LogLevel_Debug, stream, option,
 				"CPU_PRDY, de-asserting PREQ");
 #endif
-			result = gpio_set_value(state->gpios[BMC_PREQ_N].fd, 0);
+			if (state->gpios[BMC_PREQ_N].type == PIN_GPIO) {
+				result = gpio_set_value(state->gpios[BMC_PREQ_N].fd, 0);
+			} else if (state->gpios[BMC_PREQ_N].type == PIN_GPIOD) {
+				rv = gpiod_line_set_value(state->gpios[BMC_PREQ_N].line,0);
+				if(rv == 0)
+					result = ST_OK;
+				else
+					result = ST_ERR;
+			}
 			if (result != ST_OK) {
 				ASD_log(ASD_LogLevel_Error, stream, option,
 					"Failed to deassert PREQ");
@@ -755,6 +790,7 @@ STATUS target_write(Target_Control_Handle *state, const Pin pin,
 	STATUS result = ST_OK;
 	Target_Control_GPIO gpio;
 	int value;
+	int rv = 0;
 	if (state == NULL || !state->initialized) {
 		ASD_log(ASD_LogLevel_Error, stream, option,
 			"target_write, null or uninitialized state");
@@ -770,7 +806,15 @@ STATUS target_write(Target_Control_Handle *state, const Pin pin,
 			ASD_log(ASD_LogLevel_Debug, stream, option,
 				"Reset break armed, asserting PREQ");
 #endif
-			result = gpio_set_value(state->gpios[BMC_PREQ_N].fd, 1);
+			if (state->gpios[BMC_PREQ_N].type == PIN_GPIO) {
+				result = gpio_set_value(state->gpios[BMC_PREQ_N].fd, 1);
+			} else if (state->gpios[BMC_PREQ_N].type == PIN_GPIOD){
+				rv = gpiod_line_set_value(state->gpios[BMC_PREQ_N].line,1);
+				if(rv == 0)
+					result = ST_OK;
+				else
+					result = ST_ERR;
+			}
 			if (result != ST_OK) {
 				ASD_log(ASD_LogLevel_Error, stream, option,
 					"Assert PREQ for ResetBreak failed.");
@@ -790,8 +834,16 @@ STATUS target_write(Target_Control_Handle *state, const Pin pin,
 				ASD_log(ASD_LogLevel_Debug, stream, option,
 					"Reset break armed, asserting PREQ");
 #endif
-				result = gpio_set_value(
-					state->gpios[BMC_PREQ_N].fd, 1);
+				if (state->gpios[BMC_PREQ_N].type == PIN_GPIO) {
+					result = gpio_set_value(
+						state->gpios[BMC_PREQ_N].fd, 1);
+				} else if (state->gpios[BMC_PREQ_N].type == PIN_GPIOD){
+					rv = gpiod_line_set_value(state->gpios[BMC_PREQ_N].line, 1);
+					if(rv == 0)
+						result = ST_OK;
+					else
+						result = ST_ERR;
+				}
 				if (result != ST_OK) {
 					ASD_log(ASD_LogLevel_Error, stream,
 						option,
@@ -834,7 +886,15 @@ STATUS target_write(Target_Control_Handle *state, const Pin pin,
 		ASD_log(ASD_LogLevel_Info, stream, option,
 			"Pin Write: %s %s %d", assert ? "assert" : "deassert",
 			gpio.name, gpio.number);
-		result = gpio_set_value(gpio.fd, (uint8_t)(assert ? 1 : 0));
+		if (gpio.type == PIN_GPIO) {
+			result = gpio_set_value(gpio.fd, (uint8_t)(assert ? 1 : 0));
+		} else if (gpio.type == PIN_GPIOD) {
+			rv = gpiod_line_set_value(gpio.line, (assert ? 1 : 0));
+			if(rv == 0)
+				result = ST_OK;
+			else
+				result = ST_ERR;
+		}
 		if (result != ST_OK) {
 			ASD_log(ASD_LogLevel_Error, stream, option,
 				"Failed to set %s %s %d",

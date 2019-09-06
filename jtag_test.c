@@ -26,6 +26,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
 #include <fcntl.h>
+#include <unistd.h>
 #include <getopt.h>
 #include <signal.h>
 #include <stdarg.h>

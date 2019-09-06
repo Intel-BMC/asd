@@ -189,9 +189,12 @@ void expect_getpeername_check_fd(int result, int fd)
 
 Session SESSION;
 Session *SESSION_INIT_RESULT = &SESSION;
+bool SESSION_INIT_MALLOC = false;
 Session *__wrap_session_init(ExtNet *extnet)
 {
 	check_expected_ptr(extnet);
+	if(SESSION_INIT_MALLOC)
+		return (Session *) __real_malloc(sizeof(Session));
 	return SESSION_INIT_RESULT;
 }
 
@@ -479,12 +482,15 @@ void expect_asd_msg_event(STATUS result)
 
 ExtNet EXTNET;
 ExtNet *FAKE_EXTNET_INIT_RESULT = &EXTNET;
+bool EXTNET_INIT_MALLOC = false;
 ExtNet *__wrap_extnet_init(extnet_hdlr_type_t eType, void *p_hdlr_data,
 			   int n_max_sessions)
 {
 	check_expected(eType);
 	check_expected_ptr(p_hdlr_data);
 	check_expected(n_max_sessions);
+	if(EXTNET_INIT_MALLOC)
+	    return (ExtNet *) __real_malloc(sizeof(ExtNet));
 	return FAKE_EXTNET_INIT_RESULT;
 }
 
@@ -783,12 +789,16 @@ void asd_main_process_command_line_request_processing_failure_test(void **state)
 	optind = 1;
 	char *argv[] = {"blah"};
 
+	SESSION_INIT_MALLOC = true;
+	EXTNET_INIT_MALLOC = true;
 	expect_default_ASD_initialize_log_settings();
 	expect_asd_init();
 	expect_session_getfds(ST_ERR, 0);
 	expect_any(__wrap_session_close_all, state);
 
 	assert_int_equal(asd_main(1, (char **)&argv), 1);
+	SESSION_INIT_MALLOC = false;
+	EXTNET_INIT_MALLOC = false;
 }
 
 void process_command_line_sets_defaults_test(void **state)

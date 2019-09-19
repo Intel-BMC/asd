@@ -113,23 +113,39 @@ STATUS __wrap_gpio_unexport(int gpio)
 	return GPIO_UNEXPORT_RESULT[GPIO_UNEXPORT_RESULT_INDEX++];
 }
 
-int GPIO_SET_VALUE_INDEX = 0;
-STATUS GPIO_SET_VALUE_RESULT[20];
+#define MAX_GPIO_ITERATIONS 20
+unsigned int GPIO_SET_VALUE_INDEX = 0;
+STATUS GPIO_SET_VALUE_RESULT[MAX_GPIO_ITERATIONS];
 STATUS __wrap_gpio_set_value(int fd, int value)
 {
 	check_expected(fd);
 	check_expected(value);
+	if(GPIO_SET_VALUE_INDEX >= MAX_GPIO_ITERATIONS) {
+		GPIO_SET_VALUE_INDEX = 0;
+	}
 	return GPIO_SET_VALUE_RESULT[GPIO_SET_VALUE_INDEX++];
 }
 
 STATUS GPIO_GET_VALUE_RESULT = ST_OK;
-int GPIO_GET_VALUE_VALUE = 0;
+unsigned int GPIO_GET_VALUE_VALUE = 0;
+bool GPIO_GET_VALUE_CHUNK = false;
+int GPIO_GET_VALUE_INDEX = 0;
+STATUS GPIO_GET_VALUE_RESULTS[MAX_GPIO_ITERATIONS] = { ST_OK } ;
+int GPIO_GET_VALUE_VALUES[MAX_GPIO_ITERATIONS] = { 0 };
 STATUS __wrap_gpio_get_value(int fd, int *value)
 {
 	check_expected(fd);
 	check_expected_ptr(value);
-	*value = GPIO_GET_VALUE_VALUE;
-	return GPIO_GET_VALUE_RESULT;
+	if(GPIO_GET_VALUE_CHUNK == false) {
+		*value = GPIO_GET_VALUE_VALUE;
+		return GPIO_GET_VALUE_RESULT;
+	} else {
+		if(GPIO_GET_VALUE_INDEX >= MAX_GPIO_ITERATIONS) {
+			GPIO_GET_VALUE_INDEX = 0;
+		}
+		*value = GPIO_GET_VALUE_VALUES[GPIO_GET_VALUE_INDEX];
+		return GPIO_GET_VALUE_RESULTS[GPIO_GET_VALUE_INDEX++];
+	}
 }
 
 STATUS GPIO_SET_DIRECTION_RESULT = ST_OK;
@@ -236,6 +252,7 @@ static int setup(void **state)
 	Target_Control_Handle *handle = TargetHandler();
 	malloc_fail = false;
 	handle->gpios[BMC_CPU_PWRGD].type = PIN_GPIO;
+	handle->gpios[BMC_PLTRST_B].type = PIN_GPIO;
 	DBUS_HANDLE = &DBUS;
 	// handle = TargetHandler();
 	if (handle != NULL) {
@@ -344,7 +361,9 @@ void target_initialize_gpio_export_failure_test(void **state)
 	(void)state; /* unused */
 	DBUS_HANDLE = &DBUS;
 	Target_Control_Handle *handle = TargetHandler();
+	assert_non_null(handle);
 	handle->gpios[BMC_CPU_PWRGD].type = PIN_GPIO;
+	handle->gpios[BMC_PLTRST_B].type = PIN_GPIO;
 	GPIO_EXPORT_RESULT[0] = ST_ERR;
 	GPIO_EXPORT_RESULT_INDEX = 0;
 	expect_any(__wrap_gpio_export, gpio);
@@ -371,7 +390,9 @@ void target_initialize_gpio_find_failure(void **state)
 	(void)state; /* unused */
 	DBUS_HANDLE = &DBUS;
 	Target_Control_Handle *handle = TargetHandler();
+	assert_non_null(handle);
 	handle->gpios[BMC_CPU_PWRGD].type = PIN_GPIO;
+	handle->gpios[BMC_PLTRST_B].type = PIN_GPIO;
 	GPIO_EXPORT_RESULT[0] = ST_ERR;
 	GPIO_EXPORT_RESULT_INDEX = 0;
 	strcpy(&handle->gpios[0].name[0], "UNKNOWN");
@@ -392,7 +413,9 @@ void target_initialize_gpio_set_active_low_failure_test(void **state)
 	(void)state; /* unused */
 	DBUS_HANDLE = &DBUS;
 	Target_Control_Handle *handle = TargetHandler();
+	assert_non_null(handle);
 	handle->gpios[BMC_CPU_PWRGD].type = PIN_GPIO;
+	handle->gpios[BMC_PLTRST_B].type = PIN_GPIO;
 	GPIO_EXPORT_FD[0] = 1;
 	GPIO_EXPORT_RESULT[0] = ST_OK;
 	expect_any(__wrap_gpio_export, gpio);
@@ -422,7 +445,9 @@ void target_initialize_gpio_set_direction_failure_test(void **state)
 	(void)state; /* unused */
 	DBUS_HANDLE = &DBUS;
 	Target_Control_Handle *handle = TargetHandler();
+	assert_non_null(handle);
 	handle->gpios[BMC_CPU_PWRGD].type = PIN_GPIO;
+	handle->gpios[BMC_PLTRST_B].type = PIN_GPIO;
 	GPIO_EXPORT_FD[0] = 1;
 	GPIO_EXPORT_RESULT[0] = ST_OK;
 	expect_any(__wrap_gpio_export, gpio);
@@ -453,7 +478,9 @@ void target_initialize_gpio_set_edge_failure_test(void **state)
 	(void)state; /* unused */
 	DBUS_HANDLE = &DBUS;
 	Target_Control_Handle *handle = TargetHandler();
+	assert_non_null(handle);
 	handle->gpios[BMC_CPU_PWRGD].type = PIN_GPIO;
+	handle->gpios[BMC_PLTRST_B].type = PIN_GPIO;
 	GPIO_EXPORT_FD[0] = 1;
 	GPIO_EXPORT_RESULT[0] = ST_OK;
 	expect_any(__wrap_gpio_export, gpio);
@@ -489,7 +516,9 @@ void target_initialize_xdp_check_failed_test(void **state)
 	int gpio_export_index = 0;
 	DBUS_HANDLE = &DBUS;
 	Target_Control_Handle *handle = TargetHandler();
+	assert_non_null(handle);
 	handle->gpios[BMC_CPU_PWRGD].type = PIN_GPIO;
+	handle->gpios[BMC_PLTRST_B].type = PIN_GPIO;
 	GPIO_EXPORT_RESULT[gpio_export_index] = ST_OK;
 	GPIO_EXPORT_FD[gpio_export_index++] = 1;
 	expect_any(__wrap_gpio_export, gpio);
@@ -530,7 +559,9 @@ void target_initialize_xdp_connected_test(void **state)
 	int gpio_export_index = 0;
 	DBUS_HANDLE = &DBUS;
 	Target_Control_Handle *handle = TargetHandler();
+	assert_non_null(handle);
 	handle->gpios[BMC_CPU_PWRGD].type = PIN_GPIO;
+	handle->gpios[BMC_PLTRST_B].type = PIN_GPIO;
 	for (int i = 0; i < NUM_GPIOS; i++) {
 		GPIO_EXPORT_FD[gpio_export_index] = 1;
 		GPIO_EXPORT_RESULT[gpio_export_index++] = ST_OK;
@@ -574,13 +605,77 @@ void target_initialize_xdp_connected_test(void **state)
 	free(handle);
 }
 
+void target_initialize_read_xdp_failed_test(void **state)
+{
+	(void)state; /* unused */
+	int gpio_export_index = 0;
+	DBUS_HANDLE = &DBUS;
+	Target_Control_Handle *handle = TargetHandler();
+	assert_non_null(handle);
+	handle->gpios[BMC_CPU_PWRGD].type = PIN_GPIO;
+	handle->gpios[BMC_PLTRST_B].type = PIN_GPIO;
+	for (int i = 0; i < NUM_GPIOS; i++) {
+		GPIO_EXPORT_FD[gpio_export_index] = 1;
+		GPIO_EXPORT_RESULT[gpio_export_index++] = ST_OK;
+		expect_any(__wrap_gpio_export, gpio);
+		expect_any(__wrap_gpio_export, fd);
+		expect_any(__wrap_gpio_set_direction, gpio);
+		expect_any(__wrap_gpio_set_direction, direction);
+		expect_any(__wrap_gpio_set_edge, gpio);
+		expect_any(__wrap_gpio_set_edge, edge);
+		expect_any(__wrap_gpio_set_active_low, gpio);
+		expect_any(__wrap_gpio_set_active_low, active_low);
+		expect_any(__wrap_gpio_get_value, fd);
+		expect_any(__wrap_gpio_get_value, value);
+		if (handle->gpios[i].direction == GPIO_DIRECTION_OUT) {
+			expect_any(__wrap_gpio_set_value, fd);
+			expect_any(__wrap_gpio_set_value, value);
+		}
+	}
+	GPIO_SET_ACTIVE_LOW_RESULT = ST_OK;
+	GPIO_SET_EDGE_RESULT = ST_OK;
+	GPIO_SET_DIRECTION_RESULT = ST_OK;
+	GPIO_EXPORT_RESULT_INDEX = 0;
+
+	// init gpios dummy read
+	for (int i = 0; i < NUM_GPIOS; i++) {
+		GPIO_GET_VALUE_VALUES[i] = 0;
+		GPIO_GET_VALUE_RESULTS[i] = ST_OK;
+	}
+
+	// signal the xdp is connected
+	expect_any(__wrap_gpio_get_value, fd);
+	expect_any(__wrap_gpio_get_value, value);
+
+	GPIO_GET_VALUE_CHUNK = true;
+	GPIO_GET_VALUE_VALUES[NUM_GPIOS] = 1;
+	GPIO_GET_VALUE_RESULTS[NUM_GPIOS] = ST_ERR;
+
+	// deinit gpios
+	for (int i = 0; i < NUM_GPIOS; i++) {
+		expect_any(__wrap_gpio_set_direction, gpio);
+		expect_value(__wrap_gpio_set_direction, direction,
+			     GPIO_DIRECTION_IN);
+		GPIO_UNEXPORT_RESULT[i] = ST_OK;
+		expect_any(__wrap_gpio_unexport, gpio);
+	}
+	GPIO_UNEXPORT_RESULT_INDEX = 0;
+
+	assert_int_equal(ST_ERR, target_initialize(handle));
+	GPIO_GET_VALUE_CHUNK = false;
+	free(handle);
+}
+
+
 void target_initialize_debug_enable_failed_test(void **state)
 {
 	(void)state; /* unused */
 	int gpio_export_index = 0;
 	DBUS_HANDLE = &DBUS;
 	Target_Control_Handle *handle = TargetHandler();
+	assert_non_null(handle);
 	handle->gpios[BMC_CPU_PWRGD].type = PIN_GPIO;
+	handle->gpios[BMC_PLTRST_B].type = PIN_GPIO;
 	// expectations for gpio initialization
 	for (int i = 0; i < NUM_GPIOS; i++) {
 		GPIO_EXPORT_FD[gpio_export_index] = 1;
@@ -637,7 +732,9 @@ void target_initialize_success_test(void **state)
 	int gpio_export_index = 0;
 	DBUS_HANDLE = &DBUS;
 	Target_Control_Handle *handle = TargetHandler();
+	assert_non_null(handle);
 	handle->gpios[BMC_CPU_PWRGD].type = PIN_GPIO;
+	handle->gpios[BMC_PLTRST_B].type = PIN_GPIO;
 	// expectations for gpio initialization
 	for (int i = 0; i < NUM_GPIOS; i++) {
 		GPIO_EXPORT_FD[gpio_export_index] = 1;
@@ -700,10 +797,12 @@ void target_deinitialize_non_minus_test(void **state)
 {
 	(void)state; /* unused */
 	Target_Control_Handle *handle = TargetHandler();
+	assert_non_null(handle);
 	handle->initialized = true;
 	handle->gpios[0].fd = 100;
 	// deinit gpios
-	for (int i = 0; i < NUM_GPIOS - 1; i++) {
+	// expectations for gpio initialization
+	for (int i = 0; i < NUM_GPIOS -2; i++) {
 		expect_any(__wrap_gpio_set_direction, gpio);
 		expect_value(__wrap_gpio_set_direction, direction,
 			     GPIO_DIRECTION_IN);
@@ -723,7 +822,9 @@ void target_deinitialize_gpio_unexport_failure_test(void **state)
 {
 	(void)state; /* unused */
 	Target_Control_Handle *handle = TargetHandler();
+	assert_non_null(handle);
 	handle->gpios[BMC_CPU_PWRGD].type = PIN_GPIO;
+	handle->gpios[BMC_PLTRST_B].type = PIN_GPIO;
 	handle->initialized = true;
 
 	// deinit gpios
@@ -748,7 +849,9 @@ void target_deinitialize_success_test(void **state)
 {
 	(void)state; /* unused */
 	Target_Control_Handle *handle = TargetHandler();
+	assert_non_null(handle);
 	handle->gpios[BMC_CPU_PWRGD].type = PIN_GPIO;
+	handle->gpios[BMC_PLTRST_B].type = PIN_GPIO;
 	handle->initialized = true;
 
 	// deinit gpios
@@ -824,6 +927,7 @@ void target_write_PIN_TCK_MUX_SELECT_success_test(void **state)
 	handle.initialized = true;
 	handle.gpios[BMC_TCK_MUX_SEL].number = expected_gpio;
 	handle.gpios[BMC_TCK_MUX_SEL].fd = expected_fd;
+	handle.gpios[BMC_TCK_MUX_SEL].type = PIN_GPIO;
 
 	expect_value(__wrap_gpio_set_value, fd, expected_fd);
 	expect_value(__wrap_gpio_set_value, value, 0);
@@ -858,7 +962,7 @@ void target_initialize_powergood_pin_handler_test(void **state)
 	Target_Control_Handle handle;
 	handle.gpios[BMC_CPU_PWRGD].type = PIN_GPIO;
 	assert_int_equal(ST_OK,
-			 initialize_powergood_pin_handler(&handle, PIN_GPIO));
+			 initialize_powergood_pin_handler(&handle));
 }
 
 void target_write_power_on_success_test(void **state)
@@ -1115,6 +1219,7 @@ void target_read_power_pin_test(void **state)
 	bool asserted;
 	Target_Control_Handle handle;
 	handle.initialized = true;
+	handle.gpios[BMC_CPU_PWRGD].type = PIN_DBUS;
 	DBUS_GET_HOSTSTATE_RESULT = ST_OK;
 	DBUS_GET_HOSTSTATE_VALUE = 0;
 	expect_any(__wrap_dbus_get_hoststate, state);
@@ -1369,6 +1474,8 @@ void target_event_power_event_gpio_get_value_failure_test(void **state)
 {
 	(void)state; /* unused */
 	Target_Control_Handle *handle = TargetHandler();
+	assert_non_null(handle);
+	handle->gpios[BMC_CPU_PWRGD].type = PIN_GPIO;
 	handle->gpios[BMC_CPU_PWRGD].handler =
 		(TargetHandlerEventFunctionPtr)on_power_event;
 	ASD_EVENT event;
@@ -1397,6 +1504,7 @@ void target_event_power_event_restored_test(void **state)
 {
 	(void)state; /* unused */
 	Target_Control_Handle *handle = TargetHandler();
+	assert_non_null(handle);
 	handle->gpios[BMC_CPU_PWRGD].handler =
 		(TargetHandlerEventFunctionPtr)on_power_event;
 	ASD_EVENT event;
@@ -1427,6 +1535,7 @@ void target_event_power_event_pwrfail_test(void **state)
 {
 	(void)state; /* unused */
 	Target_Control_Handle *handle = TargetHandler();
+	assert_non_null(handle);
 	handle->gpios[BMC_CPU_PWRGD].handler =
 		(TargetHandlerEventFunctionPtr)on_power_event;
 	ASD_EVENT event;
@@ -1483,6 +1592,7 @@ void target_event_power_dbus_test(void **state)
 {
 	(void)state; /* unused */
 	Target_Control_Handle *handle = TargetHandler();
+	assert_non_null(handle);
 	ASD_EVENT event;
 	struct pollfd expected_poll_fd;
 	expected_poll_fd.fd = 0;
@@ -1498,6 +1608,7 @@ void target_event_power_dbus_failed_test(void **state)
 {
 	(void)state; /* unused */
 	Target_Control_Handle *handle = TargetHandler();
+	assert_non_null(handle);
 	ASD_EVENT event;
 	struct pollfd expected_poll_fd;
 	expected_poll_fd.fd = 0;
@@ -1816,6 +1927,7 @@ int main()
 		cmocka_unit_test(target_initialize_gpio_set_edge_failure_test),
 		cmocka_unit_test(target_initialize_xdp_check_failed_test),
 		cmocka_unit_test(target_initialize_xdp_connected_test),
+		cmocka_unit_test(target_initialize_read_xdp_failed_test),
 		cmocka_unit_test(target_initialize_debug_enable_failed_test),
 		cmocka_unit_test(target_initialize_success_test),
 		cmocka_unit_test(target_initialize_powergood_pin_handler_test),

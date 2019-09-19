@@ -297,7 +297,7 @@ add_executable(target_handler_tests
 set_property(TARGET target_handler_tests PROPERTY C_STANDARD 99)
 add_test(target_handler_test target_handler_tests)
 target_link_libraries(
-  target_handler_tests cmocka.a -fprofile-arcs -ftest-coverage -lm)
+  target_handler_tests cmocka.a -fprofile-arcs -ftest-coverage -lm -lgpiod)
 set_target_properties(
   target_handler_tests
   PROPERTIES

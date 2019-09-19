@@ -995,8 +995,8 @@ STATUS target_write_event_config(Target_Control_Handle *state,
 #endif
 		// do a read to ensure no outstanding prdys are present before
 		// wait for prdy is enabled.
-		int dummy;
-		int retval;
+		int dummy = 0;
+		STATUS retval = ST_ERR;
 		read_pin_value(state->gpios[BMC_PRDY_N], &dummy, &retval);
 		state->event_cfg.report_PRDY = enable;
 		break;

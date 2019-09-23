@@ -803,17 +803,6 @@ STATUS target_write(Target_Control_Handle *state, const Pin pin,
 		ASD_log(ASD_LogLevel_Info, stream, option,
 			"Pin Write: %s reset button",
 			assert ? "assert" : "deassert");
-		if (assert && state->event_cfg.reset_break) {
-#ifdef ENABLE_DEBUG_LOGGING
-			ASD_log(ASD_LogLevel_Debug, stream, option,
-				"Reset break armed, asserting PREQ");
-#endif
-			write_pin_value(state->gpios[BMC_PREQ_N], 1, &result);
-			if (result != ST_OK) {
-				ASD_log(ASD_LogLevel_Error, stream, option,
-					"Assert PREQ for ResetBreak failed.");
-			}
-		}
 		if (result == ST_OK) {
 			result = dbus_power_reset(state->dbus);
 		}

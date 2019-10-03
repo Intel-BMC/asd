@@ -29,28 +29,28 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  * @file auth_none.c
  * @brief Handler functions to support no authentication
  */
+#include <stdint.h>
 #include <stdio.h>
-#include <unistd.h>
+#include <string.h>
 #include <sys/types.h>
 #include <time.h>
-#include <string.h>
-#include <stdint.h>
+#include <unistd.h>
+
 #include "authenticate.h"
 #include "ext_network.h"
 
-
-STATUS authnone_init(void *p_hdlr_data);
-STATUS auth_none(Session *session, ExtNet *net_state, extnet_conn_t *p_extconn);
+STATUS authnone_init(void* p_hdlr_data);
+STATUS auth_none(Session* session, ExtNet* net_state, extnet_conn_t* p_extconn);
 
 auth_hdlrs_t authnone_hdlrs = {authnone_init, auth_none};
 
 /** @brief Initialize authentication handler
  *  @param [in] p_hdlr_data Pointer to handler specific data (not used)
  */
-STATUS authnone_init(void *p_hdlr_data)
+STATUS authnone_init(void* p_hdlr_data)
 {
-	(void)p_hdlr_data;
-	return ST_OK;
+    (void)p_hdlr_data;
+    return ST_OK;
 }
 
 /** @brief Read and validate client header and password.
@@ -61,10 +61,10 @@ STATUS authnone_init(void *p_hdlr_data)
  *  @param [in] p_extconn pointer
  *  @return ST_OK if successful, otherwise ST_ERR.
  */
-STATUS auth_none(Session *session, ExtNet *net_state, extnet_conn_t *p_extconn)
+STATUS auth_none(Session* session, ExtNet* net_state, extnet_conn_t* p_extconn)
 {
-	(void)session;
-	(void)net_state;
-	(void)p_extconn;
-	return ST_OK;
+    (void)session;
+    (void)net_state;
+    (void)p_extconn;
+    return ST_OK;
 }

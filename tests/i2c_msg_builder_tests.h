@@ -28,7 +28,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #ifndef I2C_MSG_BUILDER_TESTS_H
 #define I2C_MSG_BUILDER_TESTS_H
 
-STATUS copy_i2c_to_asd(asd_i2c_msg *asd, struct i2c_msg *i2c);
-STATUS copy_asd_to_i2c(const asd_i2c_msg *asd, struct i2c_msg *i2c);
+STATUS copy_i2c_to_asd(asd_i2c_msg* asd, struct i2c_msg* i2c);
+STATUS copy_asd_to_i2c(const asd_i2c_msg* asd, struct i2c_msg* i2c);
 
 #endif // I2C_MSG_BUILDER_TESTS_H

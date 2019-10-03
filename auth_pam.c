@@ -31,96 +31,105 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  * tracking authentication attempts and locking out authentication when a
  * threshold is exceeded.
  */
-#include <stdio.h>
-#include <unistd.h>
-#include <sys/types.h>
-#include <security/pam_appl.h>
-#include <time.h>
-#include <string.h>
-#include <openssl/rand.h>
-#include <errno.h>
-#include <stdint.h>
-#include "authenticate.h"
-#include "logging.h"
-#include "asd_common.h"
-#include "ext_network.h"
-#include "session.h"
 #include "auth_pam.h"
-#include "mem_helper.h"
 
-typedef enum {
-	AUTHRET_OK,
-	AUTHRET_SYSERR,
-	AUTHRET_INVALIDDATA,
-	AUTHRET_UNAUTHORIZED,
-	AUTHRET_LOCKOUT,
+#include <errno.h>
+#include <openssl/rand.h>
+#include <security/pam_appl.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <string.h>
+#include <sys/types.h>
+#include <time.h>
+#include <unistd.h>
+
+#include "asd_common.h"
+#include "authenticate.h"
+#include "ext_network.h"
+#include "logging.h"
+#include "mem_helper.h"
+#include "session.h"
+
+typedef enum
+{
+    AUTHRET_OK,
+    AUTHRET_SYSERR,
+    AUTHRET_INVALIDDATA,
+    AUTHRET_UNAUTHORIZED,
+    AUTHRET_LOCKOUT,
 } auth_ret_t;
 
-STATUS authpam_init(void *p_hdlr_data);
-STATUS authpam_client_handshake(Session *session, ExtNet *net_state,
-				extnet_conn_t *p_extconn);
+STATUS authpam_init(void* p_hdlr_data);
+STATUS authpam_client_handshake(Session* session, ExtNet* net_state,
+                                extnet_conn_t* p_extconn);
 
 auth_hdlrs_t authpam_hdlrs = {authpam_init, authpam_client_handshake};
-
 
 /** @brief Initialize PAM authentication handler
  *  @param [in] p_hdlr_data Pointer to handler specific data (not used)
  */
-STATUS authpam_init(void *p_hdlr_data)
+STATUS authpam_init(void* p_hdlr_data)
 {
-	(void)p_hdlr_data;
-	return ST_OK;
+    (void)p_hdlr_data;
+    return ST_OK;
 }
 
 // function used to get user input
-int pam_conversation_function(int numMsg, const struct pam_message **msg,
-			      struct pam_response **resp, void *appdata_ptr)
+int pam_conversation_function(int numMsg, const struct pam_message** msg,
+                              struct pam_response** resp, void* appdata_ptr)
 {
-	int result = PAM_AUTH_ERR;
-	if (appdata_ptr && msg && resp) {
-		*resp = NULL;
-		size_t len = strlen((char *)(appdata_ptr)) + 1;
-		char *pass = (char *)malloc(len);
-		if (pass) {
-			memset(pass, 0, len);
-			if (strcpy_safe(pass, len, (char *)appdata_ptr,
-					strlen((char *)(appdata_ptr)))) {
-				ASD_log(ASD_LogLevel_Error, ASD_LogStream_JTAG,
-					ASD_LogOption_None,
-					"strcpy_safe: appdata_ptr to pass str \
+    int result = PAM_AUTH_ERR;
+    if (appdata_ptr && msg && resp)
+    {
+        *resp = NULL;
+        size_t len = strlen((char*)(appdata_ptr)) + 1;
+        char* pass = (char*)malloc(len);
+        if (pass)
+        {
+            memset(pass, 0, len);
+            if (strcpy_safe(pass, len, (char*)appdata_ptr,
+                            strlen((char*)(appdata_ptr))))
+            {
+                ASD_log(ASD_LogLevel_Error, ASD_LogStream_JTAG,
+                        ASD_LogOption_None,
+                        "strcpy_safe: appdata_ptr to pass str \
 						copy failed.");
-				result = ST_ERR;
-			}
-			*resp = (struct pam_response *)calloc(
-				(size_t)numMsg, sizeof(struct pam_response));
+                result = ST_ERR;
+            }
+            *resp = (struct pam_response*)calloc((size_t)numMsg,
+                                                 sizeof(struct pam_response));
 
-			if (*resp) {
-				for (int i = 0; i < numMsg; ++i) {
-					/* Ignore all PAM messages except
-					 * prompting for hidden input */
-					if (msg[i]->msg_style
-					    != PAM_PROMPT_ECHO_OFF) {
-						continue;
-					}
+            if (*resp)
+            {
+                for (int i = 0; i < numMsg; ++i)
+                {
+                    /* Ignore all PAM messages except
+                     * prompting for hidden input */
+                    if (msg[i]->msg_style != PAM_PROMPT_ECHO_OFF)
+                    {
+                        continue;
+                    }
 
-					/* Assume PAM is only prompting for
-					 * the password as hidden input */
-					resp[i]->resp = pass;
-					result = PAM_SUCCESS;
-				}
-			}
-		}
-		if (result != PAM_SUCCESS) {
-			if (resp) {
-				free(*resp);
-				*resp = NULL;
-			}
-			if (pass)
-				free(pass);
-		}
-	}
+                    /* Assume PAM is only prompting for
+                     * the password as hidden input */
+                    resp[i]->resp = pass;
+                    result = PAM_SUCCESS;
+                }
+            }
+        }
+        if (result != PAM_SUCCESS)
+        {
+            if (resp)
+            {
+                free(*resp);
+                *resp = NULL;
+            }
+            if (pass)
+                free(pass);
+        }
+    }
 
-	return result;
+    return result;
 }
 
 /** @brief Validate the version and credentials of the client
@@ -136,48 +145,51 @@ int pam_conversation_function(int numMsg, const struct pam_message **msg,
  *                  AUTHRET_OK if authenticated;
  *                  AUTHRET_UNAUTHORIZED if password is invalid
  */
-static auth_ret_t credentials_are_valid(unsigned char *cp_password,
-					unsigned int n_pwlen)
+static auth_ret_t credentials_are_valid(unsigned char* cp_password,
+                                        unsigned int n_pwlen)
 {
-	char *cp_username = ASD_PAM_USER;
-	char *pam_svc = ASD_PAM_SERVICE;
-	pam_handle_t *pamh = NULL;
-	const struct pam_conv pamc = {pam_conversation_function, cp_password};
-	int pamerr;
-	auth_ret_t ret = AUTHRET_UNAUTHORIZED;
-	char ca_passwd[MAX_PW_LEN];
+    char* cp_username = ASD_PAM_USER;
+    char* pam_svc = ASD_PAM_SERVICE;
+    pam_handle_t* pamh = NULL;
+    const struct pam_conv pamc = {pam_conversation_function, cp_password};
+    int pamerr;
+    auth_ret_t ret = AUTHRET_UNAUTHORIZED;
+    char ca_passwd[MAX_PW_LEN];
 
-	pamerr = pam_start(pam_svc, cp_username, &pamc, &pamh);
-	if (PAM_SUCCESS != pamerr) {
-		ASD_log(ASD_LogLevel_Error, ASD_LogStream_Network,
-			ASD_LogOption_None,
-			"Unable to use PAM service '%s'! Error %d", pam_svc,
-			pamerr);
-		ret = AUTHRET_SYSERR;
-	} else {
-		pamerr = pam_authenticate(
-			pamh, PAM_SILENT | PAM_DISALLOW_NULL_AUTHTOK);
-		if (PAM_SUCCESS != pamerr) {
-			ASD_log(ASD_LogLevel_Error, ASD_LogStream_Network,
-				ASD_LogOption_None,
-				"pam_authenticate(PAM_DISALLOW_NULL_AUTHTOK) error %d",
-				pamerr);
-		} else {
-			ret = AUTHRET_OK;
-		}
-	}
-	// remove all traces of password
-	memset(ca_passwd, 0, sizeof(ca_passwd));
-	memset(cp_password, 0, n_pwlen);
+    pamerr = pam_start(pam_svc, cp_username, &pamc, &pamh);
+    if (PAM_SUCCESS != pamerr)
+    {
+        ASD_log(ASD_LogLevel_Error, ASD_LogStream_Network, ASD_LogOption_None,
+                "Unable to use PAM service '%s'! Error %d", pam_svc, pamerr);
+        ret = AUTHRET_SYSERR;
+    }
+    else
+    {
+        pamerr = pam_authenticate(pamh, PAM_SILENT | PAM_DISALLOW_NULL_AUTHTOK);
+        if (PAM_SUCCESS != pamerr)
+        {
+            ASD_log(
+                ASD_LogLevel_Error, ASD_LogStream_Network, ASD_LogOption_None,
+                "pam_authenticate(PAM_DISALLOW_NULL_AUTHTOK) error %d", pamerr);
+        }
+        else
+        {
+            ret = AUTHRET_OK;
+        }
+    }
+    // remove all traces of password
+    memset(ca_passwd, 0, sizeof(ca_passwd));
+    memset(cp_password, 0, n_pwlen);
 
-	if (pamh) {
-		if (PAM_SUCCESS != (pamerr = pam_end(pamh, pamerr))) {
-			ASD_log(ASD_LogLevel_Error, ASD_LogStream_Network,
-				ASD_LogOption_None, "pam_end(%d) error %d",
-				pamerr);
-		}
-	}
-	return ret;
+    if (pamh)
+    {
+        if (PAM_SUCCESS != (pamerr = pam_end(pamh, pamerr)))
+        {
+            ASD_log(ASD_LogLevel_Error, ASD_LogStream_Network,
+                    ASD_LogOption_None, "pam_end(%d) error %d", pamerr);
+        }
+    }
+    return ret;
 }
 
 /** @brief Record an invalid auth attempt and determine auth lockout.
@@ -191,51 +203,54 @@ static auth_ret_t credentials_are_valid(unsigned char *cp_password,
  */
 static auth_ret_t auth_track_attempt(auth_ret_t err_code)
 {
-	static time_t ats_attempts[INVALID_AUTH_MAX_ATTEMPTS] = {0};
-	time_t t_now = time(0L);
-	int n_invalid_in_period = 1;
-	int n_oldest_index = 0;
+    static time_t ats_attempts[INVALID_AUTH_MAX_ATTEMPTS] = {0};
+    time_t t_now = time(0L);
+    int n_invalid_in_period = 1;
+    int n_oldest_index = 0;
 
-	if (AUTHRET_OK == err_code) {
-		// Valid authentication, clear out attempts.
-		memset(ats_attempts, 0, sizeof(ats_attempts));
-	} else if (AUTHRET_UNAUTHORIZED == err_code
-		   || AUTHRET_INVALIDDATA == err_code) {
-		int i;
-		for (i = 0; i < INVALID_AUTH_MAX_ATTEMPTS; i++) {
-			// Find the oldest attempt.
-			if (ats_attempts[i] < ats_attempts[n_oldest_index]) {
-				n_oldest_index = i;
-			}
-			// Increment invalid login count for each attempt within
-			// the window
-			if (ats_attempts[i]
-			    > (t_now - INVALID_AUTH_PERIOD_NSECS)) {
+    if (AUTHRET_OK == err_code)
+    {
+        // Valid authentication, clear out attempts.
+        memset(ats_attempts, 0, sizeof(ats_attempts));
+    }
+    else if (AUTHRET_UNAUTHORIZED == err_code ||
+             AUTHRET_INVALIDDATA == err_code)
+    {
+        int i;
+        for (i = 0; i < INVALID_AUTH_MAX_ATTEMPTS; i++)
+        {
+            // Find the oldest attempt.
+            if (ats_attempts[i] < ats_attempts[n_oldest_index])
+            {
+                n_oldest_index = i;
+            }
+            // Increment invalid login count for each attempt within
+            // the window
+            if (ats_attempts[i] > (t_now - INVALID_AUTH_PERIOD_NSECS))
+            {
 #ifdef ENABLE_DEBUG_LOGGING
-				ASD_log(ASD_LogLevel_Debug,
-					ASD_LogStream_Network,
-					ASD_LogOption_None,
-					"Invalid auth attempt [%d] %ld > %ld",
-					i, ats_attempts[i],
-					(t_now - INVALID_AUTH_PERIOD_NSECS));
+                ASD_log(ASD_LogLevel_Debug, ASD_LogStream_Network,
+                        ASD_LogOption_None,
+                        "Invalid auth attempt [%d] %ld > %ld", i,
+                        ats_attempts[i], (t_now - INVALID_AUTH_PERIOD_NSECS));
 #endif
-				n_invalid_in_period++;
-			}
-		}
-		// Record this invalid attempt replacing the oldest.
-		ats_attempts[n_oldest_index] = t_now;
-		if (n_invalid_in_period > INVALID_AUTH_MAX_ATTEMPTS) {
-			err_code = AUTHRET_LOCKOUT;
-		}
+                n_invalid_in_period++;
+            }
+        }
+        // Record this invalid attempt replacing the oldest.
+        ats_attempts[n_oldest_index] = t_now;
+        if (n_invalid_in_period > INVALID_AUTH_MAX_ATTEMPTS)
+        {
+            err_code = AUTHRET_LOCKOUT;
+        }
 #ifdef ENABLE_DEBUG_LOGGING
-		ASD_log(ASD_LogLevel_Debug, ASD_LogStream_Network,
-			ASD_LogOption_None,
-			"Invalid auth attempt #%d/%d [%d] %ld err %d",
-			n_invalid_in_period, INVALID_AUTH_MAX_ATTEMPTS,
-			n_oldest_index, t_now, err_code);
+        ASD_log(ASD_LogLevel_Debug, ASD_LogStream_Network, ASD_LogOption_None,
+                "Invalid auth attempt #%d/%d [%d] %ld err %d",
+                n_invalid_in_period, INVALID_AUTH_MAX_ATTEMPTS, n_oldest_index,
+                t_now, err_code);
 #endif
-	}
-	return err_code;
+    }
+    return err_code;
 }
 
 /** @brief Validate the client header including version and password.
@@ -250,37 +265,39 @@ static auth_ret_t auth_track_attempt(auth_ret_t err_code)
  *                  AUTHAUTH_LOCKOUT if too many invalid auth attempts have
  *                  been made
  */
-static auth_ret_t authenticate_client(char *cp_buf, int n_num_read)
+static auth_ret_t authenticate_client(char* cp_buf, int n_num_read)
 {
-	auth_ret_t ret;
-	auth_handshake_req_t *phdr = (auth_handshake_req_t *)cp_buf;
+    auth_ret_t ret;
+    auth_handshake_req_t* phdr = (auth_handshake_req_t*)cp_buf;
 
-	if (n_num_read > sizeof(auth_handshake_req_t)
-	    || phdr->auth_hdr_version > AUTH_HDR_VERSION) {
-		ASD_log(ASD_LogLevel_Error, ASD_LogStream_Network,
-			ASD_LogOption_None,
-			"Invalid auth header version 0x%02x received len: %d",
-			phdr->auth_hdr_version, n_num_read);
-		ret = AUTHRET_INVALIDDATA;
-	} else {
-		char *cp;
-		// Testing with openssl s_client adding newline, strip it.
-		cp = memchr(cp_buf, '\n', (size_t)n_num_read);
-		if (cp) {
-			*cp = '\0';
-		}
+    if (n_num_read > sizeof(auth_handshake_req_t) ||
+        phdr->auth_hdr_version > AUTH_HDR_VERSION)
+    {
+        ASD_log(ASD_LogLevel_Error, ASD_LogStream_Network, ASD_LogOption_None,
+                "Invalid auth header version 0x%02x received len: %d",
+                phdr->auth_hdr_version, n_num_read);
+        ret = AUTHRET_INVALIDDATA;
+    }
+    else
+    {
+        char* cp;
+        // Testing with openssl s_client adding newline, strip it.
+        cp = memchr(cp_buf, '\n', (size_t)n_num_read);
+        if (cp)
+        {
+            *cp = '\0';
+        }
 
-		// Validate the password.
-		ret = credentials_are_valid(
-			phdr->auth_password,
-			n_num_read - sizeof(phdr->auth_hdr_version));
-		if (AUTHRET_OK != ret) {
-			ASD_log(ASD_LogLevel_Error, ASD_LogStream_Network,
-				ASD_LogOption_None,
-				"Unauthenticated connection attempt");
-		}
-	}
-	return auth_track_attempt(ret);
+        // Validate the password.
+        ret = credentials_are_valid(
+            phdr->auth_password, n_num_read - sizeof(phdr->auth_hdr_version));
+        if (AUTHRET_OK != ret)
+        {
+            ASD_log(ASD_LogLevel_Error, ASD_LogStream_Network,
+                    ASD_LogOption_None, "Unauthenticated connection attempt");
+        }
+    }
+    return auth_track_attempt(ret);
 }
 
 /** @brief Send handshake response back to the client
@@ -290,26 +307,26 @@ static auth_ret_t authenticate_client(char *cp_buf, int n_num_read)
  *  @param [in] p_extconn Connection handle pointer
  *  @return ST_OK if successful,
  */
-static STATUS auth_handshake_response(ExtNet *net_state,
-				      extnet_conn_t *p_extconn,
-				      auth_handshake_ret_t c_resp)
+static STATUS auth_handshake_response(ExtNet* net_state,
+                                      extnet_conn_t* p_extconn,
+                                      auth_handshake_ret_t c_resp)
 {
-	STATUS st_ret = ST_OK;
-	auth_handshake_resp_t resp;
-	int n_wr;
+    STATUS st_ret = ST_OK;
+    auth_handshake_resp_t resp;
+    int n_wr;
 
-	memset(&resp, 0, sizeof(resp));
-	resp.svr_hdr_version = AUTH_HDR_VERSION;
-	resp.result_code = c_resp;
+    memset(&resp, 0, sizeof(resp));
+    resp.svr_hdr_version = AUTH_HDR_VERSION;
+    resp.result_code = c_resp;
 
-	if (sizeof(resp)
-	    != (n_wr = extnet_send(net_state, p_extconn, &resp,
-				   sizeof(resp)))) {
-		st_ret = ST_ERR;
-	}
-	ASD_log(ASD_LogLevel_Error, ASD_LogStream_Network, ASD_LogOption_None,
-		"wrote %d bytes response 0x%x", n_wr, c_resp);
-	return st_ret;
+    if (sizeof(resp) !=
+        (n_wr = extnet_send(net_state, p_extconn, &resp, sizeof(resp))))
+    {
+        st_ret = ST_ERR;
+    }
+    ASD_log(ASD_LogLevel_Error, ASD_LogStream_Network, ASD_LogOption_None,
+            "wrote %d bytes response 0x%x", n_wr, c_resp);
+    return st_ret;
 }
 
 /** @brief Get random printable string
@@ -317,24 +334,28 @@ static STATUS auth_handshake_response(ExtNet *net_state,
  *  @param [in] n_sz Sizeof cp_buf.
  *  @return ST_OK if successful
  */
-static STATUS get_random_string(unsigned char *cp_buf, int n_sz)
+static STATUS get_random_string(unsigned char* cp_buf, int n_sz)
 {
-	STATUS st_ret = ST_ERR;
-	char ca_ascii[75] = RANDOM_ASCII_CHARACTERS;
-	size_t n_len = strnlen(ca_ascii, sizeof(ca_ascii));
+    STATUS st_ret = ST_ERR;
+    char ca_ascii[75] = RANDOM_ASCII_CHARACTERS;
+    size_t n_len = strnlen(ca_ascii, sizeof(ca_ascii));
 
-	if (1 != RAND_bytes(cp_buf, n_sz)) {
-		ASD_log(ASD_LogLevel_Error, ASD_LogStream_Network,
-			ASD_LogOption_None, "RAND_bytes error %d", errno);
-	} else {
-		for (int i = 0; i < n_sz; i++) {
-			size_t n_index = cp_buf[i] % n_len;
-			cp_buf[i] = (unsigned char)ca_ascii[n_index];
-		}
-		cp_buf[n_sz - 1] = '\0';
-		st_ret = ST_OK;
-	}
-	return st_ret;
+    if (1 != RAND_bytes(cp_buf, n_sz))
+    {
+        ASD_log(ASD_LogLevel_Error, ASD_LogStream_Network, ASD_LogOption_None,
+                "RAND_bytes error %d", errno);
+    }
+    else
+    {
+        for (int i = 0; i < n_sz; i++)
+        {
+            size_t n_index = cp_buf[i] % n_len;
+            cp_buf[i] = (unsigned char)ca_ascii[n_index];
+        }
+        cp_buf[n_sz - 1] = '\0';
+        st_ret = ST_OK;
+    }
+    return st_ret;
 }
 
 /** @brief Read and validate client header and password.
@@ -345,77 +366,90 @@ static STATUS get_random_string(unsigned char *cp_buf, int n_sz)
  *  @param [in] p_extconn pointer
  *  @return AUTHRET_OK if successful, otherwise another auth_ret_t value.
  */
-STATUS authpam_client_handshake(Session *session, ExtNet *net_state,
-				extnet_conn_t *p_extconn)
+STATUS authpam_client_handshake(Session* session, ExtNet* net_state,
+                                extnet_conn_t* p_extconn)
 {
-	static char ca_buf[10240];
-	static time_t t_lockout = 0;
-	bool b_data_pending = false;
-	int n_read;
-	auth_ret_t ret;
-	auth_handshake_req_t lockout_req;
+    static char ca_buf[10240];
+    static time_t t_lockout = 0;
+    bool b_data_pending = false;
+    int n_read;
+    auth_ret_t ret;
+    auth_handshake_req_t lockout_req;
 
-	if (!session || !net_state || !p_extconn) {
-		return ST_ERR;
-	}
+    if (!session || !net_state || !p_extconn)
+    {
+        return ST_ERR;
+    }
 
-	// We only need this for b_lockout but always do it so timing will be
-	// same
-	lockout_req.auth_hdr_version = AUTH_HDR_VERSION;
-	if (ST_OK
-	    != get_random_string(lockout_req.auth_password,
-				 sizeof(lockout_req.auth_password))) {
-		ret = AUTHRET_INVALIDDATA;
-	} else {
-		if ((n_read = extnet_recv(net_state, p_extconn, ca_buf,
-					  sizeof(ca_buf), &b_data_pending))
-		    <= 0) {
-			ret = AUTHRET_INVALIDDATA;
-		} else {
-			if (time(0) < t_lockout) {
-				// Validate a random password to keep timing the
-				// same.
-				authenticate_client((char *)&lockout_req, 20);
-				ret = AUTHRET_LOCKOUT;
-			} else if (b_data_pending) {
-				// more data should not be pending at this
-				// point. Treat this as an error.
-				ret = AUTHRET_INVALIDDATA;
-			} else {
-				// Validate the header and password as read.
-				ret = authenticate_client(ca_buf, n_read);
-			}
-		}
-		memset(&ca_buf, 0, sizeof(ca_buf));
-	}
-	switch (ret) {
-	case AUTHRET_OK:
-		// if session_get_authenticated_conn returns ST_ERR, then
-		// there is no current session, which is what we want.
-		if (ST_OK != session_get_authenticated_conn(session, NULL)) {
-			if (auth_handshake_response(net_state, p_extconn,
-						    AUTH_HANDSHAKE_SUCCESS)
-			    != ST_OK)
-				ret = AUTHRET_SYSERR;
-		} else {
-			auth_handshake_response(net_state, p_extconn,
-						AUTH_HANDSHAKE_BUSY);
-			ret = AUTHRET_UNAUTHORIZED;
-		}
-		break;
-	case AUTHRET_SYSERR:
-		auth_handshake_response(net_state, p_extconn,
-					AUTH_HANDSHAKE_SYSERR);
-		break;
-	case AUTHRET_LOCKOUT:
-		t_lockout = time(0L) + INVALID_AUTH_LOCKOUT_NSECS;
-		// intentional fallthrough
-	case AUTHRET_UNAUTHORIZED:
-	case AUTHRET_INVALIDDATA:
-	default:
-		auth_handshake_response(net_state, p_extconn,
-					AUTH_HANDSHAKE_FAILURE);
-		break;
-	}
-	return (ret == AUTHRET_OK ? ST_OK : ST_ERR);
+    // We only need this for b_lockout but always do it so timing will be
+    // same
+    lockout_req.auth_hdr_version = AUTH_HDR_VERSION;
+    if (ST_OK != get_random_string(lockout_req.auth_password,
+                                   sizeof(lockout_req.auth_password)))
+    {
+        ret = AUTHRET_INVALIDDATA;
+    }
+    else
+    {
+        if ((n_read = extnet_recv(net_state, p_extconn, ca_buf, sizeof(ca_buf),
+                                  &b_data_pending)) <= 0)
+        {
+            ret = AUTHRET_INVALIDDATA;
+        }
+        else
+        {
+            if (time(0) < t_lockout)
+            {
+                // Validate a random password to keep timing the
+                // same.
+                authenticate_client((char*)&lockout_req, 20);
+                ret = AUTHRET_LOCKOUT;
+            }
+            else if (b_data_pending)
+            {
+                // more data should not be pending at this
+                // point. Treat this as an error.
+                ret = AUTHRET_INVALIDDATA;
+            }
+            else
+            {
+                // Validate the header and password as read.
+                ret = authenticate_client(ca_buf, n_read);
+            }
+        }
+        memset(&ca_buf, 0, sizeof(ca_buf));
+    }
+    switch (ret)
+    {
+        case AUTHRET_OK:
+            // if session_get_authenticated_conn returns ST_ERR, then
+            // there is no current session, which is what we want.
+            if (ST_OK != session_get_authenticated_conn(session, NULL))
+            {
+                if (auth_handshake_response(net_state, p_extconn,
+                                            AUTH_HANDSHAKE_SUCCESS) != ST_OK)
+                    ret = AUTHRET_SYSERR;
+            }
+            else
+            {
+                auth_handshake_response(net_state, p_extconn,
+                                        AUTH_HANDSHAKE_BUSY);
+                ret = AUTHRET_UNAUTHORIZED;
+            }
+            break;
+        case AUTHRET_SYSERR:
+            auth_handshake_response(net_state, p_extconn,
+                                    AUTH_HANDSHAKE_SYSERR);
+            break;
+        case AUTHRET_LOCKOUT:
+            t_lockout = time(0L) + INVALID_AUTH_LOCKOUT_NSECS;
+            // intentional fallthrough
+        case AUTHRET_UNAUTHORIZED:
+        case AUTHRET_INVALIDDATA:
+        default:
+            auth_handshake_response(net_state, p_extconn,
+                                    AUTH_HANDSHAKE_FAILURE);
+            break;
+    }
+    return (ret == AUTHRET_OK ? ST_OK : ST_ERR);
 }

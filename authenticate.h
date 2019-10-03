@@ -36,17 +36,22 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "ext_network.h"
 #include "session.h"
 
-typedef enum { AUTH_HDLR_NONE, AUTH_HDLR_PAM } auth_hdlr_type_t;
+typedef enum
+{
+    AUTH_HDLR_NONE,
+    AUTH_HDLR_PAM
+} auth_hdlr_type_t;
 
 // Function pointers for external network interface.
-typedef struct {
-	STATUS (*init)(void *p_hdlr_data);
-	STATUS(*client_handshake)
-	(Session *session, ExtNet *state, extnet_conn_t *pconn);
+typedef struct
+{
+    STATUS (*init)(void* p_hdlr_data);
+    STATUS(*client_handshake)
+    (Session* session, ExtNet* state, extnet_conn_t* pconn);
 } auth_hdlrs_t;
 
-STATUS auth_init(auth_hdlr_type_t e_type, void *p_hdlr_data);
-STATUS auth_client_handshake(Session *session, ExtNet *state,
-			     extnet_conn_t *p_extconn);
+STATUS auth_init(auth_hdlr_type_t e_type, void* p_hdlr_data);
+STATUS auth_client_handshake(Session* session, ExtNet* state,
+                             extnet_conn_t* p_extconn);
 
 #endif

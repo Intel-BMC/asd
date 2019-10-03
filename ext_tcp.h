@@ -39,13 +39,13 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 extern extnet_hdlrs_t tcp_hdlrs;
 
-extern STATUS exttcp_init(void *p_hdlr_data);
+extern STATUS exttcp_init(void* p_hdlr_data);
 extern void exttcp_cleanup(void);
-extern STATUS exttcp_on_accept(void *net_state, extnet_conn_t *pconn);
-extern STATUS exttcp_init_client(extnet_conn_t *pconn);
-extern STATUS exttcp_on_close_client(extnet_conn_t *pconn);
-extern int exttcp_recv(extnet_conn_t *pconn, void *pv_buf, size_t sz_len,
-		       bool *b_data_pending);
-extern int exttcp_send(extnet_conn_t *pconn, void *pv_buf, size_t sz_len);
+extern STATUS exttcp_on_accept(void* net_state, extnet_conn_t* pconn);
+extern STATUS exttcp_init_client(extnet_conn_t* pconn);
+extern STATUS exttcp_on_close_client(extnet_conn_t* pconn);
+extern int exttcp_recv(extnet_conn_t* pconn, void* pv_buf, size_t sz_len,
+                       bool* b_data_pending);
+extern int exttcp_send(extnet_conn_t* pconn, void* pv_buf, size_t sz_len);
 
 #endif //__EXT_TCP_H

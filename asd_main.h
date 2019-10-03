@@ -32,11 +32,11 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <stdbool.h>
 #include <stddef.h>
 
-#include "logging.h"
 #include "asd_common.h"
-#include "ext_network.h"
-#include "authenticate.h"
 #include "asd_msg.h"
+#include "authenticate.h"
+#include "ext_network.h"
+#include "logging.h"
 #include "session.h"
 
 // DEFAULTS
@@ -48,68 +48,73 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #define DEFAULT_LOG_LEVEL ASD_LogLevel_Warning
 #define DEFAULT_LOG_STREAMS ASD_LogStream_All
 
-typedef struct session_options {
-	uint16_t n_port_number;
-	char *cp_certkeyfile;
-	char *cp_net_bind_device;
-	extnet_hdlr_type_t e_extnet_type;
-	auth_hdlr_type_t e_auth_type;
+typedef struct session_options
+{
+    uint16_t n_port_number;
+    char* cp_certkeyfile;
+    char* cp_net_bind_device;
+    extnet_hdlr_type_t e_extnet_type;
+    auth_hdlr_type_t e_auth_type;
 } session_options;
 
-typedef struct asd_args {
-	session_options session;
-	i2c_options i2c;
-	bool use_syslog;
-	ASD_LogLevel log_level;
-	ASD_LogStream log_streams;
+typedef struct asd_args
+{
+    session_options session;
+    i2c_options i2c;
+    bool use_syslog;
+    ASD_LogLevel log_level;
+    ASD_LogStream log_streams;
 } asd_args;
 
-typedef struct asd_state {
-	asd_args args;
-	ASD_MSG *asd_msg;
-	int host_fd;
-	int event_fd;
-	config config;
-	Session *session;
-	ExtNet *extnet;
+typedef struct asd_state
+{
+    asd_args args;
+    ASD_MSG* asd_msg;
+    int host_fd;
+    int event_fd;
+    config config;
+    Session* session;
+    ExtNet* extnet;
 } asd_state;
 
 #define HOST_FD_INDEX 0
 #define GPIO_FD_INDEX 1
 #define MAX_FDS (GPIO_FD_INDEX + MAX_SESSIONS + NUM_GPIOS + NUM_DBUS_FDS)
 
-typedef enum { CLOSE_CLIENT_EVENT = 1 } InternalEventTypes;
+typedef enum
+{
+    CLOSE_CLIENT_EVENT = 1
+} InternalEventTypes;
 
 #ifndef UNIT_TEST_MAIN
-int main(int argc, char **argv);
+int main(int argc, char** argv);
 #endif
 
-int asd_main(int argc, char **argv);
+int asd_main(int argc, char** argv);
 
-bool process_command_line(int argc, char **argv, asd_args *args);
-void showUsage(char **argv);
-STATUS init_asd_state(asd_state *state);
-STATUS send_out_msg_on_socket(void *state, unsigned char *buffer,
-			      size_t length);
-void deinit_asd_state(asd_state *state);
-STATUS on_client_disconnect(asd_state *state);
-STATUS on_client_connect(asd_state *state, extnet_conn_t *p_extcon);
-STATUS request_processing_loop(asd_state *state);
-STATUS process_new_client(asd_state *state, struct pollfd *poll_fds,
-			  size_t num_fds, int *num_clients, int client_index);
-STATUS process_all_client_messages(asd_state *state,
-				   const struct pollfd *poll_fds,
-				   size_t num_fds);
-STATUS process_all_gpio_events(asd_state *state, const struct pollfd *poll_fds,
-			       size_t num_fds);
-STATUS process_client_message(asd_state *state, struct pollfd poll_fd);
-STATUS ensure_client_authenticated(asd_state *state, extnet_conn_t *p_extconn);
+bool process_command_line(int argc, char** argv, asd_args* args);
+void showUsage(char** argv);
+STATUS init_asd_state(asd_state* state);
+STATUS send_out_msg_on_socket(void* state, unsigned char* buffer,
+                              size_t length);
+void deinit_asd_state(asd_state* state);
+STATUS on_client_disconnect(asd_state* state);
+STATUS on_client_connect(asd_state* state, extnet_conn_t* p_extcon);
+STATUS request_processing_loop(asd_state* state);
+STATUS process_new_client(asd_state* state, struct pollfd* poll_fds,
+                          size_t num_fds, int* num_clients, int client_index);
+STATUS process_all_client_messages(asd_state* state,
+                                   const struct pollfd* poll_fds,
+                                   size_t num_fds);
+STATUS process_all_gpio_events(asd_state* state, const struct pollfd* poll_fds,
+                               size_t num_fds);
+STATUS process_client_message(asd_state* state, struct pollfd poll_fd);
+STATUS ensure_client_authenticated(asd_state* state, extnet_conn_t* p_extconn);
 
-STATUS read_data(asd_state *state, extnet_conn_t *p_extconn, void *buffer,
-		 size_t *num_to_read, bool *b_data_pending);
+STATUS read_data(asd_state* state, extnet_conn_t* p_extconn, void* buffer,
+                 size_t* num_to_read, bool* b_data_pending);
 
-STATUS close_connection(asd_state *state);
-void log_client_address(const extnet_conn_t *p_extcon);
-
+STATUS close_connection(asd_state* state);
+void log_client_address(const extnet_conn_t* p_extcon);
 
 #endif // _ASD_MAIN_H_

@@ -32,17 +32,18 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #define UNINITIALIZED_I2C_DRIVER_HANDLE -1
 
-typedef struct I2C_Handler {
-	uint8_t i2c_bus;
-	i2c_config *config;
-	int i2c_driver_handle;
+typedef struct I2C_Handler
+{
+    uint8_t i2c_bus;
+    i2c_config* config;
+    int i2c_driver_handle;
 } I2C_Handler;
 
-I2C_Handler *I2CHandler(i2c_config *config);
-STATUS i2c_initialize(I2C_Handler *state);
-STATUS i2c_deinitialize(I2C_Handler *state);
-STATUS i2c_bus_select(I2C_Handler *state, uint8_t bus);
-STATUS i2c_set_sclk(I2C_Handler *state, uint16_t sclk);
-STATUS i2c_read_write(I2C_Handler *state, void *msg_set);
+I2C_Handler* I2CHandler(i2c_config* config);
+STATUS i2c_initialize(I2C_Handler* state);
+STATUS i2c_deinitialize(I2C_Handler* state);
+STATUS i2c_bus_select(I2C_Handler* state, uint8_t bus);
+STATUS i2c_set_sclk(I2C_Handler* state, uint16_t sclk);
+STATUS i2c_read_write(I2C_Handler* state, void* msg_set);
 
 #endif

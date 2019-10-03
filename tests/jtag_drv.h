@@ -5,65 +5,76 @@
 #ifndef __JTAG_DRV_H__
 #define __JTAG_DRV_H__
 
-enum xfer_mode { HW_MODE = 0, SW_MODE } xfer_mode;
+enum xfer_mode
+{
+    HW_MODE = 0,
+    SW_MODE
+} xfer_mode;
 
 #ifdef JTAG_LEGACY_DRIVER
-struct tck_bitbang {
-	__u8 tms;
-	__u8 tdi;
-	__u8 tdo;
+struct tck_bitbang
+{
+    __u8 tms;
+    __u8 tdi;
+    __u8 tdo;
 } __attribute__((__packed__));
 #endif
 
-struct scan_xfer {
-	__u8 mode;
-	__u32 tap_state;
-	__u32 length;
-	__u8 *tdi;
-	__u32 tdi_bytes;
-	__u8 *tdo;
-	__u32 tdo_bytes;
-	__u32 end_tap_state;
+struct scan_xfer
+{
+    __u8 mode;
+    __u32 tap_state;
+    __u32 length;
+    __u8* tdi;
+    __u32 tdi_bytes;
+    __u8* tdo;
+    __u32 tdo_bytes;
+    __u32 end_tap_state;
 } __attribute__((__packed__));
 
-struct set_tck_param {
-	__u8 mode;
-	__u32 tck;
+struct set_tck_param
+{
+    __u8 mode;
+    __u32 tck;
 } __attribute__((__packed__));
 
-struct get_tck_param {
-	__u8 mode;
-	__u32 tck;
+struct get_tck_param
+{
+    __u8 mode;
+    __u32 tck;
 } __attribute__((__packed__));
 
-struct tap_state_param {
-	__u8 mode;
-	__u32 from_state;
-	__u32 to_state;
+struct tap_state_param
+{
+    __u8 mode;
+    __u32 from_state;
+    __u32 to_state;
 } __attribute__((__packed__));
 
-struct controller_mode_param {
-	__u8 mode;
-	__u32 controller_mode;
+struct controller_mode_param
+{
+    __u8 mode;
+    __u32 controller_mode;
 } __attribute__((__packed__));
 
-enum jtag_states {
-	jtag_tlr,
-	jtag_rti,
-	jtag_sel_dr,
-	jtag_cap_dr,
-	jtag_shf_dr,
-	jtag_ex1_dr,
-	jtag_pau_dr,
-	jtag_ex2_dr,
-	jtag_upd_dr,
-	jtag_sel_ir,
-	jtag_cap_ir,
-	jtag_shf_ir,
-	jtag_ex1_ir,
-	jtag_pau_ir,
-	jtag_ex2_ir,
-	jtag_upd_ir
+enum jtag_states
+{
+    jtag_tlr,
+    jtag_rti,
+    jtag_sel_dr,
+    jtag_cap_dr,
+    jtag_shf_dr,
+    jtag_ex1_dr,
+    jtag_pau_dr,
+    jtag_ex2_dr,
+    jtag_upd_dr,
+    jtag_sel_ir,
+    jtag_cap_ir,
+    jtag_shf_ir,
+    jtag_ex1_ir,
+    jtag_pau_ir,
+    jtag_ex2_ir,
+    jtag_upd_ir
 } jtag_states;
 
 #define JTAGIOC_BASE 'T'

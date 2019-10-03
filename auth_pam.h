@@ -39,9 +39,9 @@ extern auth_hdlrs_t authpam_hdlrs;
 
 /** Auth Header version. */
 #define AUTH_HDR_VERSION                                                       \
-	0x30 /* Set to 30 to allow testing with ascii                          \
-	      * tools.                                                         \
-	      */
+    0x30 /* Set to 30 to allow testing with ascii                              \
+          * tools.                                                             \
+          */
 
 #define MAX_PW_LEN 128
 
@@ -62,36 +62,40 @@ extern auth_hdlrs_t authpam_hdlrs;
 
 /* Characters for the random string generator to use */
 #define RANDOM_ASCII_CHARACTERS                                                \
-	"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789,.-!#$%()+=*"
+    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789,.-!#$%()+" \
+    "=*"
 
 /** Header/Handshake responses */
-typedef enum {
-	AUTH_HANDSHAKE_SUCCESS = 0x30,
-	AUTH_HANDSHAKE_SYSERR = 0x24, // system error.
-	AUTH_HANDSHAKE_BUSY = 0x2b,   // session already in progress
-	AUTH_HANDSHAKE_FAILURE = 0x3f,
+typedef enum
+{
+    AUTH_HANDSHAKE_SUCCESS = 0x30,
+    AUTH_HANDSHAKE_SYSERR = 0x24, // system error.
+    AUTH_HANDSHAKE_BUSY = 0x2b,   // session already in progress
+    AUTH_HANDSHAKE_FAILURE = 0x3f,
 } __attribute__((packed)) auth_handshake_ret_t;
 
 /** Structure passed from client to provide credentials for auth */
-typedef struct {
-	/** Header version */
-	unsigned char auth_hdr_version;
+typedef struct
+{
+    /** Header version */
+    unsigned char auth_hdr_version;
 
-	/** Auth password*/
-	unsigned char auth_password[MAX_PW_LEN];
+    /** Auth password*/
+    unsigned char auth_password[MAX_PW_LEN];
 } __attribute__((packed)) auth_handshake_req_t;
 
 /** Structure returned to client with auth result */
-typedef struct {
-	/** Header version */
-	unsigned char svr_hdr_version;
-	auth_handshake_ret_t result_code;
+typedef struct
+{
+    /** Header version */
+    unsigned char svr_hdr_version;
+    auth_handshake_ret_t result_code;
 } __attribute__((packed)) auth_handshake_resp_t;
 
 #ifdef UNIT_TESTING_ONLY
 // expose callback for testing
-int pam_conversation_function(int numMsg, const struct pam_message **msg,
-			      struct pam_response **resp, void *appdata_ptr);
+int pam_conversation_function(int numMsg, const struct pam_message** msg,
+                              struct pam_response** resp, void* appdata_ptr);
 #endif
 
 #endif

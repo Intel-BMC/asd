@@ -30,6 +30,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <stdbool.h>
 #include <systemd/sd-bus.h>
+
 #include "asd_common.h"
 
 #define POWER_SERVICE "xyz.openbmc_project.State.Host"
@@ -41,13 +42,13 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #define POWER_OBJECT_PATH_CHASSIS "/xyz/openbmc_project/state/chassis0"
 #define SET_POWER_STATE_METHOD_CHASSIS "RequestedPowerTransition"
 #define POWER_OFF_ARGUMENT_CHASSIS                                             \
-	"xyz.openbmc_project.State.Chassis.Transition.Off"
+    "xyz.openbmc_project.State.Chassis.Transition.Off"
 #define POWER_ON_ARGUMENT_CHASSIS                                              \
-	"xyz.openbmc_project.State.Chassis.Transition.On"
+    "xyz.openbmc_project.State.Chassis.Transition.On"
 #define POWER_REBOOT_ARGUMENT_CHASSIS                                          \
-	"xyz.openbmc_project.State.Chassis.Transition.Reboot"
+    "xyz.openbmc_project.State.Chassis.Transition.Reboot"
 #define POWER_RESET_ARGUMENT_CHASSIS                                           \
-	"xyz.openbmc_project.State.Chassis.Transition.Reset"
+    "xyz.openbmc_project.State.Chassis.Transition.Reset"
 
 #define GET_POWER_STATE_METHOD "CurrentHostState"
 #define POWER_OFF_HOSTSTATE "xyz.openbmc_project.State.Host.HostState.Off"
@@ -55,30 +56,35 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #define DBUS_PROPERTIES "org.freedesktop.DBus.Properties"
 #define DBUS_SET_METHOD "Set"
 #define MATCH_STRING                                                           \
-	"type='signal',path='/xyz/openbmc_project/state/host0',\
+    "type='signal',path='/xyz/openbmc_project/state/host0',\
 interface='org.freedesktop.DBus.Properties'";
 #define SD_BUS_ASYNC_TIMEOUT 10000
 
-typedef enum { STATE_UNKNOWN = -1, STATE_OFF = 0, STATE_ON = 1 } Power_State;
+typedef enum
+{
+    STATE_UNKNOWN = -1,
+    STATE_OFF = 0,
+    STATE_ON = 1
+} Power_State;
 
-typedef struct Dbus_Handle {
-	sd_bus *bus;
-	int fd;
-	Power_State power_state;
+typedef struct Dbus_Handle
+{
+    sd_bus* bus;
+    int fd;
+    Power_State power_state;
 } Dbus_Handle;
 
-Dbus_Handle *dbus_helper();
-STATUS dbus_initialize(Dbus_Handle *);
-STATUS dbus_deinitialize(Dbus_Handle *);
-STATUS dbus_power_reset(Dbus_Handle *);
-STATUS dbus_power_toggle(Dbus_Handle *);
-STATUS dbus_power_reboot(Dbus_Handle *);
-STATUS dbus_power_on(Dbus_Handle *);
-STATUS dbus_power_off(Dbus_Handle *);
-int sdbus_callback(sd_bus_message *reply, void *userdata, sd_bus_error *error);
-STATUS dbus_process_event(Dbus_Handle *state, ASD_EVENT *event);
-STATUS dbus_get_hoststate(Dbus_Handle *state, int *value);
-int match_callback(sd_bus_message *m, void *userdata, sd_bus_error *error);
-
+Dbus_Handle* dbus_helper();
+STATUS dbus_initialize(Dbus_Handle*);
+STATUS dbus_deinitialize(Dbus_Handle*);
+STATUS dbus_power_reset(Dbus_Handle*);
+STATUS dbus_power_toggle(Dbus_Handle*);
+STATUS dbus_power_reboot(Dbus_Handle*);
+STATUS dbus_power_on(Dbus_Handle*);
+STATUS dbus_power_off(Dbus_Handle*);
+int sdbus_callback(sd_bus_message* reply, void* userdata, sd_bus_error* error);
+STATUS dbus_process_event(Dbus_Handle* state, ASD_EVENT* event);
+STATUS dbus_get_hoststate(Dbus_Handle* state, int* value);
+int match_callback(sd_bus_message* m, void* userdata, sd_bus_error* error);
 
 #endif

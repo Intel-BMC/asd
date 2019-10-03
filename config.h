@@ -30,31 +30,35 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "asd_common.h"
 
-typedef enum {
-	JTAG_DRIVER_MODE_SOFTWARE = 0,
-	JTAG_DRIVER_MODE_HARDWARE = 1
+typedef enum
+{
+    JTAG_DRIVER_MODE_SOFTWARE = 0,
+    JTAG_DRIVER_MODE_HARDWARE = 1
 } JTAG_DRIVER_MODE;
 
-typedef struct jtag_config {
-	// use HW or SW jtag driver.
-	JTAG_DRIVER_MODE mode;
-	JTAG_CHAIN_SELECT_MODE chain_mode;
+typedef struct jtag_config
+{
+    // use HW or SW jtag driver.
+    JTAG_DRIVER_MODE mode;
+    JTAG_CHAIN_SELECT_MODE chain_mode;
 } jtag_config;
 
 #define MAX_I2C_BUSES 20
-typedef struct i2c_config {
-	bool enable_i2c;
-	uint8_t default_bus;
-	// if 0th item is false, bus 0 is not allowed
-	bool allowed_buses[MAX_I2C_BUSES];
+typedef struct i2c_config
+{
+    bool enable_i2c;
+    uint8_t default_bus;
+    // if 0th item is false, bus 0 is not allowed
+    bool allowed_buses[MAX_I2C_BUSES];
 } i2c_config;
 
-typedef struct config {
-	jtag_config jtag;
-	remote_logging_config remote_logging;
-	i2c_config i2c;
+typedef struct config
+{
+    jtag_config jtag;
+    remote_logging_config remote_logging;
+    i2c_config i2c;
 } config;
 
-STATUS set_config_defaults(config *config, const i2c_options *i2c);
+STATUS set_config_defaults(config* config, const i2c_options* i2c);
 
 #endif // __CONFIG_H_

@@ -45,7 +45,6 @@ typedef unsigned long long __u64;
 #include "tests/jtag.h"
 #endif
 
-
 #ifndef JTAG_LEGACY_DRIVER
 #define jtag_states jtag_tapstate
 #define jtag_tlr JTAG_STATE_TLRESET
@@ -74,62 +73,69 @@ typedef unsigned long long __u64;
 #define tap_state_param jtag_tap_state
 #endif
 
-
 #define DRMAXPADSIZE 250
 #define IRMAXPADSIZE 2000
 #define DIV_ROUND_UP(n, d) (((n) + (d)-1) / (d))
 #define BITS_PER_BYTE 8
 #define APB_FREQ 24740000
 
-typedef enum {
-	JTAGPaddingTypes_IRPre,
-	JTAGPaddingTypes_IRPost,
-	JTAGPaddingTypes_DRPre,
-	JTAGPaddingTypes_DRPost
+typedef enum
+{
+    JTAGPaddingTypes_IRPre,
+    JTAGPaddingTypes_IRPost,
+    JTAGPaddingTypes_DRPre,
+    JTAGPaddingTypes_DRPost
 } JTAGPaddingTypes;
 
-typedef enum { JTAGScanState_Done = 0, JTAGScanState_Run } JTAGScanState;
+typedef enum
+{
+    JTAGScanState_Done = 0,
+    JTAGScanState_Run
+} JTAGScanState;
 
-typedef struct JTAGShiftPadding {
-	unsigned int drPre;
-	unsigned int drPost;
-	unsigned int irPre;
-	unsigned int irPost;
+typedef struct JTAGShiftPadding
+{
+    unsigned int drPre;
+    unsigned int drPost;
+    unsigned int irPre;
+    unsigned int irPost;
 } JTAGShiftPadding;
 
-typedef struct JTAG_Chain_State {
+typedef struct JTAG_Chain_State
+{
 #ifdef JTAG_LEGACY_DRIVER
-	enum jtag_states tap_state;
+    enum jtag_states tap_state;
 #else
-	enum jtag_tapstate tap_state;
+    enum jtag_tapstate tap_state;
 #endif
-	JTAGShiftPadding shift_padding;
-	JTAGScanState scan_state;
+    JTAGShiftPadding shift_padding;
+    JTAGScanState scan_state;
 } JTAG_Chain_State;
 
-typedef struct JTAG_Handler {
-	JTAG_Chain_State chains[MAX_SCAN_CHAINS];
-	JTAG_Chain_State *active_chain;
-	unsigned char padDataOne[IRMAXPADSIZE / 8];
-	unsigned char padDataZero[IRMAXPADSIZE / 8];
-	struct tck_bitbang bitbang_data[MAX_WAIT_CYCLES];
-	int JTAG_driver_handle;
-	bool sw_mode;
+typedef struct JTAG_Handler
+{
+    JTAG_Chain_State chains[MAX_SCAN_CHAINS];
+    JTAG_Chain_State* active_chain;
+    unsigned char padDataOne[IRMAXPADSIZE / 8];
+    unsigned char padDataZero[IRMAXPADSIZE / 8];
+    struct tck_bitbang bitbang_data[MAX_WAIT_CYCLES];
+    int JTAG_driver_handle;
+    bool sw_mode;
 } JTAG_Handler;
 
-JTAG_Handler *JTAGHandler();
-STATUS JTAG_initialize(JTAG_Handler *state, bool sw_mode);
-STATUS JTAG_deinitialize(JTAG_Handler *state);
-STATUS JTAG_set_padding(JTAG_Handler *state, JTAGPaddingTypes padding,
-			unsigned int value);
-STATUS JTAG_tap_reset(JTAG_Handler *state);
-STATUS JTAG_set_tap_state(JTAG_Handler *state, enum jtag_states tap_state);
-STATUS JTAG_get_tap_state(JTAG_Handler *state, enum jtag_states *tap_state);
-STATUS JTAG_shift(JTAG_Handler *state, unsigned int number_of_bits,
-		  unsigned int input_bytes, unsigned char *input,
-		  unsigned int output_bytes, unsigned char *output,
-		  enum jtag_states end_tap_state);
-STATUS JTAG_wait_cycles(JTAG_Handler *state, unsigned int number_of_cycles);
-STATUS JTAG_set_jtag_tck(JTAG_Handler *state, unsigned int tck);
-STATUS JTAG_set_active_chain(JTAG_Handler *state, scanChain chain);
+JTAG_Handler* JTAGHandler();
+STATUS JTAG_initialize(JTAG_Handler* state, bool sw_mode);
+STATUS JTAG_deinitialize(JTAG_Handler* state);
+STATUS JTAG_set_padding(JTAG_Handler* state, JTAGPaddingTypes padding,
+                        unsigned int value);
+STATUS JTAG_tap_reset(JTAG_Handler* state);
+STATUS JTAG_set_tap_state(JTAG_Handler* state, enum jtag_states tap_state);
+STATUS JTAG_get_tap_state(JTAG_Handler* state, enum jtag_states* tap_state);
+STATUS JTAG_shift(JTAG_Handler* state, unsigned int number_of_bits,
+                  unsigned int input_bytes, unsigned char* input,
+                  unsigned int output_bytes, unsigned char* output,
+                  enum jtag_states end_tap_state);
+STATUS JTAG_wait_cycles(JTAG_Handler* state, unsigned int number_of_cycles);
+STATUS JTAG_set_jtag_tck(JTAG_Handler* state, unsigned int tck);
+STATUS JTAG_set_active_chain(JTAG_Handler* state, scanChain chain);
 #endif // _JTAG_HANDLER_H_

@@ -28,8 +28,8 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #ifndef COMMON_H
 #define COMMON_H
 
-#include <stdint.h>
 #include <stdbool.h>
+#include <stdint.h>
 
 #define MAX_DATA_SIZE 3000
 #define SUPPORTED_JTAG_CHAINS 2
@@ -42,49 +42,58 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #define BROADCAST_MESSAGE_ORIGIN_ID 7
 
 // ASD Protocol Event IDs
-typedef enum {
-	ASD_EVENT_PLRSTDEASSRT = 1,
-	ASD_EVENT_PLRSTASSERT,
-	ASD_EVENT_PRDY_EVENT,
-	ASD_EVENT_PWRRESTORE,
-	ASD_EVENT_PWRFAIL,
-	ASD_EVENT_XDP_PRESENT,
-	ASD_EVENT_NONE
+typedef enum
+{
+    ASD_EVENT_PLRSTDEASSRT = 1,
+    ASD_EVENT_PLRSTASSERT,
+    ASD_EVENT_PRDY_EVENT,
+    ASD_EVENT_PWRRESTORE,
+    ASD_EVENT_PWRFAIL,
+    ASD_EVENT_XDP_PRESENT,
+    ASD_EVENT_NONE
 } ASD_EVENT;
 
-typedef enum { ST_OK, ST_ERR, ST_TIMEOUT } STATUS;
+typedef enum
+{
+    ST_OK,
+    ST_ERR,
+    ST_TIMEOUT
+} STATUS;
 
-typedef enum {
-	JTAG_FREQ = 1, // Size: 1 Byte
-	DR_PREFIX,     // Size: 1 Byte
-	DR_POSTFIX,    // Size: 1 Byte
-	IR_PREFIX,     // Size: 2 Bytes, LSB first
-	IR_POSTFIX,    // Size: 2 Bytes, LSB first
-	PRDY_TIMEOUT   // Size: 1 Byte
+typedef enum
+{
+    JTAG_FREQ = 1, // Size: 1 Byte
+    DR_PREFIX,     // Size: 1 Byte
+    DR_POSTFIX,    // Size: 1 Byte
+    IR_PREFIX,     // Size: 2 Bytes, LSB first
+    IR_POSTFIX,    // Size: 2 Bytes, LSB first
+    PRDY_TIMEOUT   // Size: 1 Byte
 } writeCfg;
 
-typedef enum {
-	AGENT_CONTROL_TYPE = 0,
-	JTAG_TYPE,
-	PROBE_MODE_TYPE,
-	DMA_TYPE,
-	HARDWARE_LOG_EVENT = 5,
-	I2C_TYPE
+typedef enum
+{
+    AGENT_CONTROL_TYPE = 0,
+    JTAG_TYPE,
+    PROBE_MODE_TYPE,
+    DMA_TYPE,
+    HARDWARE_LOG_EVENT = 5,
+    I2C_TYPE
 } headerType;
 
 //// These values are based on the Interface.Pins definition in the OpenIPC
 /// config xml and the 5.1.4 of the At-Scale-Debug spec.
-typedef enum {
-	PIN_MIN = -1,
-	PIN_PWRGOOD = 0,
-	PIN_PREQ,
-	PIN_RESET_BUTTON,
-	PIN_POWER_BUTTON,
-	PIN_EARLY_BOOT_STALL,
-	PIN_SYS_PWR_OK,
-	PIN_PRDY,
-	PIN_TCK_MUX_SELECT,
-	PIN_MAX // Insert before WRITE_PIN_MAX
+typedef enum
+{
+    PIN_MIN = -1,
+    PIN_PWRGOOD = 0,
+    PIN_PREQ,
+    PIN_RESET_BUTTON,
+    PIN_POWER_BUTTON,
+    PIN_EARLY_BOOT_STALL,
+    PIN_SYS_PWR_OK,
+    PIN_PRDY,
+    PIN_TCK_MUX_SELECT,
+    PIN_MAX // Insert before WRITE_PIN_MAX
 } Pin;
 
 // AGENT_CONTROL_TYPE commands
@@ -106,75 +115,89 @@ typedef enum {
 // This mask is used for extracting chain select mode from a command byte
 #define JTAG_CHAIN_SELECT_MODE_MASK 0x02
 
-typedef enum {
-	JTAG_CHAIN_SELECT_MODE_SINGLE = 1,
-	JTAG_CHAIN_SELECT_MODE_MULTI = 2
+typedef enum
+{
+    JTAG_CHAIN_SELECT_MODE_SINGLE = 1,
+    JTAG_CHAIN_SELECT_MODE_MULTI = 2
 } JTAG_CHAIN_SELECT_MODE;
 
 // Supported JTAG Scan Chains
-typedef enum { SCAN_CHAIN_0 = 0, SCAN_CHAIN_1, MAX_SCAN_CHAINS } scanChain;
+typedef enum
+{
+    SCAN_CHAIN_0 = 0,
+    SCAN_CHAIN_1,
+    MAX_SCAN_CHAINS
+} scanChain;
 
 // The protocol spec states the following:
 //    the status code that either contains 0x00 for successful completion
 //    of a command, or an error code from 0x01 to 0x7f
-typedef enum {
-	ASD_SUCCESS = 0,
-	ASD_MSG_CRYPY_NOT_SUPPORTED = 0x25,
-	ASD_FAILURE_INIT_JTAG_HANDLER = 0x26,
-	ASD_FAILURE_INIT_I2C_HANDLER = 0x27,
-	ASD_FAILURE_DEINIT_JTAG_HANDLER = 0x28,
-	ASD_MSG_NOT_SUPPORTED = 0x29,
-	ASD_FAILURE_PROCESS_JTAG_MSG = 0x2A,
-	ASD_FAILURE_PROCESS_I2C_MSG = 0x2B,
-	ASD_FAILURE_PROCESS_I2C_LOCK = 0x2C,
-	ASD_I2C_MSG_NOT_SUPPORTED = 0x2D,
-	ASD_FAILURE_REMOVE_I2C_LOCK = 0x2E,
-	ASD_FAILURE_HEADER_SIZE = 0x2F,
-	ASD_FAILURE_XDP_PRESENT = 0x30,
-	ASD_UNKNOWN_ERROR = 0x7F,
-	ASD_PACKET_CONTINUATION = 0x80,
+typedef enum
+{
+    ASD_SUCCESS = 0,
+    ASD_MSG_CRYPY_NOT_SUPPORTED = 0x25,
+    ASD_FAILURE_INIT_JTAG_HANDLER = 0x26,
+    ASD_FAILURE_INIT_I2C_HANDLER = 0x27,
+    ASD_FAILURE_DEINIT_JTAG_HANDLER = 0x28,
+    ASD_MSG_NOT_SUPPORTED = 0x29,
+    ASD_FAILURE_PROCESS_JTAG_MSG = 0x2A,
+    ASD_FAILURE_PROCESS_I2C_MSG = 0x2B,
+    ASD_FAILURE_PROCESS_I2C_LOCK = 0x2C,
+    ASD_I2C_MSG_NOT_SUPPORTED = 0x2D,
+    ASD_FAILURE_REMOVE_I2C_LOCK = 0x2E,
+    ASD_FAILURE_HEADER_SIZE = 0x2F,
+    ASD_FAILURE_XDP_PRESENT = 0x30,
+    ASD_UNKNOWN_ERROR = 0x7F,
+    ASD_PACKET_CONTINUATION = 0x80,
 } ASDError;
 
-struct message_header {
-	uint8_t origin_id : 3;
-	uint8_t reserved : 1;
-	uint8_t enc_bit : 1;
-	uint8_t type : 3;
-	uint8_t size_lsb : 8;
-	uint8_t size_msb : 5;
-	uint8_t tag : 3;
-	uint8_t cmd_stat : 8;
+struct message_header
+{
+    uint8_t origin_id : 3;
+    uint8_t reserved : 1;
+    uint8_t enc_bit : 1;
+    uint8_t type : 3;
+    uint8_t size_lsb : 8;
+    uint8_t size_msb : 5;
+    uint8_t tag : 3;
+    uint8_t cmd_stat : 8;
 } __attribute__((packed));
 
-struct asd_message {
-	struct message_header header;
-	unsigned char buffer[MAX_DATA_SIZE];
+struct asd_message
+{
+    struct message_header header;
+    unsigned char buffer[MAX_DATA_SIZE];
 } __attribute__((packed));
 
-typedef enum {
-	IPC_LogType_MIN = -1,
-	IPC_LogType_Trace = 0,
-	IPC_LogType_Debug,
-	IPC_LogType_Info,
-	IPC_LogType_Warning,
-	IPC_LogType_Error,
-	IPC_LogType_Off,
-	IPC_LogType_MAX,
+typedef enum
+{
+    IPC_LogType_MIN = -1,
+    IPC_LogType_Trace = 0,
+    IPC_LogType_Debug,
+    IPC_LogType_Info,
+    IPC_LogType_Warning,
+    IPC_LogType_Error,
+    IPC_LogType_Off,
+    IPC_LogType_MAX,
 } IPC_LogType;
 
-typedef struct remote_logging_config {
-	union {
-		struct {
-			uint8_t logging_level : 3;
-			uint8_t logging_stream : 3;
-		};
-		unsigned char value;
-	};
+typedef struct remote_logging_config
+{
+    union
+    {
+        struct
+        {
+            uint8_t logging_level : 3;
+            uint8_t logging_stream : 3;
+        };
+        unsigned char value;
+    };
 } __attribute__((packed)) remote_logging_config;
 
-typedef struct i2c_options {
-	bool enable;
-	uint8_t bus;
+typedef struct i2c_options
+{
+    bool enable;
+    uint8_t bus;
 } i2c_options;
 
 //  At Scale Debug Commands
@@ -251,12 +274,13 @@ typedef struct i2c_options {
 #define SCAN_LENGTH_MASK 0x3f
 
 #define ASD_I2C_BUFFER_LEN 15
-typedef struct asd_i2c_msg {
-	bool read;
-	bool force_stop;
-	uint8_t address;
-	uint8_t length;
-	uint8_t buffer[ASD_I2C_BUFFER_LEN];
+typedef struct asd_i2c_msg
+{
+    bool read;
+    bool force_stop;
+    uint8_t address;
+    uint8_t length;
+    uint8_t buffer[ASD_I2C_BUFFER_LEN];
 } asd_i2c_msg;
 
 //  At Scale Debug I2C Commands

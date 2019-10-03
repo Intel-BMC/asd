@@ -28,20 +28,22 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #ifndef ASD_I2C_MSG_BUILDER_H
 #define ASD_I2C_MSG_BUILDER_H
 
-#include "asd_common.h"
 #include <linux/i2c.h>
 
-typedef struct I2C_Msg_Builder {
-	void *msg_set;
+#include "asd_common.h"
+
+typedef struct I2C_Msg_Builder
+{
+    void* msg_set;
 } I2C_Msg_Builder;
 
-I2C_Msg_Builder *I2CMsgBuilder();
-STATUS i2c_msg_initialize(I2C_Msg_Builder *state);
-STATUS i2c_msg_deinitialize(I2C_Msg_Builder *state);
-STATUS i2c_msg_add(I2C_Msg_Builder *state, asd_i2c_msg *msg);
-STATUS i2c_msg_get_count(I2C_Msg_Builder *state, uint32_t *count);
-STATUS i2c_msg_get_asd_i2c_msg(I2C_Msg_Builder *state, uint32_t index,
-			       asd_i2c_msg *msg);
-STATUS i2c_msg_reset(I2C_Msg_Builder *state);
+I2C_Msg_Builder* I2CMsgBuilder();
+STATUS i2c_msg_initialize(I2C_Msg_Builder* state);
+STATUS i2c_msg_deinitialize(I2C_Msg_Builder* state);
+STATUS i2c_msg_add(I2C_Msg_Builder* state, asd_i2c_msg* msg);
+STATUS i2c_msg_get_count(I2C_Msg_Builder* state, uint32_t* count);
+STATUS i2c_msg_get_asd_i2c_msg(I2C_Msg_Builder* state, uint32_t index,
+                               asd_i2c_msg* msg);
+STATUS i2c_msg_reset(I2C_Msg_Builder* state);
 
 #endif // ASD_I2C_MSG_BUILDER_H

@@ -37,13 +37,13 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 extern extnet_hdlrs_t tls_hdlrs;
 
-extern STATUS exttls_init(void *p_hdlr_data);
+extern STATUS exttls_init(void* p_hdlr_data);
 extern void exttls_cleanup(void);
-extern STATUS exttls_on_accept(void *net_state, extnet_conn_t *pconn);
-extern STATUS exttls_init_client(extnet_conn_t *pconn);
-extern STATUS exttls_on_close_client(extnet_conn_t *pconn);
-extern int exttls_recv(extnet_conn_t *pconn, void *pv_buf, size_t sz_len,
-		       bool *b_data_pending);
-extern int exttls_send(extnet_conn_t *pconn, void *pv_buf, size_t sz_len);
+extern STATUS exttls_on_accept(void* net_state, extnet_conn_t* pconn);
+extern STATUS exttls_init_client(extnet_conn_t* pconn);
+extern STATUS exttls_on_close_client(extnet_conn_t* pconn);
+extern int exttls_recv(extnet_conn_t* pconn, void* pv_buf, size_t sz_len,
+                       bool* b_data_pending);
+extern int exttls_send(extnet_conn_t* pconn, void* pv_buf, size_t sz_len);
 
 #endif //__EXT_TLS_H

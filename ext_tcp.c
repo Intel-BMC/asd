@@ -30,27 +30,28 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  * encryption.
  */
 
-#include <stdio.h>
-#include <netinet/tcp.h>
-#include <stdint.h>
-#include "logging.h"
-#include "asd_common.h"
 #include "ext_tcp.h"
 
+#include <netinet/tcp.h>
+#include <stdint.h>
+#include <stdio.h>
+
+#include "asd_common.h"
+#include "logging.h"
+
 extnet_hdlrs_t tcp_hdlrs = {
-	exttcp_init,	exttcp_on_accept, exttcp_on_close_client,
-	exttcp_init_client, exttcp_recv,      exttcp_send,
-	exttcp_cleanup,
+    exttcp_init, exttcp_on_accept, exttcp_on_close_client, exttcp_init_client,
+    exttcp_recv, exttcp_send,      exttcp_cleanup,
 };
 
 /** @brief Initialize TCP
  *
  *  Called to initialize External Network Interface
  */
-STATUS exttcp_init(void *p_hdlr_data)
+STATUS exttcp_init(void* p_hdlr_data)
 {
-	(void)p_hdlr_data;
-	return ST_OK;
+    (void)p_hdlr_data;
+    return ST_OK;
 }
 
 /** @brief Cleans up TCP context and connections.
@@ -61,7 +62,6 @@ void exttcp_cleanup(void)
 {
 }
 
-
 /** @brief Accepts the socket connection and handles client key
  *
  *  Called each time a new connection is accepted on the listening socket.
@@ -70,11 +70,11 @@ void exttcp_cleanup(void)
  *  @param [in,out] pconn Pointer to the connection structure.
  *  @return ST_OK if successful.
  */
-STATUS exttcp_on_accept(void *net_state, extnet_conn_t *pconn)
+STATUS exttcp_on_accept(void* net_state, extnet_conn_t* pconn)
 {
-	(void)net_state;
-	(void)pconn;
-	return ST_OK;
+    (void)net_state;
+    (void)pconn;
+    return ST_OK;
 }
 
 /** @brief Initialize client connection
@@ -84,10 +84,10 @@ STATUS exttcp_on_accept(void *net_state, extnet_conn_t *pconn)
  *  @param [in,out] pconn Pointer to the connection pointer.
  *  @return RET_OK if successful.
  */
-STATUS exttcp_init_client(extnet_conn_t *pconn)
+STATUS exttcp_init_client(extnet_conn_t* pconn)
 {
-	(void)pconn;
-	return ST_OK;
+    (void)pconn;
+    return ST_OK;
 }
 
 /** @brief Close client connection and free pointer.
@@ -97,10 +97,10 @@ STATUS exttcp_init_client(extnet_conn_t *pconn)
  *  @param [in,out] pconn Pointer to the connection pointer.
  *  @return RET_OK if successful.
  */
-STATUS exttcp_on_close_client(extnet_conn_t *pconn)
+STATUS exttcp_on_close_client(extnet_conn_t* pconn)
 {
-	(void)pconn;
-	return ST_OK;
+    (void)pconn;
+    return ST_OK;
 }
 
 /** @brief Read data from external network connection
@@ -112,29 +112,32 @@ STATUS exttcp_on_close_client(extnet_conn_t *pconn)
  *  @param [in] sz_len sizeof pv_buf
  *  @return number of bytes received.
  */
-int exttcp_recv(extnet_conn_t *pconn, void *pv_buf, size_t sz_len,
-		bool *b_data_pending)
+int exttcp_recv(extnet_conn_t* pconn, void* pv_buf, size_t sz_len,
+                bool* b_data_pending)
 {
-	int n_read = -1;
-	*b_data_pending = false;
-	if (!pconn) {
-		ASD_log(ASD_LogLevel_Error, ASD_LogStream_Network,
-			ASD_LogOption_None,
-			"%s called with invalid connection pointer",
-			__FUNCTION__);
-	} else if (!pv_buf) {
-		ASD_log(ASD_LogLevel_Error, ASD_LogStream_Network,
-			ASD_LogOption_None,
-			"%s called with invalid buffer pointer", __FUNCTION__);
-	} else if (pconn->sockfd < 0) {
-		ASD_log(ASD_LogLevel_Error, ASD_LogStream_Network,
-			ASD_LogOption_None,
-			"%s called with invalid file descriptor %d",
-			__FUNCTION__, pconn->sockfd);
-	} else {
-		n_read = (int)recv(pconn->sockfd, pv_buf, sz_len, 0);
-	}
-	return n_read;
+    int n_read = -1;
+    *b_data_pending = false;
+    if (!pconn)
+    {
+        ASD_log(ASD_LogLevel_Error, ASD_LogStream_Network, ASD_LogOption_None,
+                "%s called with invalid connection pointer", __FUNCTION__);
+    }
+    else if (!pv_buf)
+    {
+        ASD_log(ASD_LogLevel_Error, ASD_LogStream_Network, ASD_LogOption_None,
+                "%s called with invalid buffer pointer", __FUNCTION__);
+    }
+    else if (pconn->sockfd < 0)
+    {
+        ASD_log(ASD_LogLevel_Error, ASD_LogStream_Network, ASD_LogOption_None,
+                "%s called with invalid file descriptor %d", __FUNCTION__,
+                pconn->sockfd);
+    }
+    else
+    {
+        n_read = (int)recv(pconn->sockfd, pv_buf, sz_len, 0);
+    }
+    return n_read;
 }
 
 /** @brief Write data to external network connection
@@ -146,25 +149,29 @@ int exttcp_recv(extnet_conn_t *pconn, void *pv_buf, size_t sz_len,
  *  @param [in] sz_len sizeof pv_buf
  *  @return number of bytes received.
  */
-int exttcp_send(extnet_conn_t *pconn, void *pv_buf, size_t sz_len)
+int exttcp_send(extnet_conn_t* pconn, void* pv_buf, size_t sz_len)
 {
-	int n_wr = -1;
+    int n_wr = -1;
 
-	if (!pconn) {
-		ASD_log(ASD_LogLevel_Error, ASD_LogStream_Network,
-			ASD_LogOption_None, "%s called with invalid pointer",
-			__FUNCTION__);
-	} else if (!pv_buf) {
-		ASD_log(ASD_LogLevel_Error, ASD_LogStream_Network,
-			ASD_LogOption_None, "%s called with invalid pointer",
-			__FUNCTION__);
-	} else if (pconn->sockfd < 0) {
-		ASD_log(ASD_LogLevel_Error, ASD_LogStream_Network,
-			ASD_LogOption_None,
-			"%s called with invalid file descriptor %d",
-			__FUNCTION__, pconn->sockfd);
-	} else {
-		n_wr = (int)send(pconn->sockfd, pv_buf, sz_len, 0);
-	}
-	return n_wr;
+    if (!pconn)
+    {
+        ASD_log(ASD_LogLevel_Error, ASD_LogStream_Network, ASD_LogOption_None,
+                "%s called with invalid pointer", __FUNCTION__);
+    }
+    else if (!pv_buf)
+    {
+        ASD_log(ASD_LogLevel_Error, ASD_LogStream_Network, ASD_LogOption_None,
+                "%s called with invalid pointer", __FUNCTION__);
+    }
+    else if (pconn->sockfd < 0)
+    {
+        ASD_log(ASD_LogLevel_Error, ASD_LogStream_Network, ASD_LogOption_None,
+                "%s called with invalid file descriptor %d", __FUNCTION__,
+                pconn->sockfd);
+    }
+    else
+    {
+        n_wr = (int)send(pconn->sockfd, pv_buf, sz_len, 0);
+    }
+    return n_wr;
 }

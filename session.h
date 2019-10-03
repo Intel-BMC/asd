@@ -33,6 +33,8 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #ifndef __SESSION_H
 #define __SESSION_H
 
+#include <time.h>
+
 #include "asd_common.h"
 #include "ext_network.h"
 
@@ -44,39 +46,41 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 typedef int session_fdarr_t[MAX_SESSIONS];
 
 /** Structure to track session info */
-typedef struct {
-	int id;
-	extnet_conn_t extconn; // External Connection
-	time_t t_auth_tout; // Time stamp when authentication attempt times out
-	bool b_authenticated; // True if session is authenticated.
-	bool b_data_pending;  // Hint that more data is pending for the
-			      // connection.
+typedef struct
+{
+    int id;
+    extnet_conn_t extconn; // External Connection
+    time_t t_auth_tout;    // Time stamp when authentication attempt times out
+    bool b_authenticated;  // True if session is authenticated.
+    bool b_data_pending;   // Hint that more data is pending for the
+                           // connection.
 } session_t;
 
 /** Global data struct */
-typedef struct Session {
-	bool b_initialized;
-	session_t sessions[MAX_SESSIONS];
-	int n_authenticated_id; // only one session may be authenticated.
-	ExtNet *extnet;
+typedef struct Session
+{
+    bool b_initialized;
+    session_t sessions[MAX_SESSIONS];
+    int n_authenticated_id; // only one session may be authenticated.
+    ExtNet* extnet;
 } Session;
 
-extern Session *session_init(ExtNet *extnet);
-extern extnet_conn_t *session_lookup_conn(Session *state, int fd);
-extern STATUS session_open(Session *state, extnet_conn_t *p_extconn);
-extern STATUS session_close(Session *state, extnet_conn_t *p_extconn);
-extern void session_close_all(Session *state);
-extern void session_close_expired_unauth(Session *state);
-extern STATUS session_already_authenticated(Session *state,
-					    extnet_conn_t *p_extconn);
-extern STATUS session_auth_complete(Session *state, extnet_conn_t *p_extconn);
-extern STATUS session_get_authenticated_conn(Session *state,
-					     extnet_conn_t *p_authd_conn);
-extern STATUS session_getfds(Session *state, session_fdarr_t *na_fds,
-			     int *pn_fds, int *pn_timeout);
-extern STATUS session_set_data_pending(Session *state, extnet_conn_t *p_extconn,
-				       bool b_data_pending);
-extern STATUS session_get_data_pending(Session *state, extnet_conn_t *p_extconn,
-				       bool *b_data_pending);
+extern Session* session_init(ExtNet* extnet);
+extern extnet_conn_t* session_lookup_conn(Session* state, int fd);
+extern STATUS session_open(Session* state, extnet_conn_t* p_extconn);
+extern STATUS session_close(Session* state, extnet_conn_t* p_extconn);
+extern void session_close_all(Session* state);
+extern void session_close_expired_unauth(Session* state);
+extern STATUS session_already_authenticated(Session* state,
+                                            extnet_conn_t* p_extconn);
+extern STATUS session_auth_complete(Session* state, extnet_conn_t* p_extconn);
+extern STATUS session_get_authenticated_conn(Session* state,
+                                             extnet_conn_t* p_authd_conn);
+extern STATUS session_getfds(Session* state, session_fdarr_t* na_fds,
+                             int* pn_fds, int* pn_timeout);
+extern STATUS session_set_data_pending(Session* state, extnet_conn_t* p_extconn,
+                                       bool b_data_pending);
+extern STATUS session_get_data_pending(Session* state, extnet_conn_t* p_extconn,
+                                       bool* b_data_pending);
 
 #endif

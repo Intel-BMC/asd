@@ -25,43 +25,40 @@ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
+#include <getopt.h>
 #include <setjmp.h>
 #include <stdarg.h>
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <stdint.h>
 #include <string.h>
-#include <syslog.h>
 #include <sys/socket.h>
-#include <getopt.h>
-
-#include "cmocka.h"
+#include <syslog.h>
 
 #include "../auth_none.h"
 #include "../authenticate.h"
+#include "cmocka.h"
 
-
-void authnone_init_returns_success_test(void **state)
+void authnone_init_returns_success_test(void** state)
 {
-	(void)state;
-	assert_int_equal(ST_OK, authnone_hdlrs.init(NULL));
+    (void)state;
+    assert_int_equal(ST_OK, authnone_hdlrs.init(NULL));
 }
 
-void auth_none_returns_success_test(void **state)
+void auth_none_returns_success_test(void** state)
 {
-	(void)state;
-	assert_int_equal(ST_OK,
-			 authnone_hdlrs.client_handshake(NULL, NULL, NULL));
+    (void)state;
+    assert_int_equal(ST_OK, authnone_hdlrs.client_handshake(NULL, NULL, NULL));
 }
 
 int main()
 {
-	const struct CMUnitTest tests[] = {
-		cmocka_unit_test(authnone_init_returns_success_test),
-		cmocka_unit_test(auth_none_returns_success_test),
-	};
+    const struct CMUnitTest tests[] = {
+        cmocka_unit_test(authnone_init_returns_success_test),
+        cmocka_unit_test(auth_none_returns_success_test),
+    };
 
-	return cmocka_run_group_tests(tests, NULL, NULL);
+    return cmocka_run_group_tests(tests, NULL, NULL);
 }

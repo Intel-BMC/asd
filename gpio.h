@@ -29,25 +29,28 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #define __GPIO_H_
 
 #include <stdbool.h>
+
 #include "asd_common.h"
 
-typedef enum {
-	GPIO_EDGE_NONE,
-	GPIO_EDGE_RISING,
-	GPIO_EDGE_FALLING,
-	GPIO_EDGE_BOTH,
+typedef enum
+{
+    GPIO_EDGE_NONE,
+    GPIO_EDGE_RISING,
+    GPIO_EDGE_FALLING,
+    GPIO_EDGE_BOTH,
 } GPIO_EDGE;
 
-typedef enum {
-	GPIO_DIRECTION_IN,
-	GPIO_DIRECTION_OUT,
-	GPIO_DIRECTION_HIGH,
-	GPIO_DIRECTION_LOW,
+typedef enum
+{
+    GPIO_DIRECTION_IN,
+    GPIO_DIRECTION_OUT,
+    GPIO_DIRECTION_HIGH,
+    GPIO_DIRECTION_LOW,
 } GPIO_DIRECTION;
 
-STATUS gpio_export(int gpio, int *fd);
+STATUS gpio_export(int gpio, int* fd);
 STATUS gpio_unexport(int gpio);
-STATUS gpio_get_value(int fd, int *value);
+STATUS gpio_get_value(int fd, int* value);
 STATUS gpio_set_value(int fd, int value);
 STATUS gpio_set_edge(int gpio, GPIO_EDGE edge);
 STATUS gpio_set_direction(int gpio, GPIO_DIRECTION direction);

@@ -31,57 +31,60 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  * tracking authentication attempts and locking out authentication when a
  * threshold is exceeded.
  */
-#include <stdio.h>
-#include <unistd.h>
-#include <sys/types.h>
-#include <time.h>
-#include <string.h>
+#include "authenticate.h"
+
 #include <assert.h>
 #include <stdint.h>
-#include "authenticate.h"
-#include "logging.h"
+#include <stdio.h>
+#include <string.h>
+#include <sys/types.h>
+#include <time.h>
+#include <unistd.h>
+
 #include "asd_common.h"
-#include "ext_network.h"
-#include "session.h"
 #include "auth_none.h"
 #include "auth_pam.h"
+#include "ext_network.h"
+#include "logging.h"
+#include "session.h"
 
-
-static struct {
-	auth_hdlrs_t *p_hdlrs;
+static struct
+{
+    auth_hdlrs_t* p_hdlrs;
 } sg_data = {0};
-
 
 /** @brief Initialize authentication handler
  *  @param [in] e_type Handler type to use for authentication.
  *  @param [in] p_hdlr_data Pointer to handler specific data (not used)
  */
-STATUS auth_init(auth_hdlr_type_t e_type, void *p_hdlr_data)
+STATUS auth_init(auth_hdlr_type_t e_type, void* p_hdlr_data)
 {
-	STATUS st_ret = ST_OK;
+    STATUS st_ret = ST_OK;
 
-	switch (e_type) {
-	case AUTH_HDLR_NONE:
-		sg_data.p_hdlrs = &authnone_hdlrs;
-		break;
-	case AUTH_HDLR_PAM:
-		sg_data.p_hdlrs = &authpam_hdlrs;
-		break;
-	default:
-		ASD_log(ASD_LogLevel_Error, ASD_LogStream_Network,
-			ASD_LogOption_None,
-			"Invalid authentication handler %d!", e_type);
-		st_ret = ST_ERR;
-		break;
-	}
+    switch (e_type)
+    {
+        case AUTH_HDLR_NONE:
+            sg_data.p_hdlrs = &authnone_hdlrs;
+            break;
+        case AUTH_HDLR_PAM:
+            sg_data.p_hdlrs = &authpam_hdlrs;
+            break;
+        default:
+            ASD_log(ASD_LogLevel_Error, ASD_LogStream_Network,
+                    ASD_LogOption_None, "Invalid authentication handler %d!",
+                    e_type);
+            st_ret = ST_ERR;
+            break;
+    }
 
-	if (!sg_data.p_hdlrs || !sg_data.p_hdlrs->init)
-		st_ret = ST_ERR;
+    if (!sg_data.p_hdlrs || !sg_data.p_hdlrs->init)
+        st_ret = ST_ERR;
 
-	if (st_ret == ST_OK) {
-		st_ret = sg_data.p_hdlrs->init(p_hdlr_data);
-	}
-	return st_ret;
+    if (st_ret == ST_OK)
+    {
+        st_ret = sg_data.p_hdlrs->init(p_hdlr_data);
+    }
+    return st_ret;
 }
 
 /** @brief Read and validate client header and password.
@@ -92,18 +95,20 @@ STATUS auth_init(auth_hdlr_type_t e_type, void *p_hdlr_data)
  *  @param [in] p_extconn pointer
  *  @return AUTHRET_OK if successful, otherwise another auth_ret_t value.
  */
-STATUS auth_client_handshake(Session *session, ExtNet *net_state,
-			     extnet_conn_t *p_extconn)
+STATUS auth_client_handshake(Session* session, ExtNet* net_state,
+                             extnet_conn_t* p_extconn)
 {
-	STATUS st_ret = ST_ERR;
+    STATUS st_ret = ST_ERR;
 
-	if (!sg_data.p_hdlrs || !sg_data.p_hdlrs->client_handshake) {
-		ASD_log(ASD_LogLevel_Error, ASD_LogStream_Network,
-			ASD_LogOption_None, "%s Not initialized!",
-			__FUNCTION__);
-	} else {
-		st_ret = sg_data.p_hdlrs->client_handshake(session, net_state,
-							   p_extconn);
-	}
-	return st_ret;
+    if (!sg_data.p_hdlrs || !sg_data.p_hdlrs->client_handshake)
+    {
+        ASD_log(ASD_LogLevel_Error, ASD_LogStream_Network, ASD_LogOption_None,
+                "%s Not initialized!", __FUNCTION__);
+    }
+    else
+    {
+        st_ret =
+            sg_data.p_hdlrs->client_handshake(session, net_state, p_extconn);
+    }
+    return st_ret;
 }

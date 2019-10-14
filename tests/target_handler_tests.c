@@ -818,7 +818,7 @@ void target_deinitialize_non_minus_test(void** state)
     handle->gpios[0].fd = 100;
     // deinit gpios
     // expectations for gpio initialization
-    for (int i = 0; i < NUM_GPIOS - 2; i++)
+    for (int i = 0; i < NUM_GPIOS - 1; i++)
     {
         expect_any(__wrap_gpio_set_direction, gpio);
         expect_value(__wrap_gpio_set_direction, direction, GPIO_DIRECTION_IN);
@@ -1065,14 +1065,8 @@ void target_write_power_on_and_reset_break_success_test(void** state)
     int expected_preq_fd = 876;
     Target_Control_Handle handle;
     handle.initialized = true;
-    handle.event_cfg.reset_break = true;
     handle.gpios[BMC_CPU_PWRGD].type = PIN_GPIO;
-    handle.gpios[BMC_PREQ_N].fd = expected_preq_fd;
     DBUS_POWER_REBOOT_RESULT = ST_OK;
-    expect_value(__wrap_gpio_set_value, fd, expected_preq_fd);
-    expect_value(__wrap_gpio_set_value, value, 1);
-    GPIO_SET_VALUE_RESULT[0] = ST_OK;
-    GPIO_SET_VALUE_INDEX = 0;
     expect_any(__wrap_gpio_get_value, fd);
     expect_any(__wrap_gpio_get_value, value);
     expect_any(__wrap_dbus_power_off, state);
@@ -1081,23 +1075,6 @@ void target_write_power_on_and_reset_break_success_test(void** state)
     DBUS_POWER_OFF_RESULT = ST_OK;
 
     assert_int_equal(ST_OK, target_write(&handle, PIN_POWER_BUTTON, true));
-}
-
-void target_write_power_on_and_reset_break_failure_test(void** state)
-{
-    (void)state; /* unused */
-    int expected_preq_fd = 876;
-    Target_Control_Handle handle;
-    handle.initialized = true;
-    handle.event_cfg.reset_break = true;
-    handle.gpios[BMC_PREQ_N].fd = expected_preq_fd;
-
-    expect_value(__wrap_gpio_set_value, fd, expected_preq_fd);
-    expect_value(__wrap_gpio_set_value, value, 1);
-    GPIO_SET_VALUE_RESULT[0] = ST_ERR;
-    GPIO_SET_VALUE_INDEX = 0;
-
-    assert_int_equal(ST_ERR, target_write(&handle, PIN_POWER_BUTTON, true));
 }
 
 void target_write_power_reset_success_test(void** state)
@@ -1119,35 +1096,11 @@ void target_write_power_reset_and_reset_break_success_test(void** state)
     int expected_preq_fd = 876;
     Target_Control_Handle handle;
     handle.initialized = true;
-    handle.event_cfg.reset_break = true;
-    handle.gpios[BMC_PREQ_N].fd = expected_preq_fd;
 
     expect_any(__wrap_dbus_power_reset, state);
     DBUS_POWER_RESET_RESULT = ST_OK;
 
-    expect_value(__wrap_gpio_set_value, fd, expected_preq_fd);
-    expect_value(__wrap_gpio_set_value, value, 1);
-    GPIO_SET_VALUE_RESULT[0] = ST_OK;
-    GPIO_SET_VALUE_INDEX = 0;
-
     assert_int_equal(ST_OK, target_write(&handle, PIN_RESET_BUTTON, true));
-}
-
-void target_write_power_reset_and_reset_break_failure_test(void** state)
-{
-    (void)state; /* unused */
-    int expected_preq_fd = 876;
-    Target_Control_Handle handle;
-    handle.initialized = true;
-    handle.event_cfg.reset_break = true;
-    handle.gpios[BMC_PREQ_N].fd = expected_preq_fd;
-
-    expect_value(__wrap_gpio_set_value, fd, expected_preq_fd);
-    expect_value(__wrap_gpio_set_value, value, 1);
-    GPIO_SET_VALUE_RESULT[0] = ST_ERR;
-    GPIO_SET_VALUE_INDEX = 0;
-
-    assert_int_equal(ST_ERR, target_write(&handle, PIN_RESET_BUTTON, true));
 }
 
 void target_write_unkown_pin_test(void** state)
@@ -1946,10 +1899,8 @@ int main()
         cmocka_unit_test(target_write_power_on_dbus_failure_test),
         cmocka_unit_test(target_write_power_onoff_failure_test),
         cmocka_unit_test(target_write_power_on_and_reset_break_success_test),
-        cmocka_unit_test(target_write_power_on_and_reset_break_failure_test),
         cmocka_unit_test(target_write_power_reset_success_test),
         cmocka_unit_test(target_write_power_reset_and_reset_break_success_test),
-        cmocka_unit_test(target_write_power_reset_and_reset_break_failure_test),
         cmocka_unit_test(target_write_unkown_pin_test),
         cmocka_unit_test(target_read_not_initialized_test),
         cmocka_unit_test(target_read_BMC_PRDY_N_failure_test),

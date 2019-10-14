@@ -172,15 +172,6 @@ Target_Control_Handle* TargetHandler()
                 sizeof("PLTRST_N"));
     state->gpios[BMC_PLTRST_B].direction = GPIO_DIRECTION_IN;
     state->gpios[BMC_PLTRST_B].edge = GPIO_EDGE_BOTH;
-    // TODO: Remove this when we can share the pin or the Peci WA has been
-    // removed (file://0071-peci-add-a-temporary-workaround.patch)
-    // Open BMC team recently added a workaround for ICX where BMC cannot
-    // communicate over PECI while the PLTRST is asserted. In the WA PECI
-    // driver claims this pin and handle it to WA the issue, as a side
-    // effect no one else can export the gpio 46(BMC_PLTRST_B).
-    // We are going to fake initialization to avoid GPIO setup by telling
-    // target handler that this pin will be handled by DBUS.
-    state->gpios[BMC_PLTRST_B].type = PIN_DBUS;
 
     strcpy_safe(state->gpios[BMC_SYSPWROK].name,
                 sizeof(state->gpios[BMC_SYSPWROK].name), "SYSPWROK",
@@ -882,19 +873,6 @@ STATUS target_write(Target_Control_Handle* state, const Pin pin,
                     assert ? "assert" : "deassert");
             if (assert)
             {
-                if (state->event_cfg.reset_break)
-                {
-#ifdef ENABLE_DEBUG_LOGGING
-                    ASD_log(ASD_LogLevel_Debug, stream, option,
-                            "Reset break armed, asserting PREQ");
-#endif
-                    write_pin_value(state->gpios[BMC_PREQ_N], 1, &result);
-                    if (result != ST_OK)
-                    {
-                        ASD_log(ASD_LogLevel_Error, stream, option,
-                                "Assert PREQ for ResetBreak failed");
-                    }
-                }
                 if (result == ST_OK)
                 {
                     read_pin_value(state->gpios[BMC_CPU_PWRGD], &value,

@@ -33,14 +33,15 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "asd_common.h"
 
-#define POWER_SERVICE "xyz.openbmc_project.State.Host"
-#define POWER_OBJECT_PATH "/xyz/openbmc_project/state/host0"
-#define POWER_INTERFACE_NAME "xyz.openbmc_project.State.Host"
-
 #define POWER_SERVICE_CHASSIS "xyz.openbmc_project.State.Chassis"
 #define POWER_INTERFACE_NAME_CHASSIS "xyz.openbmc_project.State.Chassis"
 #define POWER_OBJECT_PATH_CHASSIS "/xyz/openbmc_project/state/chassis0"
+#define GET_POWER_STATE_PROPERTY_CHASSIS "CurrentPowerState"
 #define SET_POWER_STATE_METHOD_CHASSIS "RequestedPowerTransition"
+#define POWER_OFF_PROPERTY_CHASSIS                                             \
+    "xyz.openbmc_project.State.Chassis.PowerState.Off"
+#define POWER_ON_PROPERTY_CHASSIS                                              \
+    "xyz.openbmc_project.State.Chassis.PowerState.On"
 #define POWER_OFF_ARGUMENT_CHASSIS                                             \
     "xyz.openbmc_project.State.Chassis.Transition.Off"
 #define POWER_ON_ARGUMENT_CHASSIS                                              \
@@ -50,14 +51,13 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #define POWER_RESET_ARGUMENT_CHASSIS                                           \
     "xyz.openbmc_project.State.Chassis.Transition.Reset"
 
-#define GET_POWER_STATE_METHOD "CurrentHostState"
-#define POWER_OFF_HOSTSTATE "xyz.openbmc_project.State.Host.HostState.Off"
-#define POWER_ON_HOSTSTATE "xyz.openbmc_project.State.Host.HostState.Running"
 #define DBUS_PROPERTIES "org.freedesktop.DBus.Properties"
 #define DBUS_SET_METHOD "Set"
-#define MATCH_STRING                                                           \
-    "type='signal',path='/xyz/openbmc_project/state/host0',\
-interface='org.freedesktop.DBus.Properties'";
+#define MATCH_STRING_CHASSIS                                                   \
+    "type='signal',path='/xyz/openbmc_project/state/chassis0',\
+member='PropertiesChanged',interface='org.freedesktop.DBus.Properties',\
+sender='xyz.openbmc_project.State.Chassis',\
+arg0namespace='xyz.openbmc_project.State.Chassis'"
 #define SD_BUS_ASYNC_TIMEOUT 10000
 
 typedef enum
@@ -84,7 +84,7 @@ STATUS dbus_power_on(Dbus_Handle*);
 STATUS dbus_power_off(Dbus_Handle*);
 int sdbus_callback(sd_bus_message* reply, void* userdata, sd_bus_error* error);
 STATUS dbus_process_event(Dbus_Handle* state, ASD_EVENT* event);
-STATUS dbus_get_hoststate(Dbus_Handle* state, int* value);
+STATUS dbus_get_powerstate(Dbus_Handle* state, int* value);
 int match_callback(sd_bus_message* m, void* userdata, sd_bus_error* error);
 
 #endif

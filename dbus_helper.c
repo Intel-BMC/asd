@@ -57,7 +57,7 @@ Dbus_Handle* dbus_helper()
 STATUS dbus_initialize(Dbus_Handle* state)
 {
     STATUS result = ST_ERR;
-    const char* match = MATCH_STRING;
+    const char* match = MATCH_STRING_CHASSIS;
     if (state)
     {
         /* Connect to the system bus */
@@ -83,11 +83,11 @@ STATUS dbus_initialize(Dbus_Handle* state)
                 }
                 else
                 {
-                    result = dbus_get_hoststate(state, &state->power_state);
+                    result = dbus_get_powerstate(state, &state->power_state);
                     if (result == ST_ERR)
                     {
                         ASD_log(ASD_LogLevel_Error, stream, option,
-                                "dbus_get_hoststate failed");
+                                "dbus_get_powerstate failed");
                     }
                 }
             }
@@ -168,12 +168,13 @@ STATUS dbus_power_toggle(Dbus_Handle* state)
     if (state && state->bus)
     {
         int retcode = sd_bus_get_property(
-            state->bus, POWER_SERVICE, POWER_OBJECT_PATH, POWER_INTERFACE_NAME,
-            GET_POWER_STATE_METHOD, &error, &reply, "s");
+            state->bus, POWER_SERVICE_CHASSIS, POWER_OBJECT_PATH_CHASSIS,
+            POWER_INTERFACE_NAME_CHASSIS, GET_POWER_STATE_PROPERTY_CHASSIS,
+            &error, &reply, "s");
         if (retcode >= 0)
         {
             sd_bus_message_read(reply, "s", &value);
-            if (strcmp(value, POWER_ON_HOSTSTATE) == 0)
+            if (strcmp(value, POWER_ON_PROPERTY_CHASSIS) == 0)
                 result = dbus_power_off(state);
             else
                 result = dbus_power_on(state);
@@ -186,7 +187,7 @@ STATUS dbus_power_toggle(Dbus_Handle* state)
     return result;
 }
 
-STATUS dbus_get_hoststate(Dbus_Handle* state, int* value)
+STATUS dbus_get_powerstate(Dbus_Handle* state, int* value)
 {
     STATUS result = ST_ERR;
     sd_bus_error error = SD_BUS_ERROR_NULL;
@@ -202,14 +203,14 @@ STATUS dbus_get_hoststate(Dbus_Handle* state, int* value)
         else
         {
             int retcode = sd_bus_get_property(
-                state->bus, POWER_SERVICE, POWER_OBJECT_PATH,
-                POWER_INTERFACE_NAME, GET_POWER_STATE_METHOD, &error, &reply,
-                "s");
+                state->bus, POWER_SERVICE_CHASSIS, POWER_OBJECT_PATH_CHASSIS,
+                POWER_INTERFACE_NAME_CHASSIS, GET_POWER_STATE_PROPERTY_CHASSIS,
+                &error, &reply, "s");
             if (retcode >= 0)
             {
                 sd_bus_message_read(reply, "s", &value_string);
-                if (strncmp(value_string, POWER_ON_HOSTSTATE,
-                            strlen(POWER_ON_HOSTSTATE)) == 0)
+                if (strncmp(value_string, POWER_ON_PROPERTY_CHASSIS,
+                            strlen(POWER_ON_PROPERTY_CHASSIS)) == 0)
                     *value = STATE_ON;
                 else
                     *value = STATE_OFF;
@@ -309,7 +310,7 @@ STATUS dbus_process_event(Dbus_Handle* state, ASD_EVENT* event)
 int match_callback(sd_bus_message* msg, void* userdata, sd_bus_error* error)
 {
     Dbus_Handle* state = (Dbus_Handle*)userdata;
-    int result = ST_OK;
+    int result = ST_ERR;
     const char* str;
     //(s interface, a{sv}
     int retcode = sd_bus_message_skip(msg, "s");
@@ -343,7 +344,14 @@ int match_callback(sd_bus_message* msg, void* userdata, sd_bus_error* error)
                     result = ST_ERR;
                     break;
                 }
-
+                //  Focus in CurrentPowerState messages only,
+                //  discard LastStateChangeTime and
+                //  RequestedPowerTransition
+                if (strcmp(str, GET_POWER_STATE_PROPERTY_CHASSIS) != 0)
+                {
+                    result = ST_ERR;
+                    continue;
+                }
                 retcode = sd_bus_message_enter_container(
                     msg, SD_BUS_TYPE_VARIANT, "s");
                 if (retcode < 0)
@@ -362,10 +370,14 @@ int match_callback(sd_bus_message* msg, void* userdata, sd_bus_error* error)
                     result = ST_ERR;
                     break;
                 }
+                else
+                {
+                    result = ST_OK;
+                }
             }
             if (result == ST_OK)
             {
-                if (strcmp(str, POWER_OFF_HOSTSTATE) == 0)
+                if (strcmp(str, POWER_OFF_PROPERTY_CHASSIS) == 0)
                 {
                     state->power_state = STATE_OFF;
                 }

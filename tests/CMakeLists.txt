@@ -310,7 +310,7 @@ set_target_properties(
                     -Wl,--wrap=dbus_power_reboot \
                     -Wl,--wrap=dbus_power_on \
                     -Wl,--wrap=dbus_power_off \
-                    -Wl,--wrap=dbus_get_hoststate \
+                    -Wl,--wrap=dbus_get_powerstate \
                     -Wl,--wrap=gpio_set_active_low -Wl,--wrap=usleep \
                     -Wl,--wrap=dbus_helper -Wl,--wrap=dbus_initialize \
                     -Wl,--wrap=dbus_deinitialize -Wl,--wrap=dbus_power_reset \

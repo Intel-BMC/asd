@@ -952,7 +952,7 @@ STATUS target_write(Target_Control_Handle* state, const Pin pin,
                     read_pin_value(state->gpios[BMC_CPU_PWRGD], &value,
                                    &result);
                     if (state->gpios[BMC_CPU_PWRGD].type == PIN_DBUS)
-                        result = dbus_get_hoststate(state->dbus, &value);
+                        result = dbus_get_powerstate(state->dbus, &value);
                     if (result != ST_OK)
                     {
 #ifdef ENABLE_DEBUG_LOGGING
@@ -1021,7 +1021,7 @@ STATUS target_read(Target_Control_Handle* state, Pin pin, bool* asserted)
             read_pin_value(state->gpios[BMC_CPU_PWRGD], &value, &result);
             if (state->gpios[BMC_CPU_PWRGD].type == PIN_DBUS)
             {
-                result = dbus_get_hoststate(state->dbus, &value);
+                result = dbus_get_powerstate(state->dbus, &value);
             }
             if (result != ST_OK)
             {

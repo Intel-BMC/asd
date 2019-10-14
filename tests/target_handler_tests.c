@@ -178,14 +178,14 @@ STATUS __wrap_gpio_set_active_low(int gpio, bool active_low)
     return GPIO_SET_ACTIVE_LOW_RESULT;
 }
 
-STATUS DBUS_GET_HOSTSTATE_RESULT = ST_OK;
-int DBUS_GET_HOSTSTATE_VALUE = 0;
-STATUS __wrap_dbus_get_hoststate(Dbus_Handle* state, int* value)
+STATUS DBUS_GET_POWERSTATE_RESULT = ST_OK;
+int DBUS_GET_POWERSTATE_VALUE = 0;
+STATUS __wrap_dbus_get_powerstate(Dbus_Handle* state, int* value)
 {
     check_expected(state);
     check_expected_ptr(value);
-    *value = DBUS_GET_HOSTSTATE_VALUE;
-    return DBUS_GET_HOSTSTATE_RESULT;
+    *value = DBUS_GET_POWERSTATE_VALUE;
+    return DBUS_GET_POWERSTATE_RESULT;
 }
 
 Dbus_Handle DBUS;
@@ -1003,10 +1003,10 @@ void target_write_power_on_dbus_success_test(void** state)
     handle.gpios[BMC_CPU_PWRGD].type = PIN_DBUS;
     handle.initialized = true;
     handle.event_cfg.reset_break = false;
-    DBUS_GET_HOSTSTATE_RESULT = ST_OK;
-    DBUS_GET_HOSTSTATE_VALUE = 0;
-    expect_any(__wrap_dbus_get_hoststate, state);
-    expect_any(__wrap_dbus_get_hoststate, value);
+    DBUS_GET_POWERSTATE_RESULT = ST_OK;
+    DBUS_GET_POWERSTATE_VALUE = 0;
+    expect_any(__wrap_dbus_get_powerstate, state);
+    expect_any(__wrap_dbus_get_powerstate, value);
     expect_any(__wrap_dbus_power_on, state);
     DBUS_POWER_ON_RESULT = ST_OK;
 
@@ -1020,10 +1020,10 @@ void target_write_power_on_dbus_failure_test(void** state)
     handle.gpios[BMC_CPU_PWRGD].type = PIN_DBUS;
     handle.initialized = true;
     handle.event_cfg.reset_break = false;
-    DBUS_GET_HOSTSTATE_RESULT = ST_ERR;
-    DBUS_GET_HOSTSTATE_VALUE = 0;
-    expect_any(__wrap_dbus_get_hoststate, state);
-    expect_any(__wrap_dbus_get_hoststate, value);
+    DBUS_GET_POWERSTATE_RESULT = ST_ERR;
+    DBUS_GET_POWERSTATE_VALUE = 0;
+    expect_any(__wrap_dbus_get_powerstate, state);
+    expect_any(__wrap_dbus_get_powerstate, value);
     assert_int_equal(ST_ERR, target_write(&handle, PIN_POWER_BUTTON, true));
 }
 
@@ -1186,10 +1186,10 @@ void target_read_power_pin_test(void** state)
     Target_Control_Handle handle;
     handle.initialized = true;
     handle.gpios[BMC_CPU_PWRGD].type = PIN_DBUS;
-    DBUS_GET_HOSTSTATE_RESULT = ST_OK;
-    DBUS_GET_HOSTSTATE_VALUE = 0;
-    expect_any(__wrap_dbus_get_hoststate, state);
-    expect_any(__wrap_dbus_get_hoststate, value);
+    DBUS_GET_POWERSTATE_RESULT = ST_OK;
+    DBUS_GET_POWERSTATE_VALUE = 0;
+    expect_any(__wrap_dbus_get_powerstate, state);
+    expect_any(__wrap_dbus_get_powerstate, value);
     assert_int_equal(ST_OK, target_read(&handle, PIN_PWRGOOD, &asserted));
 }
 
@@ -1199,10 +1199,10 @@ void target_read_power_pin_failed_test(void** state)
     bool asserted;
     Target_Control_Handle handle;
     handle.initialized = true;
-    DBUS_GET_HOSTSTATE_RESULT = ST_ERR;
-    DBUS_GET_HOSTSTATE_VALUE = 0;
-    expect_any(__wrap_dbus_get_hoststate, state);
-    expect_any(__wrap_dbus_get_hoststate, value);
+    DBUS_GET_POWERSTATE_RESULT = ST_ERR;
+    DBUS_GET_POWERSTATE_VALUE = 0;
+    expect_any(__wrap_dbus_get_powerstate, state);
+    expect_any(__wrap_dbus_get_powerstate, value);
     assert_int_equal(ST_ERR, target_read(&handle, PIN_PWRGOOD, &asserted));
 }
 

@@ -40,6 +40,17 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #define POLL_GPIO (POLLPRI + POLLERR)
 #define CHIP_BUFFER_SIZE 32
 
+#define GPIO_SYSFS_SUPPORT_DEPRECATED
+
+#ifdef GPIO_SYSFS_SUPPORT_DEPRECATED
+// GPIO base needs to be adjusted according to your platform settings.
+// Base can be found into /sys/class/gpio/gpiochipX/base file. If multiple
+// gpiochip are found in your gpio folder use /sys/class/gpio/gpiochipX/label
+// to find out the gpio controller that handles your gpios.
+#define AST2500_GPIO_BASE_FILE "/sys/class/gpio/gpiochip0/base"
+#define CHIP_FNAME_BUFF_SIZE 48
+#endif
+
 typedef enum
 {
     READ_TYPE_MIN = -1,

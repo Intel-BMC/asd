@@ -27,6 +27,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "target_handler.h"
 
+#include <fcntl.h>
 #include <gpiod.h>
 #include <poll.h>
 #include <stdint.h>
@@ -49,11 +50,14 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 static inline void read_pin_value(Target_Control_GPIO gpio, int* value,
                                   STATUS* result)
 {
+#ifdef GPIO_SYSFS_SUPPORT_DEPRECATED
     if (gpio.type == PIN_GPIO)
     {
         *result = gpio_get_value(gpio.fd, value);
     }
-    else if (gpio.type == PIN_GPIOD)
+    else
+#endif
+        if (gpio.type == PIN_GPIOD)
     {
         *value = gpiod_line_get_value(gpio.line);
         if (*value == -1)
@@ -67,11 +71,14 @@ static inline void write_pin_value(Target_Control_GPIO gpio, int value,
                                    STATUS* result)
 {
     int rv = 0;
+#ifdef GPIO_SYSFS_SUPPORT_DEPRECATED
     if (gpio.type == PIN_GPIO)
     {
         *result = gpio_set_value(gpio.fd, value);
     }
-    else if (gpio.type == PIN_GPIOD)
+    else
+#endif
+        if (gpio.type == PIN_GPIOD)
     {
         rv = gpiod_line_set_value(gpio.line, value);
         if (rv == 0)
@@ -83,24 +90,30 @@ static inline void write_pin_value(Target_Control_GPIO gpio, int value,
 
 static inline void get_pin_events(Target_Control_GPIO gpio, short* events)
 {
+#ifdef GPIO_SYSFS_SUPPORT_DEPRECATED
     if (gpio.type == PIN_GPIO)
     {
         *events = POLL_GPIO;
     }
-    else if (gpio.type == PIN_GPIOD)
+    else
+#endif
+        if (gpio.type == PIN_GPIOD)
     {
         *events = POLLIN | POLLPRI;
     }
 }
 
 STATUS initialize_gpios(Target_Control_Handle* state);
+#ifdef GPIO_SYSFS_SUPPORT_DEPRECATED
+STATUS initialize_gpio(Target_Control_GPIO* gpio);
+STATUS find_gpio_base(char* gpio_name, int* gpio_base);
 STATUS find_gpio(char* gpio_name, int* gpio_number);
+#endif
 STATUS deinitialize_gpios(Target_Control_Handle* state);
 STATUS on_power_event(Target_Control_Handle* state, ASD_EVENT* event);
 STATUS on_platform_reset_event(Target_Control_Handle* state, ASD_EVENT* event);
 STATUS on_prdy_event(Target_Control_Handle* state, ASD_EVENT* event);
 STATUS on_xdp_present_event(Target_Control_Handle* state, ASD_EVENT* event);
-STATUS initialize_gpio(Target_Control_GPIO* gpio);
 STATUS initialize_gpiod(Target_Control_GPIO* gpio);
 
 static const ASD_LogStream stream = ASD_LogStream_Pins;
@@ -225,12 +238,15 @@ Target_Control_Handle* TargetHandler()
 STATUS initialize_powergood_pin_handler(Target_Control_Handle* state)
 {
     int result = ST_OK;
+#ifdef GPIO_SYSFS_SUPPORT_DEPRECATED
     if (state->gpios[BMC_CPU_PWRGD].type == PIN_GPIO)
     {
         state->gpios[BMC_CPU_PWRGD].handler =
             (TargetHandlerEventFunctionPtr)on_power_event;
     }
-    else if (state->gpios[BMC_CPU_PWRGD].type == PIN_GPIOD)
+    else
+#endif
+        if (state->gpios[BMC_CPU_PWRGD].type == PIN_GPIOD)
     {
         state->gpios[BMC_CPU_PWRGD].handler =
             (TargetHandlerEventFunctionPtr)on_power_event;
@@ -294,6 +310,7 @@ STATUS initialize_gpios(Target_Control_Handle* state)
 
     for (i = 0; i < NUM_GPIOS; i++)
     {
+#ifdef GPIO_SYSFS_SUPPORT_DEPRECATED
         if (state->gpios[i].type == PIN_GPIO)
         {
             result = initialize_gpio(&state->gpios[i]);
@@ -305,7 +322,9 @@ STATUS initialize_gpios(Target_Control_Handle* state)
             if (result != ST_OK)
                 break;
         }
-        else if (state->gpios[i].type == PIN_GPIOD)
+        else
+#endif
+            if (state->gpios[i].type == PIN_GPIOD)
         {
             result = initialize_gpiod(&state->gpios[i]);
             if (result != ST_OK)
@@ -322,6 +341,7 @@ STATUS initialize_gpios(Target_Control_Handle* state)
     return result;
 }
 
+#ifdef GPIO_SYSFS_SUPPORT_DEPRECATED
 STATUS initialize_gpio(Target_Control_GPIO* gpio)
 {
     int num;
@@ -379,6 +399,7 @@ STATUS initialize_gpio(Target_Control_GPIO* gpio)
 
     return result;
 }
+#endif
 
 STATUS initialize_gpiod(Target_Control_GPIO* gpio)
 {
@@ -549,43 +570,89 @@ STATUS initialize_gpiod(Target_Control_GPIO* gpio)
     return ST_OK;
 }
 
+#ifdef GPIO_SYSFS_SUPPORT_DEPRECATED
+STATUS find_gpio_base(char* gpio_name, int* gpio_base)
+{
+    int fd;
+    char buf[CHIP_FNAME_BUFF_SIZE];
+    char ch;
+
+    *gpio_base = 0;
+    if (memcpy_safe(buf, sizeof(buf), AST2500_GPIO_BASE_FILE,
+                    strlen(AST2500_GPIO_BASE_FILE) + 1))
+    {
+#ifdef ENABLE_DEBUG_LOGGING
+        ASD_log(ASD_LogLevel_Debug, stream, option,
+                "memcpy_safe: gpio base filename failed");
+#endif
+        return ST_ERR;
+    }
+#ifdef ENABLE_DEBUG_LOGGING
+    ASD_log(ASD_LogLevel_Debug, stream, option, "open gpio base file %s", buf);
+#endif
+    fd = open(buf, O_RDONLY);
+    if (fd < 0)
+    {
+#ifdef ENABLE_DEBUG_LOGGING
+        ASD_log(ASD_LogLevel_Debug, stream, option,
+                "open gpio base file %s failed", buf);
+#endif
+        return ST_ERR;
+    }
+    lseek(fd, 0, SEEK_SET);
+    // read all characters in the file
+    while (read(fd, &ch, 1))
+    {
+        if ((ch >= '0') && (ch <= '9'))
+            *gpio_base = (*gpio_base * 10) + (ch - '0');
+    }
+#ifdef ENABLE_DEBUG_LOGGING
+    ASD_log(ASD_LogLevel_Debug, stream, option, "base is %d", *gpio_base);
+#endif
+    close(fd);
+    return ST_OK;
+}
+
 STATUS find_gpio(char* gpio_name, int* gpio_number)
 {
-    // This function will soon be replaced with code to
-    // scan the system at runtime and produce the gpio
-    // number that corresponds to the gpio name.
     STATUS result = ST_OK;
+    int gpio_base = 0;
+    result = find_gpio_base(gpio_name, &gpio_base);
+    if (result != ST_OK)
+        return result;
     if (strcmp(gpio_name, "TCK_MUX_SEL") == 0)
-        *gpio_number = 213;
+        *gpio_number = gpio_base + 213;
     else if (strcmp(gpio_name, "PREQ_N") == 0)
-        *gpio_number = 212;
+        *gpio_number = gpio_base + 212;
     else if (strcmp(gpio_name, "PRDY_N") == 0)
-        *gpio_number = 47;
+        *gpio_number = gpio_base + 47;
     else if (strcmp(gpio_name, "RSMRST_N") == 0)
-        *gpio_number = 146;
+        *gpio_number = gpio_base + 146;
     else if (strcmp(gpio_name, "SIO_POWER_GOOD") == 0)
-        *gpio_number = 201;
+        *gpio_number = gpio_base + 201;
     else if (strcmp(gpio_name, "PLTRST_N") == 0)
-        *gpio_number = 46;
+        *gpio_number = gpio_base + 46;
     else if (strcmp(gpio_name, "SYSPWROK") == 0)
-        *gpio_number = 145;
+        *gpio_number = gpio_base + 145;
     else if (strcmp(gpio_name, "PWR_DEBUG_N") == 0)
-        *gpio_number = 135;
+        *gpio_number = gpio_base + 135;
     else if (strcmp(gpio_name, "DEBUG_EN_N") == 0)
-        *gpio_number = 37;
+        *gpio_number = gpio_base + 37;
     else if (strcmp(gpio_name, "XDP_PRST_N") == 0)
-        *gpio_number = 137;
+        *gpio_number = gpio_base + 137;
     else
         result = ST_ERR;
 
     return result;
 }
+#endif
 
 STATUS target_deinitialize(Target_Control_Handle* state)
 {
     if (state == NULL || !state->initialized)
         return ST_ERR;
 
+#ifdef GPIO_SYSFS_SUPPORT_DEPRECATED
     for (int i = 0; i < NUM_GPIOS; i++)
     {
         if (state->gpios[i].type == PIN_GPIO)
@@ -597,6 +664,7 @@ STATUS target_deinitialize(Target_Control_Handle* state)
             }
         }
     }
+#endif
 
     dbus_deinitialize(state->dbus);
 
@@ -611,6 +679,7 @@ STATUS deinitialize_gpios(Target_Control_Handle* state)
 
     for (i = 0; i < NUM_GPIOS; i++)
     {
+#ifdef GPIO_SYSFS_SUPPORT_DEPRECATED
         if (state->gpios[i].type == PIN_GPIO)
         {
             retcode =
@@ -630,6 +699,7 @@ STATUS deinitialize_gpios(Target_Control_Handle* state)
                 result = ST_ERR;
             }
         }
+#endif
         if (state->gpios[i].type == PIN_GPIOD)
         {
             gpiod_chip_close(state->gpios[i].chip);
@@ -662,7 +732,9 @@ STATUS target_event(Target_Control_Handle* state, struct pollfd poll_fd,
 #endif
         result = dbus_process_event(state->dbus, event);
     }
-    else if ((poll_fd.revents & POLL_GPIO) == POLL_GPIO)
+    else
+#ifdef GPIO_SYSFS_SUPPORT_DEPRECATED
+        if ((poll_fd.revents & POLL_GPIO) == POLL_GPIO)
     {
 #ifdef ENABLE_DEBUG_LOGGING
         ASD_log(ASD_LogLevel_Debug, stream, option, "Handling event for fd: %d",
@@ -683,7 +755,9 @@ STATUS target_event(Target_Control_Handle* state, struct pollfd poll_fd,
             }
         }
     }
-    else if (poll_fd.revents & (POLLIN | POLLPRI))
+    else
+#endif
+        if (poll_fd.revents & (POLLIN | POLLPRI))
     {
 #ifdef ENABLE_DEBUG_LOGGING
         ASD_log(ASD_LogLevel_Debug, stream, option, "Handling event for fd: %d",
@@ -1170,8 +1244,11 @@ STATUS target_get_fds(Target_Control_Handle* state, target_fdarr_t* fds,
     }
 
     get_pin_events(state->gpios[BMC_CPU_PWRGD], &events);
-    if (state->gpios[BMC_CPU_PWRGD].type == PIN_GPIO ||
-        state->gpios[BMC_CPU_PWRGD].type == PIN_GPIOD)
+    if (state->gpios[BMC_CPU_PWRGD].type == PIN_GPIOD
+#ifdef GPIO_SYSFS_SUPPORT_DEPRECATED
+        || state->gpios[BMC_CPU_PWRGD].type == PIN_GPIO
+#endif
+    )
     {
         if (state->gpios[BMC_CPU_PWRGD].fd != -1)
         {

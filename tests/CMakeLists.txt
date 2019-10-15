@@ -307,6 +307,18 @@ set_target_properties(
                     -Wl,--wrap=gpio_set_value -Wl,--wrap=gpio_get_value \
                     -Wl,--wrap=gpio_set_direction \
                     -Wl,--wrap=gpio_set_edge \
+                    -Wl,--wrap=open \
+                    -Wl,--wrap=lseek \
+                    -Wl,--wrap=read \
+                    -Wl,--wrap=gpiod_ctxless_find_line \
+                    -Wl,--wrap=gpiod_chip_open \
+                    -Wl,--wrap=gpiod_chip_get_line \
+                    -Wl,--wrap=gpiod_chip_close \
+                    -Wl,--wrap=gpiod_line_request \
+                    -Wl,--wrap=gpiod_line_event_get_fd \
+                    -Wl,--wrap=gpiod_line_get_value \
+                    -Wl,--wrap=gpiod_line_set_value \
+                    -Wl,--wrap=gpiod_line_event_read\
                     -Wl,--wrap=dbus_power_reboot \
                     -Wl,--wrap=dbus_power_on \
                     -Wl,--wrap=dbus_power_off \

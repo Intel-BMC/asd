@@ -144,7 +144,7 @@ Target_Control_Handle* TargetHandler()
         state->gpios[i].chip = NULL;
         state->gpios[i].handler = NULL;
         state->gpios[i].active_low = false;
-        state->gpios[i].type = PIN_GPIO;
+        state->gpios[i].type = PIN_GPIOD;
     }
 
     strcpy_safe(state->gpios[BMC_TCK_MUX_SEL].name,
@@ -699,8 +699,9 @@ STATUS deinitialize_gpios(Target_Control_Handle* state)
                 result = ST_ERR;
             }
         }
+        else
 #endif
-        if (state->gpios[i].type == PIN_GPIOD)
+            if (state->gpios[i].type == PIN_GPIOD)
         {
             gpiod_chip_close(state->gpios[i].chip);
         }

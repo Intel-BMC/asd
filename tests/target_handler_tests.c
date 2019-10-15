@@ -26,6 +26,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
 #include <fcntl.h>
+#include <gpiod.h>
 #include <poll.h>
 #include <setjmp.h>
 #include <stdarg.h>
@@ -39,8 +40,52 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <unistd.h>
 
 #include "../logging.h"
+#include "../mem_helper.h"
 #include "../target_handler.h"
 #include "cmocka.h"
+
+#define FAKE_FILE_HANDLE 345
+int __real_open(const char* pathname, int flags, int mode);
+int __wrap_open(const char* pathname, int flags, int mode)
+{
+    if (strcmp(pathname + strlen(pathname) - 4, "base"))
+        return __real_open(pathname, flags, mode);
+
+    return FAKE_FILE_HANDLE;
+}
+
+int __real_lseek(int fd, off_t offset, int whence);
+int __wrap_lseek(int fd, off_t offset, int whence)
+{
+    if (fd == FAKE_FILE_HANDLE)
+        return __real_lseek(fd, offset, whence);
+
+    return 0;
+}
+
+bool read_flag = true;
+ssize_t __real_read(int fildes, void* buf, size_t nbyte);
+ssize_t __wrap_read(int fildes, void* buf, size_t nbyte)
+{
+    if (fildes != FAKE_FILE_HANDLE)
+        return __real_read(fildes, buf, nbyte);
+
+    if (read_flag)
+    {
+        if (buf != NULL)
+        {
+            char* ch = (char*)buf;
+            *ch = '0';
+            read_flag = false;
+            return 1;
+        }
+    }
+    else
+    {
+        read_flag = true;
+        return 0;
+    }
+}
 
 // static char temporary_log_buffer[512];
 void __wrap_ASD_log(ASD_LogLevel level, ASD_LogStream stream,
@@ -178,6 +223,283 @@ STATUS __wrap_gpio_set_active_low(int gpio, bool active_low)
     return GPIO_SET_ACTIVE_LOW_RESULT;
 }
 
+typedef struct _gpiod_line_data
+{
+    char* name;
+    char* chip_name;
+    size_t chipname_size;
+    int offset;
+} gpiod_line_data;
+
+#define GPIO0_CHIP_NAME "/dev/gpiochip0"
+int GPIOD_CTXLESS_FIND_LINE_RETURN = 0;
+bool GPIOD_CTXLESS_FIND_LINE_FORCE_RETURN = false;
+gpiod_line_data gpiod_line_asd_data[] = {
+    // Name             Chip name   size offset
+    {"TCK_MUX_SEL", "gpiochip0", 232, 213},
+    {"PREQ_N", "gpiochip0", 232, 212},
+    {"PRDY_N", "gpiochip0", 232, 47},
+    {"RSMRST_N", "gpiochip0", 232, 146},
+    {"SIO_POWER_GOOD", "gpiochip0", 232, 201},
+    {"PLTRST_N", "gpiochip0", 232, 46},
+    {"SYSPWROK", "gpiochip0", 232, 145},
+    {"PWR_DEBUG_N", "gpiochip0", 232, 135},
+    {"DEBUG_EN_N", "gpiochip0", 232, 37},
+    {"XDP_PRST_N", "gpiochip0", 232, 137},
+};
+int __wrap_gpiod_ctxless_find_line(const char* name, char* chipname,
+                                   size_t chipname_size, unsigned int* offset)
+{
+    check_expected_ptr(name);
+    check_expected_ptr(chipname);
+    check_expected(chipname_size);
+    check_expected_ptr(offset);
+    if (GPIOD_CTXLESS_FIND_LINE_FORCE_RETURN)
+        return GPIOD_CTXLESS_FIND_LINE_RETURN;
+    if (name == NULL)
+        return -1;
+    if (chipname == NULL)
+        return -1;
+    GPIOD_CTXLESS_FIND_LINE_RETURN = 0;
+    for (int i = 0; i < NUM_GPIOS; i++)
+    {
+        if (strcmp(name, gpiod_line_asd_data[i].name) == 0)
+        {
+
+            assert_false(memcpy_safe(chipname, chipname_size, GPIO0_CHIP_NAME,
+                                     strlen(GPIO0_CHIP_NAME)));
+            *offset = gpiod_line_asd_data[i].offset;
+            GPIOD_CTXLESS_FIND_LINE_RETURN = 1;
+        }
+    }
+    return GPIOD_CTXLESS_FIND_LINE_RETURN;
+}
+
+struct gpiod_chip
+{
+    struct gpiod_line** lines;
+    unsigned int num_lines;
+    int fd;
+    char name[32];
+    char label[32];
+};
+
+struct gpiod_chip gpiochip0 = {
+    NULL, // ** lines
+    232,  // num_of_lines
+    232,  // fd
+    "gpiochip0", "1e780000.gpio",
+};
+
+bool GPIOD_CHIP_OPEN_ERROR = false;
+struct gpiod_chip* __wrap_gpiod_chip_open(const char* path)
+{
+    if (GPIOD_CHIP_OPEN_ERROR)
+        return NULL;
+    return &gpiochip0;
+}
+
+struct gpiod_line
+{
+    unsigned int offset;
+    int direction;
+    int active_state;
+    bool used;
+    bool open_source;
+    bool open_drain;
+
+    int state;
+    bool up_to_date;
+
+    struct gpiod_chip* chip;
+    struct line_fd_handle* fd_handle;
+
+    char name[32];
+    char consumer[32];
+};
+
+struct gpiod_line line_dummy = {
+    212,                         // offset;
+    GPIOD_LINE_DIRECTION_OUTPUT, // direction;
+    1,                           // active_state;
+    true,                        // used;
+    false,                       // open_source;
+    false,                       // open_drain;
+    0,                           // state;
+    true,                        // up_to_date;
+    &gpiochip0,                  // gpiod_chip *;
+    NULL,                        // *fd_handle;
+    "PREQ_N",                    // name
+    "ASD",                       // consumer
+};
+
+bool GPIOD_CHIP_GET_LINE_ERROR = false;
+struct gpiod_line* __wrap_gpiod_chip_get_line(struct gpiod_chip* chip,
+                                              unsigned int offset)
+{
+    if (GPIOD_CHIP_GET_LINE_ERROR)
+        return NULL;
+    return &line_dummy;
+}
+
+/**
+ * @brief Close a GPIO chip handle and release all allocated resources.
+ * @param chip The GPIO chip object.
+ */
+void __wrap_gpiod_chip_close(struct gpiod_chip* chip)
+{
+    check_expected_ptr(chip);
+}
+
+int GPIOD_LINE_GET_VALUE_VALUES[MAX_GPIO_ITERATIONS] = {0};
+int GPIOD_LINE_GET_VALUE_INDEX = 0;
+int __wrap_gpiod_line_get_value(struct gpiod_line* line)
+{
+    check_expected_ptr(line);
+    return GPIOD_LINE_GET_VALUE_VALUES[GPIOD_LINE_GET_VALUE_INDEX++];
+}
+
+int GPIOD_LINE_SET_VALUE_RESULTS[MAX_GPIO_ITERATIONS] = {0};
+int GPIOD_LINE_SET_VALUE_INDEX = 0;
+int __wrap_gpiod_line_set_value(struct gpiod_line* line, int value)
+{
+    check_expected_ptr(line);
+    check_expected(value);
+    return GPIOD_LINE_SET_VALUE_RESULTS[GPIOD_LINE_SET_VALUE_INDEX++];
+}
+
+int GPIOD_LINE_REQUEST_RESULT = 0;
+int __wrap_gpiod_line_request(struct gpiod_line* line,
+                              const struct gpiod_line_request_config* config,
+                              int default_val)
+{
+    return GPIOD_LINE_REQUEST_RESULT;
+}
+
+int GPIOD_LINE_EVENT_GET_FD_FD = 0;
+int __wrap_gpiod_line_event_get_fd(struct gpiod_line* line)
+{
+    return GPIOD_LINE_EVENT_GET_FD_FD;
+}
+
+int GPIOD_LINE_EVENT_READ_RESULT = 0;
+int __wrap_gpiod_line_event_read(struct gpiod_line* line,
+                                 struct gpiod_line_event* event)
+{
+    check_expected_ptr(line);
+    check_expected_ptr(event);
+    return GPIOD_LINE_EVENT_READ_RESULT;
+}
+
+void wrap_pin_get_value(Pin_Type type, int value, STATUS result)
+{
+    if (type == PIN_GPIO)
+    {
+        expect_any(__wrap_gpio_get_value, fd);
+        expect_any(__wrap_gpio_get_value, value);
+        GPIO_GET_VALUE_VALUE = value;
+        GPIO_GET_VALUE_RESULT = result;
+    }
+    else if (type == PIN_GPIOD)
+    {
+        expect_any(__wrap_gpiod_line_get_value, line);
+        GPIOD_LINE_GET_VALUE_INDEX = 0;
+        if (result == ST_OK)
+        {
+            GPIOD_LINE_GET_VALUE_VALUES[0] = value;
+        }
+        else
+        {
+            GPIOD_LINE_GET_VALUE_VALUES[0] = -1;
+        }
+    }
+}
+
+void wrap_pin_get_values(Target_Control_Handle* handle, Pin_Type type,
+                         unsigned int values[], STATUS results[], int n,
+                         bool dummy)
+{
+    int index = 0;
+    if (type == PIN_GPIO)
+    {
+        GPIO_GET_VALUE_CHUNK = true;
+        if (dummy)
+        {
+            for (int i = 0; i < NUM_GPIOS; i++)
+            {
+                if (handle->gpios[i].type == PIN_GPIO)
+                    index++;
+            }
+        }
+        for (int i = 0; i < n; i++)
+        {
+            expect_any(__wrap_gpio_get_value, fd);
+            expect_any(__wrap_gpio_get_value, value);
+            GPIO_GET_VALUE_VALUES[index + i] = values[i];
+            GPIO_GET_VALUE_RESULTS[index + i] = results[i];
+        }
+    }
+    else if (type == PIN_GPIOD)
+    {
+        for (int i = 0; i < n; i++)
+        {
+            expect_any(__wrap_gpiod_line_get_value, line);
+            GPIOD_LINE_GET_VALUE_VALUES[i] = values[i];
+            if (results[i] == ST_OK)
+            {
+                GPIOD_LINE_GET_VALUE_VALUES[i] = values[i];
+            }
+            else
+            {
+                GPIOD_LINE_GET_VALUE_VALUES[i] = -1;
+            }
+        }
+    }
+}
+
+void wrap_pin_set_values(Pin_Type type, int values[], STATUS results[], int n)
+{
+    if (type == PIN_GPIO)
+    {
+        expect_any(__wrap_gpio_set_value, fd);
+        for (int i = 0; i < n; i++)
+        {
+            if ((values[i] == 0) || (values[i] == 1))
+            {
+                expect_value(__wrap_gpio_set_value, value, values[i]);
+            }
+            else
+            {
+                expect_any(__wrap_gpio_set_value, value);
+            }
+            GPIO_SET_VALUE_RESULT[i] = results[i];
+        }
+    }
+    else if (type == PIN_GPIOD)
+    {
+        expect_any(__wrap_gpiod_line_set_value, line);
+        for (int i = 0; i < n; i++)
+        {
+            if ((values[i] == 0) || (values[i] == 1))
+            {
+                expect_value(__wrap_gpiod_line_set_value, value, values[i]);
+            }
+            else
+            {
+                expect_any(__wrap_gpiod_line_set_value, value);
+            }
+            if (results[i] == ST_OK)
+            {
+                GPIOD_LINE_SET_VALUE_RESULTS[i] = 0;
+            }
+            else
+            {
+                GPIOD_LINE_SET_VALUE_RESULTS[i] = -1;
+            }
+        }
+    }
+}
+
 STATUS DBUS_GET_POWERSTATE_RESULT = ST_OK;
 int DBUS_GET_POWERSTATE_VALUE = 0;
 STATUS __wrap_dbus_get_powerstate(Dbus_Handle* state, int* value)
@@ -251,23 +573,32 @@ STATUS __wrap_dbus_process_event(Dbus_Handle* state)
     return DBUS_PROCESS_EVENT_RESULT;
 }
 
-static int setup(void** state)
+static inline void set_pins_type(Target_Control_Handle* handle, Pin_Type type)
 {
-    int gpio_export_index = 0;
-    // Target_Control_Handle *handle;
-    Target_Control_Handle* handle = TargetHandler();
-    malloc_fail = false;
-    handle->gpios[BMC_CPU_PWRGD].type = PIN_GPIO;
-    handle->gpios[BMC_PLTRST_B].type = PIN_GPIO;
-    DBUS_HANDLE = &DBUS;
-    // handle = TargetHandler();
-    if (handle != NULL)
+    for (int i = 0; i < NUM_GPIOS; i++)
     {
-        // expectations for gpio initialization
-        for (int i = 0; i < NUM_GPIOS; i++)
+        if (handle->gpios[i].type == PIN_DBUS)
         {
-            GPIO_EXPORT_FD[gpio_export_index] = 1;
-            GPIO_EXPORT_RESULT[gpio_export_index++] = ST_OK;
+            continue;
+        }
+        handle->gpios[i].type = type;
+    }
+}
+
+static inline void init_gpios(Target_Control_Handle* handle)
+{
+    GPIOD_CHIP_GET_LINE_ERROR = false;
+    GPIO_EXPORT_RESULT_INDEX = 0;
+    GPIO_SET_DIRECTION_RESULT = ST_OK;
+    GPIO_SET_EDGE_RESULT = ST_OK;
+    GPIO_SET_ACTIVE_LOW_RESULT = ST_OK;
+    for (int i = 0; i < NUM_GPIOS; i++)
+    {
+        if (handle->gpios[i].type == PIN_GPIO)
+        {
+            // expectations for gpio initialization
+            GPIO_EXPORT_FD[i] = 1;
+            GPIO_EXPORT_RESULT[i] = ST_OK;
             expect_any(__wrap_gpio_export, gpio);
             expect_any(__wrap_gpio_export, fd);
             expect_any(__wrap_gpio_set_direction, gpio);
@@ -284,36 +615,72 @@ static int setup(void** state)
                 expect_any(__wrap_gpio_set_value, value);
             }
         }
-        GPIO_SET_EDGE_RESULT = ST_OK;
-        GPIO_SET_DIRECTION_RESULT = ST_OK;
-        GPIO_SET_ACTIVE_LOW_RESULT = ST_OK;
-        GPIO_EXPORT_RESULT_INDEX = 0;
-
-        assert_false(handle->event_cfg.break_all);
-        assert_false(handle->event_cfg.report_MBP);
-        assert_false(handle->event_cfg.report_PLTRST);
-        assert_false(handle->event_cfg.report_PRDY);
-        assert_false(handle->event_cfg.reset_break);
-
-        // expectations for checking xdp present status
-        expect_any(__wrap_gpio_get_value, fd);
-        expect_any(__wrap_gpio_get_value, value);
-        GPIO_GET_VALUE_VALUE = 0;
-        GPIO_GET_VALUE_RESULT = ST_OK;
-
-        // expectations for debug enable assert
-        expect_any(__wrap_gpio_set_value, fd);
-        expect_value(__wrap_gpio_set_value, value, 1);
-        GPIO_SET_VALUE_INDEX = 0;
-        GPIO_SET_VALUE_RESULT[0] = ST_OK;
-
-        // expectations for dbus initialize
-        expect_any(__wrap_dbus_initialize, state);
-        DBUS_INITIALIZE_RESULT = ST_OK;
-
-        assert_int_equal(ST_OK, target_initialize(handle));
-        *state = (void*)handle;
+        else if (handle->gpios[i].type == PIN_GPIOD)
+        {
+            // expectations for gpiod initialization
+            expect_any(__wrap_gpiod_ctxless_find_line, name);
+            expect_any(__wrap_gpiod_ctxless_find_line, chipname);
+            expect_any(__wrap_gpiod_ctxless_find_line, chipname_size);
+            expect_any(__wrap_gpiod_ctxless_find_line, offset);
+        }
     }
+}
+
+static inline void deinit_gpios(Target_Control_Handle* handle)
+{
+    for (int i = 0; i < NUM_GPIOS; i++)
+    {
+        if (handle->gpios[i].type == PIN_GPIO)
+        {
+            expect_any(__wrap_gpio_set_direction, gpio);
+            expect_value(__wrap_gpio_set_direction, direction,
+                         GPIO_DIRECTION_IN);
+            GPIO_UNEXPORT_RESULT[i] = ST_OK;
+            expect_any(__wrap_gpio_unexport, gpio);
+            GPIO_UNEXPORT_RESULT_INDEX = 0;
+            GPIO_SET_DIRECTION_RESULT = ST_OK;
+        }
+        else if (handle->gpios[i].type == PIN_GPIOD)
+        {
+            expect_any(__wrap_gpiod_chip_close, chip);
+        }
+    }
+}
+
+static int setup(void** state)
+{
+    (void)state; /* unused */
+    int gpio_export_index = 0;
+    DBUS_HANDLE = &DBUS;
+    STATUS results[] = {ST_OK};
+    int values[] = {1};
+    int iterations = sizeof(results) / sizeof(STATUS);
+    Target_Control_Handle* handle = TargetHandler();
+    assert_non_null(handle);
+    Pin_Type ptype = handle->gpios[0].type;
+    // set_pins_type(handle, ptype);
+    // expectations for gpio initialization
+    init_gpios(handle);
+    GPIO_SET_ACTIVE_LOW_RESULT = ST_OK;
+    GPIO_SET_EDGE_RESULT = ST_OK;
+    GPIO_SET_DIRECTION_RESULT = ST_OK;
+    GPIO_EXPORT_RESULT_INDEX = 0;
+    GPIO_SET_VALUE_INDEX = 0;
+    GPIOD_LINE_SET_VALUE_INDEX = 0;
+
+    // expectations for checking xdp present status
+    wrap_pin_get_value(ptype, 0, ST_OK);
+
+    // expectations for debug enable assert
+    wrap_pin_set_values(ptype, values, results, iterations);
+
+    // expectations for dbus initialize
+    expect_any(__wrap_dbus_initialize, state);
+    DBUS_INITIALIZE_RESULT = ST_OK;
+
+    assert_int_equal(ST_OK, target_initialize(handle));
+    *state = (void*)handle;
+
     return 0;
 }
 
@@ -371,23 +738,15 @@ void target_initialize_gpio_export_failure_test(void** state)
     DBUS_HANDLE = &DBUS;
     Target_Control_Handle* handle = TargetHandler();
     assert_non_null(handle);
+    set_pins_type(handle, PIN_GPIO);
     handle->gpios[BMC_CPU_PWRGD].type = PIN_GPIO;
-    handle->gpios[BMC_PLTRST_B].type = PIN_GPIO;
     GPIO_EXPORT_RESULT[0] = ST_ERR;
     GPIO_EXPORT_RESULT_INDEX = 0;
     expect_any(__wrap_gpio_export, gpio);
     expect_any(__wrap_gpio_export, fd);
 
     // deinit gpios
-    for (int i = 0; i < NUM_GPIOS; i++)
-    {
-        expect_any(__wrap_gpio_set_direction, gpio);
-        expect_value(__wrap_gpio_set_direction, direction, GPIO_DIRECTION_IN);
-        GPIO_UNEXPORT_RESULT[i] = ST_OK;
-        expect_any(__wrap_gpio_unexport, gpio);
-    }
-    GPIO_UNEXPORT_RESULT_INDEX = 0;
-    GPIO_SET_DIRECTION_RESULT = ST_OK;
+    deinit_gpios(handle);
 
     assert_int_equal(ST_ERR, target_initialize(handle));
     free(handle);
@@ -399,19 +758,12 @@ void target_initialize_gpio_find_failure(void** state)
     DBUS_HANDLE = &DBUS;
     Target_Control_Handle* handle = TargetHandler();
     assert_non_null(handle);
-    handle->gpios[BMC_CPU_PWRGD].type = PIN_GPIO;
-    handle->gpios[BMC_PLTRST_B].type = PIN_GPIO;
+    set_pins_type(handle, PIN_GPIO);
     GPIO_EXPORT_RESULT[0] = ST_ERR;
     GPIO_EXPORT_RESULT_INDEX = 0;
     strcpy(&handle->gpios[0].name[0], "UNKNOWN");
     // deinit gpios
-    for (int i = 0; i < NUM_GPIOS; i++)
-    {
-        expect_any(__wrap_gpio_set_direction, gpio);
-        expect_value(__wrap_gpio_set_direction, direction, GPIO_DIRECTION_IN);
-        GPIO_UNEXPORT_RESULT[i] = ST_OK;
-        expect_any(__wrap_gpio_unexport, gpio);
-    }
+    deinit_gpios(handle);
     assert_int_equal(ST_ERR, target_initialize(handle));
     free(handle);
 }
@@ -422,8 +774,7 @@ void target_initialize_gpio_set_active_low_failure_test(void** state)
     DBUS_HANDLE = &DBUS;
     Target_Control_Handle* handle = TargetHandler();
     assert_non_null(handle);
-    handle->gpios[BMC_CPU_PWRGD].type = PIN_GPIO;
-    handle->gpios[BMC_PLTRST_B].type = PIN_GPIO;
+    set_pins_type(handle, PIN_GPIO);
     GPIO_EXPORT_FD[0] = 1;
     GPIO_EXPORT_RESULT[0] = ST_OK;
     expect_any(__wrap_gpio_export, gpio);
@@ -434,14 +785,7 @@ void target_initialize_gpio_set_active_low_failure_test(void** state)
     GPIO_EXPORT_RESULT_INDEX = 0;
 
     // deinit gpios
-    for (int i = 0; i < NUM_GPIOS; i++)
-    {
-        expect_any(__wrap_gpio_set_direction, gpio);
-        expect_value(__wrap_gpio_set_direction, direction, GPIO_DIRECTION_IN);
-        GPIO_UNEXPORT_RESULT[i] = ST_OK;
-        expect_any(__wrap_gpio_unexport, gpio);
-    }
-    GPIO_UNEXPORT_RESULT_INDEX = 0;
+    deinit_gpios(handle);
     GPIO_SET_DIRECTION_RESULT = ST_ERR;
 
     assert_int_equal(ST_ERR, target_initialize(handle));
@@ -454,8 +798,7 @@ void target_initialize_gpio_set_direction_failure_test(void** state)
     DBUS_HANDLE = &DBUS;
     Target_Control_Handle* handle = TargetHandler();
     assert_non_null(handle);
-    handle->gpios[BMC_CPU_PWRGD].type = PIN_GPIO;
-    handle->gpios[BMC_PLTRST_B].type = PIN_GPIO;
+    set_pins_type(handle, PIN_GPIO);
     GPIO_EXPORT_FD[0] = 1;
     GPIO_EXPORT_RESULT[0] = ST_OK;
     expect_any(__wrap_gpio_export, gpio);
@@ -464,18 +807,13 @@ void target_initialize_gpio_set_direction_failure_test(void** state)
     expect_any(__wrap_gpio_set_active_low, active_low);
     expect_any(__wrap_gpio_set_direction, gpio);
     expect_any(__wrap_gpio_set_direction, direction);
+
+    // deinit gpios
+    deinit_gpios(handle);
+
     GPIO_SET_ACTIVE_LOW_RESULT = ST_OK;
     GPIO_SET_DIRECTION_RESULT = ST_ERR;
     GPIO_EXPORT_RESULT_INDEX = 0;
-
-    // deinit gpios
-    for (int i = 0; i < NUM_GPIOS; i++)
-    {
-        expect_any(__wrap_gpio_set_direction, gpio);
-        expect_value(__wrap_gpio_set_direction, direction, GPIO_DIRECTION_IN);
-        GPIO_UNEXPORT_RESULT[i] = ST_OK;
-        expect_any(__wrap_gpio_unexport, gpio);
-    }
 
     assert_int_equal(ST_ERR, target_initialize(handle));
     free(handle);
@@ -487,8 +825,7 @@ void target_initialize_gpio_set_edge_failure_test(void** state)
     DBUS_HANDLE = &DBUS;
     Target_Control_Handle* handle = TargetHandler();
     assert_non_null(handle);
-    handle->gpios[BMC_CPU_PWRGD].type = PIN_GPIO;
-    handle->gpios[BMC_PLTRST_B].type = PIN_GPIO;
+    set_pins_type(handle, PIN_GPIO);
     GPIO_EXPORT_FD[0] = 1;
     GPIO_EXPORT_RESULT[0] = ST_OK;
     expect_any(__wrap_gpio_export, gpio);
@@ -505,17 +842,190 @@ void target_initialize_gpio_set_edge_failure_test(void** state)
     GPIO_EXPORT_RESULT_INDEX = 0;
 
     // deinit gpios
-    for (int i = 0; i < NUM_GPIOS; i++)
-    {
-        expect_any(__wrap_gpio_set_direction, gpio);
-        expect_value(__wrap_gpio_set_direction, direction, GPIO_DIRECTION_IN);
-        GPIO_UNEXPORT_RESULT[i] = ST_OK;
-        expect_any(__wrap_gpio_unexport, gpio);
-    }
-    GPIO_UNEXPORT_RESULT_INDEX = 0;
+    deinit_gpios(handle);
 
     assert_int_equal(ST_ERR, target_initialize(handle));
     free(handle);
+}
+
+void target_initialize_dummy_gpio_read_fail_test(void** state)
+{
+    (void)state; /* unused */
+    DBUS_HANDLE = &DBUS;
+    Pin_Type ptype = PIN_GPIO;
+    GPIO_SET_ACTIVE_LOW_RESULT = ST_OK;
+    GPIO_SET_DIRECTION_RESULT = ST_OK;
+    GPIO_SET_EDGE_RESULT = ST_OK;
+    GPIO_EXPORT_RESULT_INDEX = 0;
+    GPIO_GET_VALUE_CHUNK = false;
+    GPIO_GET_VALUE_RESULT = ST_ERR;
+    GPIO_GET_VALUE_VALUE = 0;
+
+    Target_Control_Handle* handle = TargetHandler();
+    assert_non_null(handle);
+    set_pins_type(handle, PIN_DBUS);
+    handle->gpios[BMC_TCK_MUX_SEL].type = PIN_GPIO;
+    init_gpios(handle);
+
+    // deinit gpios
+    deinit_gpios(handle);
+
+    assert_int_equal(ST_ERR, target_initialize(handle));
+    free(handle);
+}
+
+void target_initialize_gpiod_ctxless_find_line_failure_test(void** state)
+{
+    (void)state; /* unused */
+    DBUS_HANDLE = &DBUS;
+    Target_Control_Handle* handle = TargetHandler();
+    assert_non_null(handle);
+    set_pins_type(handle, PIN_GPIOD);
+
+    GPIOD_CTXLESS_FIND_LINE_FORCE_RETURN = true;
+    GPIOD_CTXLESS_FIND_LINE_RETURN = -1;
+    expect_any(__wrap_gpiod_ctxless_find_line, name);
+    expect_any(__wrap_gpiod_ctxless_find_line, chipname);
+    expect_any(__wrap_gpiod_ctxless_find_line, chipname_size);
+    expect_any(__wrap_gpiod_ctxless_find_line, offset);
+
+    // deinit gpios
+    deinit_gpios(handle);
+
+    assert_int_equal(ST_ERR, target_initialize(handle));
+    free(handle);
+    GPIOD_CTXLESS_FIND_LINE_FORCE_RETURN = false;
+}
+
+void target_initialize_gpiod_ctxless_find_line_not_found_test(void** state)
+{
+    (void)state; /* unused */
+    DBUS_HANDLE = &DBUS;
+    Target_Control_Handle* handle = TargetHandler();
+    assert_non_null(handle);
+    set_pins_type(handle, PIN_GPIOD);
+
+    GPIOD_CTXLESS_FIND_LINE_FORCE_RETURN = true;
+    GPIOD_CTXLESS_FIND_LINE_RETURN = 0;
+    expect_any(__wrap_gpiod_ctxless_find_line, name);
+    expect_any(__wrap_gpiod_ctxless_find_line, chipname);
+    expect_any(__wrap_gpiod_ctxless_find_line, chipname_size);
+    expect_any(__wrap_gpiod_ctxless_find_line, offset);
+
+    // deinit gpios
+    deinit_gpios(handle);
+
+    assert_int_equal(ST_ERR, target_initialize(handle));
+    free(handle);
+    GPIOD_CTXLESS_FIND_LINE_FORCE_RETURN = false;
+}
+
+void target_initialize_gpiod_chip_open_failure_test(void** state)
+{
+    (void)state; /* unused */
+    DBUS_HANDLE = &DBUS;
+    Target_Control_Handle* handle = TargetHandler();
+    assert_non_null(handle);
+    set_pins_type(handle, PIN_GPIOD);
+
+    expect_any(__wrap_gpiod_ctxless_find_line, name);
+    expect_any(__wrap_gpiod_ctxless_find_line, chipname);
+    expect_any(__wrap_gpiod_ctxless_find_line, chipname_size);
+    expect_any(__wrap_gpiod_ctxless_find_line, offset);
+
+    // deinit gpios
+    deinit_gpios(handle);
+
+    GPIOD_CHIP_OPEN_ERROR = true;
+
+    assert_int_equal(ST_ERR, target_initialize(handle));
+    free(handle);
+    GPIOD_CHIP_OPEN_ERROR = false;
+}
+
+void target_initialize_gpiod_chip_get_line_failure_test(void** state)
+{
+    (void)state; /* unused */
+    DBUS_HANDLE = &DBUS;
+    Target_Control_Handle* handle = TargetHandler();
+    assert_non_null(handle);
+    set_pins_type(handle, PIN_GPIOD);
+
+    expect_any(__wrap_gpiod_ctxless_find_line, name);
+    expect_any(__wrap_gpiod_ctxless_find_line, chipname);
+    expect_any(__wrap_gpiod_ctxless_find_line, chipname_size);
+    expect_any(__wrap_gpiod_ctxless_find_line, offset);
+    expect_any(__wrap_gpiod_chip_close, chip);
+
+    // deinit gpios
+    deinit_gpios(handle);
+
+    GPIOD_CHIP_GET_LINE_ERROR = true;
+
+    assert_int_equal(ST_ERR, target_initialize(handle));
+    free(handle);
+    GPIOD_CHIP_GET_LINE_ERROR = false;
+}
+
+void target_initialize_gpiod_line_request_failure_test(void** state)
+{
+    (void)state; /* unused */
+    DBUS_HANDLE = &DBUS;
+    Target_Control_Handle* handle = TargetHandler();
+    assert_non_null(handle);
+    set_pins_type(handle, PIN_GPIOD);
+
+    expect_any(__wrap_gpiod_ctxless_find_line, name);
+    expect_any(__wrap_gpiod_ctxless_find_line, chipname);
+    expect_any(__wrap_gpiod_ctxless_find_line, chipname_size);
+    expect_any(__wrap_gpiod_ctxless_find_line, offset);
+    expect_any(__wrap_gpiod_chip_close, chip);
+
+    // deinit gpios
+    deinit_gpios(handle);
+
+    GPIOD_LINE_REQUEST_RESULT = -1;
+
+    assert_int_equal(ST_ERR, target_initialize(handle));
+    free(handle);
+    GPIOD_LINE_REQUEST_RESULT = 0;
+}
+
+void target_initialize_gpiod_line_event_get_fd_failure_test(void** state)
+{
+    (void)state; /* unused */
+    int gpio_export_index = 0;
+    DBUS_HANDLE = &DBUS;
+    Target_Control_Handle* handle = TargetHandler();
+    assert_non_null(handle);
+    set_pins_type(handle, PIN_GPIOD);
+
+    // First GPIO is TCK_MUX_SEL (output)
+    expect_any(__wrap_gpiod_ctxless_find_line, name);
+    expect_any(__wrap_gpiod_ctxless_find_line, chipname);
+    expect_any(__wrap_gpiod_ctxless_find_line, chipname_size);
+    expect_any(__wrap_gpiod_ctxless_find_line, offset);
+
+    // Second GPIO is PREQ_N (output)
+    expect_any(__wrap_gpiod_ctxless_find_line, name);
+    expect_any(__wrap_gpiod_ctxless_find_line, chipname);
+    expect_any(__wrap_gpiod_ctxless_find_line, chipname_size);
+    expect_any(__wrap_gpiod_ctxless_find_line, offset);
+
+    // Third GPIO is PRDY_N (input), it calls get fd
+    expect_any(__wrap_gpiod_ctxless_find_line, name);
+    expect_any(__wrap_gpiod_ctxless_find_line, chipname);
+    expect_any(__wrap_gpiod_ctxless_find_line, chipname_size);
+    expect_any(__wrap_gpiod_ctxless_find_line, offset);
+
+    // deinit gpios
+    deinit_gpios(handle);
+
+    GPIOD_LINE_EVENT_GET_FD_FD = -1;
+
+    assert_int_equal(ST_ERR, target_initialize(handle));
+    free(handle);
+    GPIOD_LINE_EVENT_GET_FD_FD = 0;
 }
 
 void target_initialize_xdp_check_failed_test(void** state)
@@ -523,42 +1033,24 @@ void target_initialize_xdp_check_failed_test(void** state)
     (void)state; /* unused */
     int gpio_export_index = 0;
     DBUS_HANDLE = &DBUS;
+    STATUS results[] = {ST_ERR};
+    STATUS values[] = {0};
+    Pin_Type ptype = **((Pin_Type**)state);
+    bool dummy = (ptype == PIN_GPIO) ? true : false;
+    int iterations = sizeof(results) / sizeof(STATUS);
     Target_Control_Handle* handle = TargetHandler();
     assert_non_null(handle);
-    handle->gpios[BMC_CPU_PWRGD].type = PIN_GPIO;
-    handle->gpios[BMC_PLTRST_B].type = PIN_GPIO;
-    GPIO_EXPORT_RESULT[gpio_export_index] = ST_OK;
-    GPIO_EXPORT_FD[gpio_export_index++] = 1;
-    expect_any(__wrap_gpio_export, gpio);
-    expect_any(__wrap_gpio_export, fd);
-    expect_any(__wrap_gpio_set_direction, gpio);
-    expect_any(__wrap_gpio_set_direction, direction);
-    expect_any(__wrap_gpio_set_edge, gpio);
-    expect_any(__wrap_gpio_set_edge, edge);
-    expect_any(__wrap_gpio_set_active_low, gpio);
-    expect_any(__wrap_gpio_set_active_low, active_low);
-    expect_any(__wrap_gpio_get_value, fd);
-    expect_any(__wrap_gpio_get_value, value);
+    set_pins_type(handle, ptype);
+    init_gpios(handle);
 
-    GPIO_SET_ACTIVE_LOW_RESULT = ST_OK;
-    GPIO_SET_EDGE_RESULT = ST_OK;
-    GPIO_SET_DIRECTION_RESULT = ST_OK;
-    GPIO_EXPORT_RESULT_INDEX = 0;
-    GPIO_GET_VALUE_VALUE = 0;
-    GPIO_GET_VALUE_RESULT = ST_ERR;
+    wrap_pin_get_values(handle, ptype, values, results, iterations, dummy);
 
     // deinit gpios
-    for (int i = 0; i < NUM_GPIOS; i++)
-    {
-        expect_any(__wrap_gpio_set_direction, gpio);
-        expect_value(__wrap_gpio_set_direction, direction, GPIO_DIRECTION_IN);
-        GPIO_UNEXPORT_RESULT[i] = ST_OK;
-        expect_any(__wrap_gpio_unexport, gpio);
-    }
-    GPIO_UNEXPORT_RESULT_INDEX = 0;
+    deinit_gpios(handle);
 
     assert_int_equal(ST_ERR, target_initialize(handle));
     free(handle);
+    GPIO_GET_VALUE_CHUNK = false;
 }
 
 void target_initialize_xdp_connected_test(void** state)
@@ -566,116 +1058,20 @@ void target_initialize_xdp_connected_test(void** state)
     (void)state; /* unused */
     int gpio_export_index = 0;
     DBUS_HANDLE = &DBUS;
+    Pin_Type ptype = **((Pin_Type**)state);
     Target_Control_Handle* handle = TargetHandler();
     assert_non_null(handle);
-    handle->gpios[BMC_CPU_PWRGD].type = PIN_GPIO;
-    handle->gpios[BMC_PLTRST_B].type = PIN_GPIO;
-    for (int i = 0; i < NUM_GPIOS; i++)
-    {
-        GPIO_EXPORT_FD[gpio_export_index] = 1;
-        GPIO_EXPORT_RESULT[gpio_export_index++] = ST_OK;
-        expect_any(__wrap_gpio_export, gpio);
-        expect_any(__wrap_gpio_export, fd);
-        expect_any(__wrap_gpio_set_direction, gpio);
-        expect_any(__wrap_gpio_set_direction, direction);
-        expect_any(__wrap_gpio_set_edge, gpio);
-        expect_any(__wrap_gpio_set_edge, edge);
-        expect_any(__wrap_gpio_set_active_low, gpio);
-        expect_any(__wrap_gpio_set_active_low, active_low);
-        expect_any(__wrap_gpio_get_value, fd);
-        expect_any(__wrap_gpio_get_value, value);
-        if (handle->gpios[i].direction == GPIO_DIRECTION_OUT)
-        {
-            expect_any(__wrap_gpio_set_value, fd);
-            expect_any(__wrap_gpio_set_value, value);
-        }
-    }
-    GPIO_SET_ACTIVE_LOW_RESULT = ST_OK;
-    GPIO_SET_EDGE_RESULT = ST_OK;
-    GPIO_SET_DIRECTION_RESULT = ST_OK;
-    GPIO_EXPORT_RESULT_INDEX = 0;
+    set_pins_type(handle, ptype);
+    // expectations for gpio initialization
+    init_gpios(handle);
 
     // signal the xdp is connected
-    expect_any(__wrap_gpio_get_value, fd);
-    expect_any(__wrap_gpio_get_value, value);
-    GPIO_GET_VALUE_VALUE = 1;
-    GPIO_GET_VALUE_RESULT = ST_OK;
+    wrap_pin_get_value(ptype, 1, ST_OK);
 
     // deinit gpios
-    for (int i = 0; i < NUM_GPIOS; i++)
-    {
-        expect_any(__wrap_gpio_set_direction, gpio);
-        expect_value(__wrap_gpio_set_direction, direction, GPIO_DIRECTION_IN);
-        GPIO_UNEXPORT_RESULT[i] = ST_OK;
-        expect_any(__wrap_gpio_unexport, gpio);
-    }
-    GPIO_UNEXPORT_RESULT_INDEX = 0;
+    deinit_gpios(handle);
 
     assert_int_equal(ST_ERR, target_initialize(handle));
-    free(handle);
-}
-
-void target_initialize_read_xdp_failed_test(void** state)
-{
-    (void)state; /* unused */
-    int gpio_export_index = 0;
-    DBUS_HANDLE = &DBUS;
-    Target_Control_Handle* handle = TargetHandler();
-    assert_non_null(handle);
-    handle->gpios[BMC_CPU_PWRGD].type = PIN_GPIO;
-    handle->gpios[BMC_PLTRST_B].type = PIN_GPIO;
-    for (int i = 0; i < NUM_GPIOS; i++)
-    {
-        GPIO_EXPORT_FD[gpio_export_index] = 1;
-        GPIO_EXPORT_RESULT[gpio_export_index++] = ST_OK;
-        expect_any(__wrap_gpio_export, gpio);
-        expect_any(__wrap_gpio_export, fd);
-        expect_any(__wrap_gpio_set_direction, gpio);
-        expect_any(__wrap_gpio_set_direction, direction);
-        expect_any(__wrap_gpio_set_edge, gpio);
-        expect_any(__wrap_gpio_set_edge, edge);
-        expect_any(__wrap_gpio_set_active_low, gpio);
-        expect_any(__wrap_gpio_set_active_low, active_low);
-        expect_any(__wrap_gpio_get_value, fd);
-        expect_any(__wrap_gpio_get_value, value);
-        if (handle->gpios[i].direction == GPIO_DIRECTION_OUT)
-        {
-            expect_any(__wrap_gpio_set_value, fd);
-            expect_any(__wrap_gpio_set_value, value);
-        }
-    }
-    GPIO_SET_ACTIVE_LOW_RESULT = ST_OK;
-    GPIO_SET_EDGE_RESULT = ST_OK;
-    GPIO_SET_DIRECTION_RESULT = ST_OK;
-    GPIO_EXPORT_RESULT_INDEX = 0;
-
-    // init gpios dummy read
-    for (int i = 0; i < NUM_GPIOS; i++)
-    {
-        GPIO_GET_VALUE_VALUES[i] = 0;
-        GPIO_GET_VALUE_RESULTS[i] = ST_OK;
-    }
-
-    // signal the xdp is connected
-    expect_any(__wrap_gpio_get_value, fd);
-    expect_any(__wrap_gpio_get_value, value);
-
-    GPIO_GET_VALUE_CHUNK = true;
-    GPIO_GET_VALUE_VALUES[NUM_GPIOS] = 1;
-    GPIO_GET_VALUE_RESULTS[NUM_GPIOS] = ST_ERR;
-
-    // deinit gpios
-    for (int i = 0; i < NUM_GPIOS; i++)
-    {
-        expect_any(__wrap_gpio_set_direction, gpio);
-        expect_value(__wrap_gpio_set_direction, direction, GPIO_DIRECTION_IN);
-        GPIO_UNEXPORT_RESULT[i] = ST_OK;
-        expect_any(__wrap_gpio_unexport, gpio);
-    }
-    GPIO_UNEXPORT_RESULT_INDEX = 0;
-
-    assert_int_equal(ST_ERR, target_initialize(handle));
-    GPIO_GET_VALUE_CHUNK = false;
     free(handle);
 }
 
@@ -684,57 +1080,27 @@ void target_initialize_debug_enable_failed_test(void** state)
     (void)state; /* unused */
     int gpio_export_index = 0;
     DBUS_HANDLE = &DBUS;
+    Pin_Type ptype = **((Pin_Type**)state);
+    STATUS results[] = {ST_ERR};
+    int values[] = {1};
+    int iterations = sizeof(results) / sizeof(STATUS);
     Target_Control_Handle* handle = TargetHandler();
     assert_non_null(handle);
-    handle->gpios[BMC_CPU_PWRGD].type = PIN_GPIO;
-    handle->gpios[BMC_PLTRST_B].type = PIN_GPIO;
+    set_pins_type(handle, ptype);
     // expectations for gpio initialization
-    for (int i = 0; i < NUM_GPIOS; i++)
-    {
-        GPIO_EXPORT_FD[gpio_export_index] = 1;
-        GPIO_EXPORT_RESULT[gpio_export_index++] = ST_OK;
-        expect_any(__wrap_gpio_export, gpio);
-        expect_any(__wrap_gpio_export, fd);
-        expect_any(__wrap_gpio_set_direction, gpio);
-        expect_any(__wrap_gpio_set_direction, direction);
-        expect_any(__wrap_gpio_set_edge, gpio);
-        expect_any(__wrap_gpio_set_edge, edge);
-        expect_any(__wrap_gpio_set_active_low, gpio);
-        expect_any(__wrap_gpio_set_active_low, active_low);
-        expect_any(__wrap_gpio_get_value, fd);
-        expect_any(__wrap_gpio_get_value, value);
-        if (handle->gpios[i].direction == GPIO_DIRECTION_OUT)
-        {
-            expect_any(__wrap_gpio_set_value, fd);
-            expect_any(__wrap_gpio_set_value, value);
-        }
-    }
-    GPIO_SET_ACTIVE_LOW_RESULT = ST_OK;
-    GPIO_SET_EDGE_RESULT = ST_OK;
-    GPIO_SET_DIRECTION_RESULT = ST_OK;
-    GPIO_EXPORT_RESULT_INDEX = 0;
+    init_gpios(handle);
+
+    GPIO_SET_VALUE_INDEX = 0;
+    GPIOD_LINE_SET_VALUE_INDEX = 0;
 
     // expectations for checking xdp present status
-    expect_any(__wrap_gpio_get_value, fd);
-    expect_any(__wrap_gpio_get_value, value);
-    GPIO_GET_VALUE_VALUE = 0;
-    GPIO_GET_VALUE_RESULT = ST_OK;
+    wrap_pin_get_value(ptype, 0, ST_OK);
 
     // expectations for debug enable assert
-    expect_any(__wrap_gpio_set_value, fd);
-    expect_value(__wrap_gpio_set_value, value, 1);
-    GPIO_SET_VALUE_INDEX = 0;
-    GPIO_SET_VALUE_RESULT[0] = ST_ERR;
+    wrap_pin_set_values(ptype, values, results, iterations);
 
     // deinit gpios
-    for (int i = 0; i < NUM_GPIOS; i++)
-    {
-        expect_any(__wrap_gpio_set_direction, gpio);
-        expect_value(__wrap_gpio_set_direction, direction, GPIO_DIRECTION_IN);
-        GPIO_UNEXPORT_RESULT[i] = ST_OK;
-        expect_any(__wrap_gpio_unexport, gpio);
-    }
-    GPIO_UNEXPORT_RESULT_INDEX = 0;
+    deinit_gpios(handle);
 
     assert_int_equal(ST_ERR, target_initialize(handle));
     free(handle);
@@ -745,47 +1111,27 @@ void target_initialize_success_test(void** state)
     (void)state; /* unused */
     int gpio_export_index = 0;
     DBUS_HANDLE = &DBUS;
+    Pin_Type ptype = **((Pin_Type**)state);
+    STATUS results[] = {ST_OK};
+    int values[] = {1};
+    int iterations = sizeof(results) / sizeof(STATUS);
     Target_Control_Handle* handle = TargetHandler();
     assert_non_null(handle);
-    handle->gpios[BMC_CPU_PWRGD].type = PIN_GPIO;
-    handle->gpios[BMC_PLTRST_B].type = PIN_GPIO;
+    set_pins_type(handle, ptype);
     // expectations for gpio initialization
-    for (int i = 0; i < NUM_GPIOS; i++)
-    {
-        GPIO_EXPORT_FD[gpio_export_index] = 1;
-        GPIO_EXPORT_RESULT[gpio_export_index++] = ST_OK;
-        expect_any(__wrap_gpio_export, gpio);
-        expect_any(__wrap_gpio_export, fd);
-        expect_any(__wrap_gpio_set_direction, gpio);
-        expect_any(__wrap_gpio_set_direction, direction);
-        expect_any(__wrap_gpio_set_edge, gpio);
-        expect_any(__wrap_gpio_set_edge, edge);
-        expect_any(__wrap_gpio_set_active_low, gpio);
-        expect_any(__wrap_gpio_set_active_low, active_low);
-        expect_any(__wrap_gpio_get_value, fd);
-        expect_any(__wrap_gpio_get_value, value);
-        if (handle->gpios[i].direction == GPIO_DIRECTION_OUT)
-        {
-            expect_any(__wrap_gpio_set_value, fd);
-            expect_any(__wrap_gpio_set_value, value);
-        }
-    }
+    init_gpios(handle);
     GPIO_SET_ACTIVE_LOW_RESULT = ST_OK;
     GPIO_SET_EDGE_RESULT = ST_OK;
     GPIO_SET_DIRECTION_RESULT = ST_OK;
     GPIO_EXPORT_RESULT_INDEX = 0;
+    GPIO_SET_VALUE_INDEX = 0;
+    GPIOD_LINE_SET_VALUE_INDEX = 0;
 
     // expectations for checking xdp present status
-    expect_any(__wrap_gpio_get_value, fd);
-    expect_any(__wrap_gpio_get_value, value);
-    GPIO_GET_VALUE_VALUE = 0;
-    GPIO_GET_VALUE_RESULT = ST_OK;
+    wrap_pin_get_value(ptype, 0, ST_OK);
 
     // expectations for debug enable assert
-    expect_any(__wrap_gpio_set_value, fd);
-    expect_value(__wrap_gpio_set_value, value, 1);
-    GPIO_SET_VALUE_INDEX = 0;
-    GPIO_SET_VALUE_RESULT[0] = ST_OK;
+    wrap_pin_set_values(ptype, values, results, iterations);
 
     // expectations for dbus initialize
     expect_any(__wrap_dbus_initialize, state);
@@ -812,18 +1158,27 @@ void target_deinitialize_already_initialized_test(void** state)
 void target_deinitialize_non_minus_test(void** state)
 {
     (void)state; /* unused */
+    Pin_Type ptype = **((Pin_Type**)state);
     Target_Control_Handle* handle = TargetHandler();
     assert_non_null(handle);
+    set_pins_type(handle, ptype);
     handle->initialized = true;
     handle->gpios[0].fd = 100;
     // deinit gpios
-    // expectations for gpio initialization
     for (int i = 0; i < NUM_GPIOS - 1; i++)
     {
-        expect_any(__wrap_gpio_set_direction, gpio);
-        expect_value(__wrap_gpio_set_direction, direction, GPIO_DIRECTION_IN);
+        if (ptype == PIN_GPIO)
+        {
+            expect_any(__wrap_gpio_set_direction, gpio);
+            expect_value(__wrap_gpio_set_direction, direction,
+                         GPIO_DIRECTION_IN);
+            expect_any(__wrap_gpio_unexport, gpio);
+        }
+        else if (ptype == PIN_GPIOD)
+        {
+            expect_any(__wrap_gpiod_chip_close, chip);
+        }
         GPIO_UNEXPORT_RESULT[i] = ST_OK;
-        expect_any(__wrap_gpio_unexport, gpio);
     }
     GPIO_UNEXPORT_RESULT_INDEX = 0;
     GPIO_SET_DIRECTION_RESULT = ST_OK;
@@ -839,26 +1194,28 @@ void target_deinitialize_gpio_unexport_failure_test(void** state)
     (void)state; /* unused */
     Target_Control_Handle* handle = TargetHandler();
     assert_non_null(handle);
-    handle->gpios[BMC_CPU_PWRGD].type = PIN_GPIO;
-    handle->gpios[BMC_PLTRST_B].type = PIN_GPIO;
+    set_pins_type(handle, PIN_GPIO);
     handle->initialized = true;
 
     // deinit gpios
+    deinit_gpios(handle);
+
     for (int i = 0; i < NUM_GPIOS; i++)
     {
-        expect_any(__wrap_gpio_set_direction, gpio);
-        expect_value(__wrap_gpio_set_direction, direction, GPIO_DIRECTION_IN);
         GPIO_UNEXPORT_RESULT[i] = ST_ERR;
-        expect_any(__wrap_gpio_unexport, gpio);
     }
     GPIO_UNEXPORT_RESULT_INDEX = 0;
-    GPIO_SET_DIRECTION_RESULT = ST_OK;
 
     expect_any(__wrap_dbus_deinitialize, state);
     DBUS_DEINITIALIZE_RESULT = ST_OK;
 
     assert_int_equal(ST_ERR, target_deinitialize(handle));
     free(handle);
+    for (int i = 0; i < NUM_GPIOS; i++)
+    {
+        GPIO_UNEXPORT_RESULT[i] = ST_OK;
+    }
+    GPIO_UNEXPORT_RESULT_INDEX = 0;
 }
 
 void target_deinitialize_success_test(void** state)
@@ -866,20 +1223,11 @@ void target_deinitialize_success_test(void** state)
     (void)state; /* unused */
     Target_Control_Handle* handle = TargetHandler();
     assert_non_null(handle);
-    handle->gpios[BMC_CPU_PWRGD].type = PIN_GPIO;
-    handle->gpios[BMC_PLTRST_B].type = PIN_GPIO;
+    set_pins_type(handle, PIN_GPIO);
     handle->initialized = true;
 
     // deinit gpios
-    for (int i = 0; i < NUM_GPIOS; i++)
-    {
-        expect_any(__wrap_gpio_set_direction, gpio);
-        expect_value(__wrap_gpio_set_direction, direction, GPIO_DIRECTION_IN);
-        GPIO_UNEXPORT_RESULT[i] = ST_OK;
-        expect_any(__wrap_gpio_unexport, gpio);
-    }
-    GPIO_UNEXPORT_RESULT_INDEX = 0;
-    GPIO_SET_DIRECTION_RESULT = ST_OK;
+    deinit_gpios(handle);
 
     expect_any(__wrap_dbus_deinitialize, state);
     DBUS_DEINITIALIZE_RESULT = ST_OK;
@@ -975,7 +1323,8 @@ void target_initialize_powergood_pin_handler_test(void** state)
 {
     (void)state; /* unused */
     Target_Control_Handle handle;
-    handle.gpios[BMC_CPU_PWRGD].type = PIN_GPIO;
+    Pin_Type ptype = **((Pin_Type**)state);
+    handle.gpios[BMC_CPU_PWRGD].type = ptype;
     assert_int_equal(ST_OK, initialize_powergood_pin_handler(&handle));
 }
 
@@ -1530,19 +1879,35 @@ void target_event_plat_reset_event_gpio_get_value_failure_test(void** state)
     ASD_EVENT event;
     struct pollfd expected_poll_fd;
     expected_poll_fd.fd = 345;
-    expected_poll_fd.revents = POLL_GPIO;
-    int expected_gpio = 989;
+    if (handle->gpios[BMC_PLTRST_B].type == PIN_GPIO)
+    {
+        expected_poll_fd.revents = POLL_GPIO;
+        int expected_gpio = 989;
 
-    handle->gpios[BMC_PLTRST_B].fd = expected_poll_fd.fd;
-    handle->gpios[BMC_PLTRST_B].number = expected_gpio;
+        handle->gpios[BMC_PLTRST_B].fd = expected_poll_fd.fd;
+        handle->gpios[BMC_PLTRST_B].number = expected_gpio;
 
-    // dummy read
-    expect_value(__wrap_gpio_get_value, fd, expected_poll_fd.fd);
-    expect_any(__wrap_gpio_get_value, value);
+        // dummy read
+        expect_value(__wrap_gpio_get_value, fd, expected_poll_fd.fd);
+        expect_any(__wrap_gpio_get_value, value);
 
-    expect_value(__wrap_gpio_get_value, fd, expected_poll_fd.fd);
-    expect_any(__wrap_gpio_get_value, value);
-    GPIO_GET_VALUE_RESULT = ST_ERR;
+        expect_value(__wrap_gpio_get_value, fd, expected_poll_fd.fd);
+        expect_any(__wrap_gpio_get_value, value);
+        GPIO_GET_VALUE_RESULT = ST_ERR;
+    }
+    else if (handle->gpios[BMC_PLTRST_B].type == PIN_GPIOD)
+    {
+        expected_poll_fd.revents = POLLIN;
+        struct gpiod_line line;
+        handle->gpios[BMC_PLTRST_B].line = &line;
+        handle->gpios[BMC_PLTRST_B].fd = expected_poll_fd.fd;
+        expect_value(__wrap_gpiod_line_event_read, line, &line);
+        expect_any(__wrap_gpiod_line_event_read, event);
+        expect_any(__wrap_gpiod_line_get_value, line);
+        GPIOD_LINE_EVENT_READ_RESULT = 0;
+        GPIOD_LINE_GET_VALUE_VALUES[0] = -1;
+        GPIOD_LINE_GET_VALUE_INDEX = 0;
+    }
 
     assert_int_equal(ST_ERR, target_event(handle, expected_poll_fd, &event));
 }
@@ -1586,28 +1951,51 @@ void target_event_plat_reset_event_gpio_set_value_failure_test(void** state)
     ASD_EVENT event;
     struct pollfd expected_poll_fd;
     expected_poll_fd.fd = 345;
-    expected_poll_fd.revents = POLL_GPIO;
-    int expected_gpio = 999;
     int expected_preq_fd = 888;
 
-    handle->gpios[BMC_PLTRST_B].fd = expected_poll_fd.fd;
-    handle->gpios[BMC_PLTRST_B].number = expected_gpio;
-    handle->gpios[BMC_PREQ_N].fd = expected_preq_fd;
-    handle->event_cfg.reset_break = true;
+    if (handle->gpios[BMC_PLTRST_B].type == PIN_GPIO)
+    {
+        expected_poll_fd.revents = POLL_GPIO;
+        int expected_gpio = 999;
 
-    // dummy read
-    expect_value(__wrap_gpio_get_value, fd, expected_poll_fd.fd);
-    expect_any(__wrap_gpio_get_value, value);
+        handle->gpios[BMC_PLTRST_B].fd = expected_poll_fd.fd;
+        handle->gpios[BMC_PLTRST_B].number = expected_gpio;
+        handle->gpios[BMC_PREQ_N].fd = expected_preq_fd;
+        handle->event_cfg.reset_break = true;
 
-    expect_value(__wrap_gpio_get_value, fd, expected_poll_fd.fd);
-    expect_any(__wrap_gpio_get_value, value);
-    GPIO_GET_VALUE_RESULT = ST_OK;
-    GPIO_GET_VALUE_VALUE = 1;
+        // dummy read
+        expect_value(__wrap_gpio_get_value, fd, expected_poll_fd.fd);
+        expect_any(__wrap_gpio_get_value, value);
 
-    expect_value(__wrap_gpio_set_value, fd, expected_preq_fd);
-    expect_any(__wrap_gpio_set_value, value);
-    GPIO_SET_VALUE_RESULT[0] = ST_ERR;
-    GPIO_SET_VALUE_INDEX = 0;
+        expect_value(__wrap_gpio_get_value, fd, expected_poll_fd.fd);
+        expect_any(__wrap_gpio_get_value, value);
+        GPIO_GET_VALUE_RESULT = ST_OK;
+        GPIO_GET_VALUE_VALUE = 1;
+
+        expect_value(__wrap_gpio_set_value, fd, expected_preq_fd);
+        expect_any(__wrap_gpio_set_value, value);
+        GPIO_SET_VALUE_RESULT[0] = ST_ERR;
+        GPIO_SET_VALUE_INDEX = 0;
+    }
+    else if (handle->gpios[BMC_PLTRST_B].type == PIN_GPIOD)
+    {
+        expected_poll_fd.revents = POLLIN;
+        struct gpiod_line line;
+        handle->event_cfg.reset_break = true;
+        handle->gpios[BMC_PLTRST_B].line = &line;
+        handle->gpios[BMC_PLTRST_B].fd = expected_poll_fd.fd;
+        expect_value(__wrap_gpiod_line_event_read, line, &line);
+        expect_any(__wrap_gpiod_line_event_read, event);
+        expect_any(__wrap_gpiod_line_get_value, line);
+        GPIOD_LINE_EVENT_READ_RESULT = 0;
+        GPIOD_LINE_GET_VALUE_VALUES[0] = 1;
+        GPIOD_LINE_GET_VALUE_INDEX = 0;
+        // Asserting PREQ
+        expect_any(__wrap_gpiod_line_set_value, line);
+        expect_any(__wrap_gpiod_line_set_value, value);
+        GPIOD_LINE_SET_VALUE_RESULTS[0] = -1;
+        GPIOD_LINE_SET_VALUE_INDEX = 0;
+    }
 
     assert_int_equal(ST_ERR, target_event(handle, expected_poll_fd, &event));
 }
@@ -1619,28 +2007,53 @@ void target_event_plat_reset_event_asserted_test(void** state)
     ASD_EVENT event;
     struct pollfd expected_poll_fd;
     expected_poll_fd.fd = 345;
-    expected_poll_fd.revents = POLL_GPIO;
-    int expected_gpio = 999;
     int expected_preq_fd = 888;
 
-    handle->gpios[BMC_PLTRST_B].fd = expected_poll_fd.fd;
-    handle->gpios[BMC_PLTRST_B].number = expected_gpio;
-    handle->gpios[BMC_PREQ_N].fd = expected_preq_fd;
-    handle->event_cfg.reset_break = true;
+    if (handle->gpios[BMC_PLTRST_B].type == PIN_GPIO)
+    {
+        expected_poll_fd.revents = POLL_GPIO;
+        int expected_gpio = 999;
 
-    // dummy read
-    expect_value(__wrap_gpio_get_value, fd, expected_poll_fd.fd);
-    expect_any(__wrap_gpio_get_value, value);
+        handle->gpios[BMC_PLTRST_B].fd = expected_poll_fd.fd;
+        handle->gpios[BMC_PLTRST_B].number = expected_gpio;
+        handle->gpios[BMC_PREQ_N].fd = expected_preq_fd;
+        handle->event_cfg.reset_break = true;
 
-    expect_value(__wrap_gpio_get_value, fd, expected_poll_fd.fd);
-    expect_any(__wrap_gpio_get_value, value);
-    GPIO_GET_VALUE_RESULT = ST_OK;
-    GPIO_GET_VALUE_VALUE = 1;
+        // dummy read
+        expect_value(__wrap_gpio_get_value, fd, expected_poll_fd.fd);
+        expect_any(__wrap_gpio_get_value, value);
 
-    expect_value(__wrap_gpio_set_value, fd, expected_preq_fd);
-    expect_any(__wrap_gpio_set_value, value);
-    GPIO_SET_VALUE_RESULT[0] = ST_OK;
-    GPIO_SET_VALUE_INDEX = 0;
+        expect_value(__wrap_gpio_get_value, fd, expected_poll_fd.fd);
+        expect_any(__wrap_gpio_get_value, value);
+        GPIO_GET_VALUE_RESULT = ST_OK;
+        GPIO_GET_VALUE_VALUE = 1;
+
+        expect_value(__wrap_gpio_set_value, fd, expected_preq_fd);
+        expect_any(__wrap_gpio_set_value, value);
+        GPIO_SET_VALUE_RESULT[0] = ST_OK;
+        GPIO_SET_VALUE_INDEX = 0;
+    }
+    else if (handle->gpios[BMC_PLTRST_B].type == PIN_GPIOD)
+    {
+        expected_poll_fd.revents = POLLIN;
+        struct gpiod_line line;
+        struct gpiod_line line_preq;
+        handle->event_cfg.reset_break = true;
+        handle->gpios[BMC_PLTRST_B].line = &line;
+        handle->gpios[BMC_PLTRST_B].fd = expected_poll_fd.fd;
+        handle->gpios[BMC_PREQ_N].line = &line_preq;
+        expect_value(__wrap_gpiod_line_event_read, line, &line);
+        expect_any(__wrap_gpiod_line_event_read, event);
+        expect_any(__wrap_gpiod_line_get_value, line);
+        GPIOD_LINE_EVENT_READ_RESULT = 0;
+        GPIOD_LINE_GET_VALUE_VALUES[0] = 1;
+        GPIOD_LINE_GET_VALUE_INDEX = 0;
+        // Asserting PREQ
+        expect_value(__wrap_gpiod_line_set_value, line, &line_preq);
+        expect_any(__wrap_gpiod_line_set_value, value);
+        GPIOD_LINE_SET_VALUE_RESULTS[0] = 0;
+        GPIOD_LINE_SET_VALUE_INDEX = 0;
+    }
 
     assert_int_equal(ST_OK, target_event(handle, expected_poll_fd, &event));
     assert_int_equal(ASD_EVENT_PLRSTASSERT, event);
@@ -1653,24 +2066,43 @@ void target_event_plat_reset_event_deasserted_test(void** state)
     ASD_EVENT event;
     struct pollfd expected_poll_fd;
     expected_poll_fd.fd = 345;
-    expected_poll_fd.revents = POLL_GPIO;
-    int expected_gpio = 999;
-    int expected_preq_gpio = 888;
 
-    handle->gpios[BMC_PLTRST_B].fd = expected_poll_fd.fd;
-    handle->gpios[BMC_PLTRST_B].number = expected_gpio;
-    handle->gpios[BMC_PREQ_N].number = expected_preq_gpio;
-    handle->event_cfg.reset_break = true;
+    if (handle->gpios[BMC_PLTRST_B].type == PIN_GPIO)
+    {
+        expected_poll_fd.revents = POLL_GPIO;
+        int expected_gpio = 999;
+        int expected_preq_gpio = 888;
 
-    // dummy read
-    expect_value(__wrap_gpio_get_value, fd, expected_poll_fd.fd);
-    expect_any(__wrap_gpio_get_value, value);
+        handle->gpios[BMC_PLTRST_B].fd = expected_poll_fd.fd;
+        handle->gpios[BMC_PLTRST_B].number = expected_gpio;
+        handle->gpios[BMC_PREQ_N].number = expected_preq_gpio;
+        handle->event_cfg.reset_break = true;
 
-    expect_value(__wrap_gpio_get_value, fd, expected_poll_fd.fd);
-    expect_any(__wrap_gpio_get_value, value);
-    GPIO_GET_VALUE_RESULT = ST_OK;
-    GPIO_GET_VALUE_VALUE = 0;
+        // dummy read
+        expect_value(__wrap_gpio_get_value, fd, expected_poll_fd.fd);
+        expect_any(__wrap_gpio_get_value, value);
 
+        expect_value(__wrap_gpio_get_value, fd, expected_poll_fd.fd);
+        expect_any(__wrap_gpio_get_value, value);
+        GPIO_GET_VALUE_RESULT = ST_OK;
+        GPIO_GET_VALUE_VALUE = 0;
+    }
+    else if (handle->gpios[BMC_PLTRST_B].type == PIN_GPIOD)
+    {
+        expected_poll_fd.revents = POLLIN;
+        struct gpiod_line line;
+        struct gpiod_line line_preq;
+        handle->event_cfg.reset_break = true;
+        handle->gpios[BMC_PLTRST_B].line = &line;
+        handle->gpios[BMC_PLTRST_B].fd = expected_poll_fd.fd;
+        handle->gpios[BMC_PREQ_N].line = &line_preq;
+        expect_value(__wrap_gpiod_line_event_read, line, &line);
+        expect_any(__wrap_gpiod_line_event_read, event);
+        expect_any(__wrap_gpiod_line_get_value, line);
+        GPIOD_LINE_EVENT_READ_RESULT = 0;
+        GPIOD_LINE_GET_VALUE_VALUES[0] = 0;
+        GPIOD_LINE_GET_VALUE_INDEX = 0;
+    }
     assert_int_equal(ST_OK, target_event(handle, expected_poll_fd, &event));
     assert_int_equal(ASD_EVENT_PLRSTDEASSRT, event);
 }
@@ -1681,15 +2113,31 @@ void target_event_prdy_no_breakall_test(void** state)
     Target_Control_Handle* handle = *state;
     ASD_EVENT event;
     struct pollfd expected_poll_fd;
-    expected_poll_fd.revents = POLL_GPIO;
     expected_poll_fd.fd = 345;
 
-    handle->gpios[BMC_PRDY_N].fd = expected_poll_fd.fd;
-    handle->event_cfg.break_all = false;
+    if (handle->gpios[BMC_PRDY_N].type == PIN_GPIO)
+    {
+        expected_poll_fd.revents = POLL_GPIO;
 
-    // dummy read
-    expect_value(__wrap_gpio_get_value, fd, expected_poll_fd.fd);
-    expect_any(__wrap_gpio_get_value, value);
+        handle->gpios[BMC_PRDY_N].fd = expected_poll_fd.fd;
+        handle->event_cfg.break_all = false;
+
+        // dummy read
+        expect_value(__wrap_gpio_get_value, fd, expected_poll_fd.fd);
+        expect_any(__wrap_gpio_get_value, value);
+    }
+    else if (handle->gpios[BMC_PRDY_N].type == PIN_GPIOD)
+    {
+        expected_poll_fd.revents = POLLIN;
+        struct gpiod_line line;
+        handle->gpios[BMC_PRDY_N].fd = expected_poll_fd.fd;
+        handle->gpios[BMC_PRDY_N].line = &line;
+        expect_value(__wrap_gpiod_line_event_read, line, &line);
+        expect_any(__wrap_gpiod_line_event_read, event);
+        GPIOD_LINE_EVENT_READ_RESULT = 0;
+        GPIOD_LINE_GET_VALUE_VALUES[0] = 0;
+        GPIOD_LINE_GET_VALUE_INDEX = 0;
+    }
 
     assert_int_equal(ST_OK, target_event(handle, expected_poll_fd, &event));
     assert_int_equal(ASD_EVENT_PRDY_EVENT, event);
@@ -1702,23 +2150,41 @@ void target_event_prdy_set_preq_fail_test(void** state)
     ASD_EVENT event;
     struct pollfd expected_poll_fd;
     expected_poll_fd.fd = 345;
-    expected_poll_fd.revents = POLL_GPIO;
-    int expected_fd = 999;
-
-    handle->gpios[BMC_PRDY_N].fd = expected_poll_fd.fd;
-    handle->gpios[BMC_PREQ_N].fd = expected_fd;
     handle->event_cfg.break_all = true;
     handle->event_cfg.reset_break = false;
 
-    // dummy read
-    expect_value(__wrap_gpio_get_value, fd, expected_poll_fd.fd);
-    expect_any(__wrap_gpio_get_value, value);
+    if (handle->gpios[BMC_PRDY_N].type == PIN_GPIO)
+    {
+        expected_poll_fd.revents = POLL_GPIO;
+        int expected_fd = 999;
+        handle->gpios[BMC_PRDY_N].fd = expected_poll_fd.fd;
+        handle->gpios[BMC_PREQ_N].fd = expected_fd;
 
-    expect_value(__wrap_gpio_set_value, fd, expected_fd);
-    expect_any(__wrap_gpio_set_value, value);
-    GPIO_SET_VALUE_RESULT[0] = ST_ERR;
-    GPIO_SET_VALUE_INDEX = 0;
+        // dummy read
+        expect_value(__wrap_gpio_get_value, fd, expected_poll_fd.fd);
+        expect_any(__wrap_gpio_get_value, value);
 
+        expect_value(__wrap_gpio_set_value, fd, expected_fd);
+        expect_any(__wrap_gpio_set_value, value);
+        GPIO_SET_VALUE_RESULT[0] = ST_ERR;
+        GPIO_SET_VALUE_INDEX = 0;
+    }
+    else if (handle->gpios[BMC_PRDY_N].type == PIN_GPIOD)
+    {
+        expected_poll_fd.revents = POLLIN;
+        struct gpiod_line line;
+        struct gpiod_line line_preq;
+        handle->gpios[BMC_PRDY_N].line = &line;
+        handle->gpios[BMC_PRDY_N].fd = expected_poll_fd.fd;
+        handle->gpios[BMC_PREQ_N].line = &line_preq;
+        expect_value(__wrap_gpiod_line_event_read, line, &line);
+        expect_any(__wrap_gpiod_line_event_read, event);
+        // Asserting PREQ
+        expect_value(__wrap_gpiod_line_set_value, line, &line_preq);
+        expect_any(__wrap_gpiod_line_set_value, value);
+        GPIOD_LINE_SET_VALUE_RESULTS[0] = -1;
+        GPIOD_LINE_SET_VALUE_INDEX = 0;
+    }
     assert_int_equal(ST_ERR, target_event(handle, expected_poll_fd, &event));
 }
 
@@ -1729,24 +2195,46 @@ void target_event_prdy_toggle_preq_test(void** state)
     ASD_EVENT event;
     struct pollfd expected_poll_fd;
     expected_poll_fd.fd = 345;
-    expected_poll_fd.revents = POLL_GPIO;
     int expected_fd = 999;
-
-    handle->gpios[BMC_PRDY_N].fd = expected_poll_fd.fd;
-    handle->gpios[BMC_PREQ_N].fd = expected_fd;
     handle->event_cfg.break_all = true;
     handle->event_cfg.reset_break = false;
 
-    // dummy read
-    expect_value(__wrap_gpio_get_value, fd, expected_poll_fd.fd);
-    expect_any(__wrap_gpio_get_value, value);
+    if (handle->gpios[BMC_PRDY_N].type == PIN_GPIO)
+    {
+        expected_poll_fd.revents = POLL_GPIO;
+        handle->gpios[BMC_PRDY_N].fd = expected_poll_fd.fd;
+        handle->gpios[BMC_PREQ_N].fd = expected_fd;
 
-    expect_value_count(__wrap_gpio_set_value, fd, expected_fd, 2);
-    expect_any_count(__wrap_gpio_set_value, value, 2);
-    GPIO_SET_VALUE_RESULT[0] = ST_OK;
-    GPIO_SET_VALUE_RESULT[1] = ST_OK;
-    GPIO_SET_VALUE_INDEX = 0;
+        // dummy read
+        expect_value(__wrap_gpio_get_value, fd, expected_poll_fd.fd);
+        expect_any(__wrap_gpio_get_value, value);
 
+        expect_value_count(__wrap_gpio_set_value, fd, expected_fd, 2);
+        expect_any_count(__wrap_gpio_set_value, value, 2);
+        GPIO_SET_VALUE_RESULT[0] = ST_OK;
+        GPIO_SET_VALUE_RESULT[1] = ST_OK;
+        GPIO_SET_VALUE_INDEX = 0;
+    }
+    else if (handle->gpios[BMC_PRDY_N].type == PIN_GPIOD)
+    {
+        expected_poll_fd.revents = POLLIN;
+        struct gpiod_line line;
+        struct gpiod_line line_preq;
+        handle->gpios[BMC_PRDY_N].line = &line;
+        handle->gpios[BMC_PRDY_N].fd = expected_poll_fd.fd;
+        handle->gpios[BMC_PREQ_N].line = &line_preq;
+        expect_value(__wrap_gpiod_line_event_read, line, &line);
+        expect_any(__wrap_gpiod_line_event_read, event);
+        // Asserting PREQ
+        expect_value(__wrap_gpiod_line_set_value, line, &line_preq);
+        expect_any(__wrap_gpiod_line_set_value, value);
+        expect_value(__wrap_gpiod_line_set_value, line, &line_preq);
+        expect_any(__wrap_gpiod_line_set_value, value);
+        GPIOD_LINE_SET_VALUE_RESULTS[0] = 0;
+        GPIOD_LINE_SET_VALUE_RESULTS[1] = 0;
+        GPIOD_LINE_SET_VALUE_RESULTS[2] = 0;
+        GPIOD_LINE_SET_VALUE_INDEX = 0;
+    }
     expect_value(__wrap_usleep, useconds, 10000);
 
     assert_int_equal(ST_OK, target_event(handle, expected_poll_fd, &event));
@@ -1760,24 +2248,46 @@ void target_event_prdy_toggle_preq_fail_test(void** state)
     ASD_EVENT event;
     struct pollfd expected_poll_fd;
     expected_poll_fd.fd = 345;
-    expected_poll_fd.revents = POLL_GPIO;
-    int expected_fd = 999;
-
-    handle->gpios[BMC_PRDY_N].fd = expected_poll_fd.fd;
-    handle->gpios[BMC_PREQ_N].fd = expected_fd;
     handle->event_cfg.break_all = true;
     handle->event_cfg.reset_break = false;
 
-    // dummy read
-    expect_value(__wrap_gpio_get_value, fd, expected_poll_fd.fd);
-    expect_any(__wrap_gpio_get_value, value);
+    if (handle->gpios[BMC_PRDY_N].type == PIN_GPIO)
+    {
+        expected_poll_fd.revents = POLL_GPIO;
+        int expected_fd = 999;
 
-    expect_value_count(__wrap_gpio_set_value, fd, expected_fd, 2);
-    expect_any_count(__wrap_gpio_set_value, value, 2);
-    GPIO_SET_VALUE_RESULT[0] = ST_OK;
-    GPIO_SET_VALUE_RESULT[1] = ST_ERR;
-    GPIO_SET_VALUE_INDEX = 0;
+        handle->gpios[BMC_PRDY_N].fd = expected_poll_fd.fd;
+        handle->gpios[BMC_PREQ_N].fd = expected_fd;
 
+        // dummy read
+        expect_value(__wrap_gpio_get_value, fd, expected_poll_fd.fd);
+        expect_any(__wrap_gpio_get_value, value);
+
+        expect_value_count(__wrap_gpio_set_value, fd, expected_fd, 2);
+        expect_any_count(__wrap_gpio_set_value, value, 2);
+        GPIO_SET_VALUE_RESULT[0] = ST_OK;
+        GPIO_SET_VALUE_RESULT[1] = ST_ERR;
+        GPIO_SET_VALUE_INDEX = 0;
+    }
+    else if (handle->gpios[BMC_PRDY_N].type == PIN_GPIOD)
+    {
+        expected_poll_fd.revents = POLLIN;
+        struct gpiod_line line;
+        struct gpiod_line line_preq;
+        handle->gpios[BMC_PRDY_N].line = &line;
+        handle->gpios[BMC_PRDY_N].fd = expected_poll_fd.fd;
+        handle->gpios[BMC_PREQ_N].line = &line_preq;
+        expect_value(__wrap_gpiod_line_event_read, line, &line);
+        expect_any(__wrap_gpiod_line_event_read, event);
+        // Asserting PREQ
+        expect_value(__wrap_gpiod_line_set_value, line, &line_preq);
+        expect_any(__wrap_gpiod_line_set_value, value);
+        expect_value(__wrap_gpiod_line_set_value, line, &line_preq);
+        expect_any(__wrap_gpiod_line_set_value, value);
+        GPIOD_LINE_SET_VALUE_RESULTS[0] = 0;
+        GPIOD_LINE_SET_VALUE_RESULTS[1] = -1;
+        GPIOD_LINE_SET_VALUE_INDEX = 0;
+    }
     expect_value(__wrap_usleep, useconds, 10000);
 
     assert_int_equal(ST_ERR, target_event(handle, expected_poll_fd, &event));
@@ -1790,15 +2300,28 @@ void target_event_xdp_present_test(void** state)
     ASD_EVENT event;
     struct pollfd expected_poll_fd;
     expected_poll_fd.fd = 345;
-    expected_poll_fd.revents = POLL_GPIO;
-    int expected_gpio = 979;
 
-    handle->gpios[BMC_XDP_PRST_IN].fd = expected_poll_fd.fd;
-    handle->gpios[BMC_XDP_PRST_IN].number = expected_gpio;
+    if (handle->gpios[BMC_XDP_PRST_IN].type == PIN_GPIO)
+    {
+        expected_poll_fd.revents = POLL_GPIO;
+        int expected_gpio = 979;
+        handle->gpios[BMC_XDP_PRST_IN].fd = expected_poll_fd.fd;
+        handle->gpios[BMC_XDP_PRST_IN].number = expected_gpio;
 
-    // dummy read
-    expect_value(__wrap_gpio_get_value, fd, expected_poll_fd.fd);
-    expect_any(__wrap_gpio_get_value, value);
+        // dummy read
+        expect_value(__wrap_gpio_get_value, fd, expected_poll_fd.fd);
+        expect_any(__wrap_gpio_get_value, value);
+    }
+    else if (handle->gpios[BMC_XDP_PRST_IN].type == PIN_GPIOD)
+    {
+        expected_poll_fd.revents = POLLIN;
+        struct gpiod_line line;
+        struct gpiod_line line_preq;
+        handle->gpios[BMC_XDP_PRST_IN].line = &line;
+        handle->gpios[BMC_XDP_PRST_IN].fd = expected_poll_fd.fd;
+        expect_value(__wrap_gpiod_line_event_read, line, &line);
+        expect_any(__wrap_gpiod_line_event_read, event);
+    }
 
     assert_int_equal(ST_OK, target_event(handle, expected_poll_fd, &event));
     assert_int_equal(ASD_EVENT_XDP_PRESENT, event);
@@ -1866,6 +2389,8 @@ void target_wait_sync_slave_test(void** state)
 
 int main()
 {
+    Pin_Type gpio = PIN_GPIO;
+    Pin_Type gpiod = PIN_GPIOD;
     const struct CMUnitTest tests[] = {
         cmocka_unit_test(TargetHandler_malloc_failure_test),
         cmocka_unit_test(TargetHandler_malloc_success_test),
@@ -1877,16 +2402,36 @@ int main()
         cmocka_unit_test(target_initialize_gpio_set_active_low_failure_test),
         cmocka_unit_test(target_initialize_gpio_set_direction_failure_test),
         cmocka_unit_test(target_initialize_gpio_set_edge_failure_test),
-        cmocka_unit_test(target_initialize_xdp_check_failed_test),
-        cmocka_unit_test(target_initialize_xdp_connected_test),
-        cmocka_unit_test(target_initialize_read_xdp_failed_test),
-        cmocka_unit_test(target_initialize_debug_enable_failed_test),
-        cmocka_unit_test(target_initialize_success_test),
-        cmocka_unit_test(target_initialize_powergood_pin_handler_test),
+        cmocka_unit_test(target_initialize_dummy_gpio_read_fail_test),
+        cmocka_unit_test(
+            target_initialize_gpiod_ctxless_find_line_failure_test),
+        cmocka_unit_test(
+            target_initialize_gpiod_ctxless_find_line_not_found_test),
+        cmocka_unit_test(target_initialize_gpiod_chip_open_failure_test),
+        cmocka_unit_test(target_initialize_gpiod_chip_get_line_failure_test),
+        cmocka_unit_test(target_initialize_gpiod_line_request_failure_test),
+        cmocka_unit_test(
+            target_initialize_gpiod_line_event_get_fd_failure_test),
+        cmocka_unit_test_prestate(target_initialize_xdp_check_failed_test,
+                                  &gpio),
+        cmocka_unit_test_prestate(target_initialize_xdp_check_failed_test,
+                                  &gpiod),
+        cmocka_unit_test_prestate(target_initialize_xdp_connected_test, &gpio),
+        cmocka_unit_test_prestate(target_initialize_xdp_connected_test, &gpiod),
+        cmocka_unit_test_prestate(target_initialize_debug_enable_failed_test,
+                                  &gpio),
+        cmocka_unit_test_prestate(target_initialize_debug_enable_failed_test,
+                                  &gpiod),
+        // cmocka_unit_test_prestate(target_initialize_success_test, &gpio),
+        // cmocka_unit_test_prestate(target_initialize_success_test, &gpiod),
+        cmocka_unit_test_prestate(target_initialize_powergood_pin_handler_test,
+                                  &gpio),
+        cmocka_unit_test_prestate(target_initialize_powergood_pin_handler_test,
+                                  &gpiod),
         cmocka_unit_test(target_deinitialize_invalid_param_test),
         cmocka_unit_test(target_deinitialize_already_initialized_test),
         cmocka_unit_test(target_deinitialize_gpio_unexport_failure_test),
-        cmocka_unit_test(target_deinitialize_non_minus_test),
+        // cmocka_unit_test(target_deinitialize_non_minus_test),
         cmocka_unit_test(target_deinitialize_success_test),
         cmocka_unit_test(target_write_not_initialized_test),
         cmocka_unit_test(target_write_PIN_PREQ_failure_test),

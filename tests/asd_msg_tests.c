@@ -868,7 +868,7 @@ void asd_msg_on_msg_recv_agent_control_supported_i2c_buses_test(void** state)
 void asd_msg_on_msg_recv_agent_control_downstream_version_test(void** state)
 {
     ASD_MSG* sdk = (*state);
-    char version[] = "ASD_BMC_v1.4.1_<wht-0.3-59-g064059a>";
+    char version[] = "ASD_BMC_v1.4.2_<wht-0.3-59-g064059a>";
     get_fake_message(AGENT_CONTROL_TYPE, &sdk->in_msg.msg);
     sdk->in_msg.msg.header.cmd_stat = OBTAIN_DOWNSTREAM_VERSION_CMD;
     asd_msg_on_msg_recv(*state);

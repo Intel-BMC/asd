@@ -27,6 +27,8 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #ifndef ASD_MSG_TESTS_H
 #define ASD_MSG_TESTS_H
+#include "../asd_common.h"
+#include "../asd_msg.h"
 
 STATUS flock_i2c(ASD_MSG* state, int op);
 

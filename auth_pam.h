@@ -33,6 +33,8 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #ifndef __AUTH_PAM_H_
 #define __AUTH_PAM_H_
 
+#include <security/pam_appl.h>
+
 #include "authenticate.h"
 
 extern auth_hdlrs_t authpam_hdlrs;

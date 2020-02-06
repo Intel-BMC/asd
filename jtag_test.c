@@ -95,7 +95,15 @@ int jtag_test_main(int argc, char** argv)
         result = uncore_discovery(jtag, &uncore, &args);
 
     if (result)
+    {
+        if ((uncore.idcode[0] & ICX_ID_CODE_MASK) == ICX_ID_CODE_SIGNATURE)
+        {
+            args.ir_shift_size = ICX_IR_SHIFT_SIZE;
+            ASD_log(ASD_LogLevel_Debug, stream, option,
+                    "Using 0x%x for ir_shift_size", args.ir_shift_size);
+        }
         result = reset_jtag_to_RTI(jtag);
+    }
 
     if (result)
         result = jtag_test(jtag, &uncore, &args);

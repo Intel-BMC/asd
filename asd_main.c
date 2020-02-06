@@ -37,9 +37,11 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <string.h>
 #include <sys/eventfd.h>
 #include <sys/socket.h>
+#include <systemd/sd-journal.h>
 #include <unistd.h>
 
 #include "mem_helper.h"
+#include "target_handler.h"
 
 #ifndef UNIT_TEST_MAIN
 int main(int argc, char** argv)
@@ -449,6 +451,7 @@ STATUS process_new_client(asd_state* state, struct pollfd* poll_fds,
             ASD_log(ASD_LogLevel_Error, ASD_LogStream_Daemon,
                     ASD_LogOption_None,
                     "Failed to accept incoming connection.");
+            on_connection_aborted();
         }
     }
 
@@ -599,8 +602,6 @@ STATUS read_data(asd_state* state, extnet_conn_t* p_extconn, void* buffer,
                 ASD_log(ASD_LogLevel_Error, ASD_LogStream_Daemon,
                         ASD_LogOption_None, "Socket buffer receive failed: %d",
                         cnt);
-            on_client_disconnect(state);
-            session_close(state->session, p_extconn);
         }
         else
         {
@@ -646,6 +647,7 @@ STATUS ensure_client_authenticated(asd_state* state, extnet_conn_t* p_extconn)
 
             if (result != ST_OK)
             {
+                on_connection_aborted();
                 session_close(state->session, p_extconn);
             }
         }
@@ -656,6 +658,8 @@ STATUS ensure_client_authenticated(asd_state* state, extnet_conn_t* p_extconn)
 STATUS on_client_connect(asd_state* state, extnet_conn_t* p_extcon)
 {
     STATUS result = ST_OK;
+    static bool i2c_platform_checked = false;
+    static i2c_options target_i2c = {false, 0};
 
     if (!state || !p_extcon)
     {
@@ -671,7 +675,31 @@ STATUS on_client_connect(asd_state* state, extnet_conn_t* p_extcon)
 
         log_client_address(p_extcon);
 
-        result = set_config_defaults(&state->config, &state->args.i2c);
+        if (!i2c_platform_checked)
+        {
+            if (target_get_i2c_config(&target_i2c) != ST_OK)
+            {
+#ifdef ENABLE_DEBUG_LOGGING
+                ASD_log(ASD_LogLevel_Warning, ASD_LogStream_Daemon,
+                        ASD_LogOption_No_Remote,
+                        "Failed to read i2c platform config");
+#endif
+            }
+            if (target_i2c.enable)
+            {
+                ASD_log(ASD_LogLevel_Error, ASD_LogStream_Daemon,
+                        ASD_LogOption_No_Remote, "Enabling I2C bus: %d\n",
+                        target_i2c.bus);
+            }
+        }
+        if (state->args.i2c.enable)
+        {
+            result = set_config_defaults(&state->config, &state->args.i2c);
+        }
+        else
+        {
+            result = set_config_defaults(&state->config, &target_i2c);
+        }
     }
 
     if (result == ST_OK)
@@ -700,34 +728,50 @@ STATUS on_client_connect(asd_state* state, extnet_conn_t* p_extcon)
 
 void log_client_address(const extnet_conn_t* p_extcon)
 {
-    struct sockaddr_in6 addr = {};
-    uint8_t client_addr[16];
+    struct sockaddr_in6 addr;
+    uint8_t client_addr[INET6_ADDRSTRLEN];
     socklen_t addr_sz = sizeof(addr);
-    memset(&client_addr, 0, sizeof(client_addr));
+    int retcode = 0;
+
     if (!getpeername(p_extcon->sockfd, (struct sockaddr*)&addr, &addr_sz))
     {
-        if (memcpy_safe(&client_addr, sizeof(client_addr), &addr.sin6_addr,
-                        sizeof(client_addr)))
+        if (inet_ntop(AF_INET6, &addr.sin6_addr, client_addr,
+                      sizeof(client_addr)))
         {
-            ASD_log(
-                ASD_LogLevel_Error, ASD_LogStream_JTAG, ASD_LogOption_None,
-                "memcpy_safe: sin6_addr to client_addr copy buffer failed.");
+            ASD_log(ASD_LogLevel_Info, ASD_LogStream_Daemon, ASD_LogOption_None,
+                    "client %s connected", client_addr);
         }
-        ASD_log(ASD_LogLevel_Warning, ASD_LogStream_Daemon, ASD_LogOption_None,
-                "client connect "
-                "%02x%02x:%02x%02x:%02x%02x:%02x%02x:"
-                "%02x%02x:%02x%02x:%02x%02x.%02x%02x",
-                client_addr[0], client_addr[1], client_addr[2], client_addr[3],
-                client_addr[4], client_addr[5], client_addr[6], client_addr[7],
-                client_addr[8], client_addr[9], client_addr[10],
-                client_addr[11], client_addr[12], client_addr[13],
-                client_addr[14], client_addr[15]);
+        else
+        {
+            if (strcpy_safe(client_addr, INET6_ADDRSTRLEN, "address unknown",
+                            strlen("address unknown")))
+            {
+                ASD_log(ASD_LogLevel_Error, ASD_LogStream_Daemon,
+                        ASD_LogOption_None, "strcpy_safe: address unknown");
+            }
+        }
+#ifdef ENABLE_DEBUG_LOGGING
+        ASD_log(ASD_LogLevel_Info, ASD_LogStream_Daemon, ASD_LogOption_None,
+                "ASD is now connected %s", client_addr);
+#endif
+        // Log ASD connection event into the systems logs
+        retcode = sd_journal_send(
+            "MESSAGE=At-Scale-Debug is now connected", "PRIORITY=%i", LOG_INFO,
+            "REDFISH_MESSAGE_ID=%s", "OpenBMC.0.1.AtScaleDebugConnected",
+            "REDFISH_MESSAGE_ARGS=%s", client_addr, NULL);
+        if (retcode < 0)
+        {
+            ASD_log(ASD_LogLevel_Error, ASD_LogStream_Daemon,
+                    ASD_LogOption_None, "sd_journal_send failed %d", retcode);
+        }
     }
 }
 
 STATUS on_client_disconnect(asd_state* state)
 {
     STATUS result = ST_OK;
+    int retcode;
+
     if (!state)
     {
         result = ST_ERR;
@@ -757,5 +801,42 @@ STATUS on_client_disconnect(asd_state* state)
         }
     }
 
+    if (result == ST_OK)
+    {
+#ifdef ENABLE_DEBUG_LOGGING
+        ASD_log(ASD_LogLevel_Info, ASD_LogStream_Daemon, ASD_LogOption_None,
+                "ASD is now disconnected");
+#endif
+        // Log ASD connection event into the systems logs
+        retcode =
+            sd_journal_send("MESSAGE=At-Scale-Debug is now disconnected",
+                            "PRIORITY=%i", LOG_INFO, "REDFISH_MESSAGE_ID=%s",
+                            "OpenBMC.0.1.AtScaleDebugDisconnected", NULL);
+
+        if (retcode < 0)
+        {
+            ASD_log(ASD_LogLevel_Error, ASD_LogStream_Daemon,
+                    ASD_LogOption_None, "sd_journal_send failed %d", retcode);
+        }
+    }
     return result;
+}
+
+void on_connection_aborted(void)
+{
+    int retcode = 0;
+    // log connection aborted
+#ifdef ENABLE_DEBUG_LOGGING
+    ASD_log(ASD_LogLevel_Error, ASD_LogStream_Daemon, ASD_LogOption_None,
+            "ASD connection aborted");
+#endif
+    retcode = sd_journal_send("MESSAGE=At-Scale-Debug connection failed",
+                              "PRIORITY=%i", LOG_INFO, "REDFISH_MESSAGE_ID=%s",
+                              "OpenBMC.0.1.AtScaleDebugConnectionFailed", NULL);
+
+    if (retcode < 0)
+    {
+        ASD_log(ASD_LogLevel_Error, ASD_LogStream_Daemon, ASD_LogOption_None,
+                "sd_journal_send failed %d", retcode);
+    }
 }

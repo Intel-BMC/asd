@@ -115,6 +115,7 @@ STATUS on_platform_reset_event(Target_Control_Handle* state, ASD_EVENT* event);
 STATUS on_prdy_event(Target_Control_Handle* state, ASD_EVENT* event);
 STATUS on_xdp_present_event(Target_Control_Handle* state, ASD_EVENT* event);
 STATUS initialize_gpiod(Target_Control_GPIO* gpio);
+STATUS platform_init(Target_Control_Handle* state);
 
 static const ASD_LogStream stream = ASD_LogStream_Pins;
 static const ASD_LogOption option = ASD_LogOption_None;
@@ -191,6 +192,7 @@ Target_Control_Handle* TargetHandler()
                 sizeof("SYSPWROK"));
     state->gpios[BMC_SYSPWROK].direction = GPIO_DIRECTION_HIGH;
     state->gpios[BMC_SYSPWROK].edge = GPIO_EDGE_NONE;
+    state->gpios[BMC_SYSPWROK].active_low = true;
 
     strcpy_safe(state->gpios[BMC_PWR_DEBUG_N].name,
                 sizeof(state->gpios[BMC_PWR_DEBUG_N].name), "PWR_DEBUG_N",
@@ -212,6 +214,8 @@ Target_Control_Handle* TargetHandler()
     state->gpios[BMC_XDP_PRST_IN].direction = GPIO_DIRECTION_IN;
     state->gpios[BMC_XDP_PRST_IN].active_low = true;
     state->gpios[BMC_XDP_PRST_IN].edge = GPIO_EDGE_BOTH;
+
+    platform_init(state);
 
     state->event_cfg.break_all = false;
     state->event_cfg.report_MBP = false;
@@ -250,6 +254,68 @@ STATUS initialize_powergood_pin_handler(Target_Control_Handle* state)
     {
         state->gpios[BMC_CPU_PWRGD].handler =
             (TargetHandlerEventFunctionPtr)on_power_event;
+    }
+    return result;
+}
+
+STATUS platform_init(Target_Control_Handle* state)
+{
+    STATUS result = ST_ERR;
+    Dbus_Handle* dbus = dbus_helper();
+
+    if (dbus)
+    {
+        // Connect to the system bus
+        int retcode = sd_bus_open_system(&dbus->bus);
+        if (retcode >= 0)
+        {
+            dbus->fd = sd_bus_get_fd(dbus->bus);
+            if (dbus->fd < 0)
+            {
+#ifdef ENABLE_DEBUG_LOGGING
+                ASD_log(ASD_LogLevel_Error, stream, option,
+                        "sd_bus_get_fd failed: %d", retcode);
+#endif
+                result = ST_ERR;
+            }
+            else
+            {
+                uint64_t pid = 0;
+                result = dbus_get_platform_id(dbus, &pid);
+                if (result == ST_OK)
+                {
+#ifdef ENABLE_DEBUG_LOGGING
+                    ASD_log(ASD_LogLevel_Debug, stream, option,
+                            "dbus_get_platform_id: %d", pid, pid);
+#endif
+                    if (pid == COOPER_CITY_PLATFORM_ID)
+                    {
+#ifdef ENABLE_DEBUG_LOGGING
+                        ASD_log(ASD_LogLevel_Error, stream, option,
+                                "Disable XDP Presence pin for platform: 0x%x",
+                                pid);
+#endif
+                        state->gpios[BMC_XDP_PRST_IN].type = PIN_NONE;
+                    }
+                }
+                else
+                {
+#ifdef ENABLE_DEBUG_LOGGING
+                    ASD_log(ASD_LogLevel_Error, stream, option,
+                            "Failed to dbus_get_platform_id: %d", result);
+#endif
+                }
+            }
+            dbus_deinitialize(dbus);
+        }
+        else
+        {
+#ifdef ENABLE_DEBUG_LOGGING
+            ASD_log(ASD_LogLevel_Error, stream, option,
+                    "sd_bus_open_system failed: %d", retcode);
+#endif
+            result = ST_ERR;
+        }
     }
     return result;
 }
@@ -1165,9 +1231,9 @@ STATUS target_wait_PRDY(Target_Control_Handle* state, const uint8_t log2time)
     // occurs. The timeout is computed using the PRDY timeout setting
     // (log2time) and the JTAG TCLK.
 
-    int timeout_ms;
-    struct pollfd pfd;
-    int poll_result;
+    int timeout_ms = 0;
+    struct pollfd pfd = {0};
+    int poll_result = 0;
     STATUS result = ST_OK;
     short events = 0;
 
@@ -1178,10 +1244,14 @@ STATUS target_wait_PRDY(Target_Control_Handle* state, const uint8_t log2time)
         return ST_ERR;
     }
 
-    // The timeout for commands that wait for a PRDY pulse is defined by the
-    // period of the JTAG clock multiplied by 2^log2time.
-    timeout_ms = JTAG_CLOCK_CYCLE_MILLISECONDS * (1 << log2time);
-
+    // The timeout for commands that wait for a PRDY pulse is defined to be in
+    // uSec, we need to convert to mSec, so we divide by 1000. For
+    // values less than 1 ms that get rounded to 0 we need to wait 1ms.
+    timeout_ms = (1 << log2time) / JTAG_CLOCK_CYCLE_MILLISECONDS;
+    if (timeout_ms <= 0)
+    {
+        timeout_ms = 1;
+    }
     get_pin_events(state->gpios[BMC_PRDY_N], &events);
     pfd.events = events;
     pfd.fd = state->gpios[BMC_PRDY_N].fd;
@@ -1350,5 +1420,66 @@ STATUS target_wait_sync(Target_Control_Handle* state, const uint16_t timeout,
         // </MODIFY>
     }
 
+    return result;
+}
+
+STATUS target_get_i2c_config(i2c_options* i2c)
+{
+    STATUS result = ST_ERR;
+    Dbus_Handle* dbus = dbus_helper();
+
+    if (dbus)
+    {
+        // Connect to the system bus
+        int retcode = sd_bus_open_system(&dbus->bus);
+        if (retcode >= 0)
+        {
+            dbus->fd = sd_bus_get_fd(dbus->bus);
+            if (dbus->fd < 0)
+            {
+                ASD_log(ASD_LogLevel_Error, stream, option,
+                        "sd_bus_get_fd failed");
+            }
+            else
+            {
+                uint64_t pid = 0;
+                result = dbus_get_platform_id(dbus, &pid);
+                if (result == ST_OK)
+                {
+                    switch (pid)
+                    {
+                        case WOLF_PASS_PLATFORM_ID:
+                            i2c->bus = 4;
+                            i2c->enable = true;
+                            break;
+                        case COOPER_CITY_PLATFORM_ID:
+                        case WILSON_CITY_PLATFORM_ID:
+                        case WILSON_POINT_PLATFORM_ID:
+                            i2c->bus = 9;
+                            i2c->enable = true;
+                            break;
+                        default:
+                            i2c->enable = false;
+                            break;
+                    }
+                }
+                else
+                {
+                    ASD_log(ASD_LogLevel_Error, stream, option,
+                            "dbus_get_platform_id failed");
+                }
+            }
+            dbus_deinitialize(dbus);
+        }
+    }
+    else
+    {
+        ASD_log(ASD_LogLevel_Error, stream, option,
+                "failed to get dbus handle");
+    }
+#ifdef ENABLE_DEBUG_LOGGING
+    ASD_log(ASD_LogLevel_Debug, stream, option, "i2c.enable: %d i2c.bus: %d",
+            i2c->enable, i2c->bus);
+#endif
     return result;
 }

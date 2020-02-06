@@ -51,6 +51,11 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #define CHIP_FNAME_BUFF_SIZE 48
 #endif
 
+#define WOLF_PASS_PLATFORM_ID 0x7B
+#define WILSON_CITY_PLATFORM_ID 0x91
+#define WILSON_POINT_PLATFORM_ID 0x9A
+#define COOPER_CITY_PLATFORM_ID 0x9D
+
 typedef enum
 {
     READ_TYPE_MIN = -1,
@@ -116,6 +121,7 @@ typedef STATUS (*TargetHandlerEventFunctionPtr)(void*, ASD_EVENT*);
 
 typedef enum
 {
+    PIN_NONE,
     PIN_GPIO,
     PIN_DBUS,
     PIN_GPIOD
@@ -160,4 +166,5 @@ STATUS target_wait_sync(Target_Control_Handle* state, uint16_t timeout,
                         uint16_t delay);
 STATUS on_power_event(Target_Control_Handle* state, ASD_EVENT* event);
 STATUS initialize_powergood_pin_handler(Target_Control_Handle* state);
+STATUS target_get_i2c_config(i2c_options* i2c);
 #endif // _TARGET_CONTROL_HANDLER_H_

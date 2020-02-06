@@ -77,7 +77,9 @@ typedef unsigned long long __u64;
 #define IRMAXPADSIZE 2000
 #define DIV_ROUND_UP(n, d) (((n) + (d)-1) / (d))
 #define BITS_PER_BYTE 8
+#ifndef APB_FREQ
 #define APB_FREQ 24740000
+#endif
 
 typedef enum
 {

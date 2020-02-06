@@ -387,6 +387,34 @@ STATUS exttls_on_close_client(extnet_conn_t* pconn)
     return result;
 }
 
+/** @brief Validate SSL read return code for close operation.
+ *
+ *  Called after SSL_read() is called.
+ *
+ *  @param [in] ssl SSL pointer returned from SSL_new().
+ *  @return ST_OK if successful, ST_ERR otherwise.
+ */
+static STATUS exttls_has_read_error_closed(SSL* ssl, int n_errcode)
+{
+    int ssl_err = SSL_get_error(ssl, n_errcode);
+    STATUS st_ret = ST_OK;
+    char ca_errstr[256] = {0};
+
+    if ((ssl_err == SSL_ERROR_NONE) || (ssl_err == SSL_ERROR_ZERO_RETURN))
+    {
+        ERR_error_string_n(ERR_get_error(), ca_errstr, sizeof(ca_errstr));
+#ifdef ENABLE_DEBUG_LOGGING
+        ASD_log(ASD_LogLevel_Error, ASD_LogStream_Network, ASD_LogOption_None,
+                "Connection was closed: %s", ca_errstr);
+#endif
+        return ST_OK;
+    }
+    else
+    {
+        return ST_ERR;
+    }
+}
+
 /** @brief Validate SSL read return code.
  *
  *  Called after SSL_read() is called.
@@ -399,17 +427,10 @@ static STATUS exttls_has_read_error(SSL* ssl, int n_errcode)
     int n_oerrno = errno;
     int ssl_err = SSL_get_error(ssl, n_errcode);
     STATUS st_ret = ST_OK;
-    char ca_errstr[256];
+    char ca_errstr[256] = {0};
 
     switch (ssl_err)
     {
-        case SSL_ERROR_NONE:
-        case SSL_ERROR_ZERO_RETURN:
-            st_ret = ST_ERR;
-            ERR_error_string_n(ERR_get_error(), ca_errstr, sizeof(ca_errstr));
-            ASD_log(ASD_LogLevel_Error, ASD_LogStream_Network,
-                    ASD_LogOption_None, "Connection was closed: %s", ca_errstr);
-            break;
         case SSL_ERROR_WANT_WRITE:
         case SSL_ERROR_WANT_READ:
             ASD_log(ASD_LogLevel_Error, ASD_LogStream_Network,
@@ -511,7 +532,12 @@ int exttls_recv(extnet_conn_t* pconn, void* pv_buf, size_t sz_len,
                  SSL_read((SSL*)pconn->p_hdlr_data, pv_buf, (int)sz_len)) <= 0)
         {
             if (ST_OK !=
-                exttls_has_read_error((SSL*)pconn->p_hdlr_data, n_read))
+                exttls_has_read_error_closed((SSL*)pconn->p_hdlr_data, n_read))
+            {
+                n_read = 0;
+            }
+            else if (ST_OK !=
+                     exttls_has_read_error((SSL*)pconn->p_hdlr_data, n_read))
             {
                 n_read = -1;
             }

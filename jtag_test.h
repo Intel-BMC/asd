@@ -38,7 +38,8 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #define MAX_TDO_SIZE 2048
 #define DEFAULT_TAP_DATA_PATTERN 0xdeadbeefbad4f00d // for tap comparison
 #define SIZEOF_TAP_DATA_PATTERN 8
-#define DEFAULT_IR_SHIFT_SIZE 14 // 14 bits per uncore
+#define ICX_IR_SHIFT_SIZE 14     // 14 bits per uncore
+#define DEFAULT_IR_SHIFT_SIZE 11 // 11 bits per uncore
 #define DEFAULT_NUMBER_TEST_ITERATIONS 1
 #define DEFAULT_IR_VALUE 2
 #define DEFAULT_DR_SHIFT_SIZE 32
@@ -50,6 +51,9 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
     (((MAX_TAPS_SUPPORTED * SIZEOF_ID_CODE) + SIZEOF_TAP_DATA_PATTERN) * 8)
 #define DEFAULT_LOG_LEVEL ASD_LogLevel_Info
 #define DEFAULT_LOG_STREAMS ASD_LogStream_Test
+
+#define ICX_ID_CODE_MASK 0x0FFFFFFF
+#define ICX_ID_CODE_SIGNATURE 0x0E7BB013
 
 typedef struct jtag_test_args
 {
@@ -69,7 +73,7 @@ typedef struct jtag_test_args
 
 typedef struct uncore_info
 {
-    unsigned char idcode[MAX_TAPS_SUPPORTED * SIZEOF_ID_CODE];
+    unsigned int idcode[MAX_TAPS_SUPPORTED];
     unsigned int numUncores;
 } uncore_info;
 

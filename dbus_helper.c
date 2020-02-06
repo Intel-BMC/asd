@@ -401,3 +401,138 @@ int match_callback(sd_bus_message* msg, void* userdata, sd_bus_error* error)
     }
     return result;
 }
+
+STATUS dbus_get_platform_path(const Dbus_Handle* state, char* path)
+{
+    struct sd_bus_message* reply = NULL;
+    sd_bus_error error __attribute__((__cleanup__(sd_bus_error_free))) =
+        SD_BUS_ERROR_NULL;
+    int retcode;
+    char type;
+    const char* str = NULL;
+    const char* contents = NULL;
+
+    if ((state == NULL) || (path == NULL))
+    {
+        return ST_ERR;
+    }
+
+    int scan_depth = 3;
+    int array_param_size = 1; // Only MOTHERBOARD_IDENTIFIER
+
+    retcode = sd_bus_call_method(
+        state->bus, OBJECT_MAPPER_SERVICE, OBJECT_MAPPER_PATH,
+        OBJECT_MAPPER_INTERFACE, "GetSubTree", &error, &reply, "sias",
+        BASEBOARD_PATH, scan_depth, array_param_size, MOTHERBOARD_IDENTIFIER);
+    if (retcode < 0)
+    {
+#ifdef ENABLE_DEBUG_LOGGING
+        ASD_log(ASD_LogLevel_Error, stream, option, "sd_bus_call failed: %d",
+                retcode);
+#endif
+        return ST_ERR;
+    }
+
+    retcode = sd_bus_message_peek_type(reply, &type, &contents);
+    if (retcode < 0)
+    {
+#ifdef ENABLE_DEBUG_LOGGING
+        ASD_log(ASD_LogLevel_Error, stream, option,
+                "Failed to get peek type: %d", retcode);
+#endif
+        return ST_ERR;
+    }
+
+    retcode = sd_bus_message_enter_container(reply, type, contents);
+    if (retcode < 0)
+    {
+#ifdef ENABLE_DEBUG_LOGGING
+        ASD_log(ASD_LogLevel_Error, stream, option,
+                "Failed to enter container: %d", retcode);
+#endif
+        return ST_ERR;
+    }
+
+    retcode = sd_bus_message_enter_container(reply, SD_BUS_TYPE_DICT_ENTRY,
+                                             "sa{sas}");
+    if (retcode < 0)
+    {
+#ifdef ENABLE_DEBUG_LOGGING
+        ASD_log(ASD_LogLevel_Error, stream, option,
+                "Failed to enter into dictionary: %d", retcode);
+#endif
+        return ST_ERR;
+    }
+
+    retcode = sd_bus_message_read(reply, "s", &str);
+    if (retcode < 0)
+    {
+        ASD_log(ASD_LogLevel_Error, stream, option, "Failed to read string: %d",
+                retcode);
+        return ST_ERR;
+    }
+
+    if (str == NULL)
+    {
+        return ST_ERR;
+    }
+
+#ifdef ENABLE_DEBUG_LOGGING
+    ASD_log(ASD_LogLevel_Debug, stream, option, "Read string: %s", str);
+#endif
+    if (memcpy_safe(path, MAX_PLATFORM_PATH_SIZE, str, strlen(str) + 1))
+    {
+#ifdef ENABLE_DEBUG_LOGGING
+        ASD_log(ASD_LogLevel_Error, stream, option,
+                "memcpy_safe: platform path failed");
+#endif
+        return ST_ERR;
+    }
+    return ST_OK;
+}
+
+STATUS dbus_get_platform_id(const Dbus_Handle* state, uint64_t* pid)
+{
+    STATUS result;
+    struct sd_bus_message* reply = NULL;
+    sd_bus_error error __attribute__((__cleanup__(sd_bus_error_free))) =
+        SD_BUS_ERROR_NULL;
+    int retcode = 0;
+    char type;
+    const char* contents = NULL;
+    const char* str;
+    char path[MAX_PLATFORM_PATH_SIZE] = {0};
+
+    if ((state == NULL) || (path == NULL))
+    {
+        return ST_ERR;
+    }
+
+    result = dbus_get_platform_path(state, path);
+    if (result != ST_OK)
+    {
+#ifdef ENABLE_DEBUG_LOGGING
+        ASD_log(ASD_LogLevel_Error, stream, option,
+                "Failed to dbus_get_platform_path: %d", result);
+#endif
+        return result;
+    }
+
+#ifdef ENABLE_DEBUG_LOGGING
+    ASD_log(ASD_LogLevel_Debug, stream, option, "path is: %s", path);
+#endif
+
+    retcode = sd_bus_get_property_trivial(state->bus, ENTITY_MANAGER_SERVICE,
+                                          path, MOTHERBOARD_IDENTIFIER,
+                                          "ProductId", &error, 't', pid);
+    if (retcode < 0)
+    {
+#ifdef ENABLE_DEBUG_LOGGING
+        ASD_log(ASD_LogLevel_Error, stream, option,
+                "sd_bus_get_property_trivial failed %d", retcode);
+#endif
+        return ST_ERR;
+    }
+
+    return result;
+}

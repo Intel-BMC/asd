@@ -51,7 +51,7 @@ extern auth_hdlrs_t authpam_hdlrs;
 #define ASD_PAM_SERVICE "asd"
 
 /** User used for authentication. Only this user may authenticate */
-#define ASD_PAM_USER "root"
+#define ASD_PAM_USER "asdbg"
 
 /** Number of invalid auth attempts permitted before lockout */
 #define INVALID_AUTH_MAX_ATTEMPTS 3

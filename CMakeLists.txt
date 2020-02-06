@@ -3,6 +3,11 @@ project(at-scale-debug C)
 
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/sysroot/include)
 
+# Set APB_FREQ to EXTRA_OECMAKE on bb recipe to modify JTAG frequency
+if(${APB_FREQ})
+    add_definitions( -DAPB_FREQ=${APB_FREQ} )
+endif(${APB_FREQ})
+
 if(${BUILD_UT})
     enable_testing()
     add_subdirectory(tests)

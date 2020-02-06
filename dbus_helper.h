@@ -58,7 +58,19 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 member='PropertiesChanged',interface='org.freedesktop.DBus.Properties',\
 sender='xyz.openbmc_project.State.Chassis',\
 arg0namespace='xyz.openbmc_project.State.Chassis'"
+
+#define OBJECT_MAPPER_SERVICE "xyz.openbmc_project.ObjectMapper"
+#define OBJECT_MAPPER_PATH "/xyz/openbmc_project/object_mapper"
+#define OBJECT_MAPPER_INTERFACE "xyz.openbmc_project.ObjectMapper"
+#define BASEBOARD_PATH "/xyz/openbmc_project/inventory/system/board"
+#define MOTHERBOARD_IDENTIFIER                                                 \
+    "xyz.openbmc_project.Inventory.Item.Board.Motherboard"
+
+#define ENTITY_MANAGER_SERVICE "xyz.openbmc_project.EntityManager"
+#define ENTITY_MANAGER_PROPERTIES_INTERFACE "org.freedesktop.DBus.Properties"
+
 #define SD_BUS_ASYNC_TIMEOUT 10000
+#define MAX_PLATFORM_PATH_SIZE 120
 
 typedef enum
 {
@@ -85,6 +97,8 @@ STATUS dbus_power_off(Dbus_Handle*);
 int sdbus_callback(sd_bus_message* reply, void* userdata, sd_bus_error* error);
 STATUS dbus_process_event(Dbus_Handle* state, ASD_EVENT* event);
 STATUS dbus_get_powerstate(Dbus_Handle* state, int* value);
+STATUS dbus_get_platform_path(const Dbus_Handle* state, char* path);
+STATUS dbus_get_platform_id(const Dbus_Handle* state, uint64_t* pid);
 int match_callback(sd_bus_message* m, void* userdata, sd_bus_error* error);
 
 #endif

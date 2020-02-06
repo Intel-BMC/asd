@@ -100,6 +100,7 @@ STATUS send_out_msg_on_socket(void* state, unsigned char* buffer,
 void deinit_asd_state(asd_state* state);
 STATUS on_client_disconnect(asd_state* state);
 STATUS on_client_connect(asd_state* state, extnet_conn_t* p_extcon);
+void on_connection_aborted(void);
 STATUS request_processing_loop(asd_state* state);
 STATUS process_new_client(asd_state* state, struct pollfd* poll_fds,
                           size_t num_fds, int* num_clients, int client_index);

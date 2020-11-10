@@ -85,22 +85,29 @@ typedef struct event_configuration
     bool report_MBP;
 } event_configuration;
 
+#define ALL_TARGET_CONTROL_GPIOS(FUNC)                                         \
+    FUNC(BMC_TCK_MUX_SEL)                                                      \
+    FUNC(BMC_PREQ_N)                                                           \
+    FUNC(BMC_PRDY_N)                                                           \
+    FUNC(BMC_RSMRST_B)                                                         \
+    FUNC(BMC_CPU_PWRGD)                                                        \
+    FUNC(BMC_PLTRST_B)                                                         \
+    FUNC(BMC_SYSPWROK)                                                         \
+    FUNC(BMC_PWR_DEBUG_N)                                                      \
+    FUNC(BMC_DEBUG_EN_N)                                                       \
+    FUNC(BMC_XDP_PRST_IN)                                                      \
+    FUNC(POWER_BTN)                                                            \
+    FUNC(RESET_BTN)
+
+#define NUM_GPIOS 10
+
 typedef enum
 {
-    BMC_TCK_MUX_SEL = 0,
-    BMC_PREQ_N,
-    BMC_PRDY_N,
-    BMC_RSMRST_B,
-    BMC_CPU_PWRGD,
-    BMC_PLTRST_B,
-    BMC_SYSPWROK,
-    BMC_PWR_DEBUG_N, // sampled at power on for early break.
-    BMC_DEBUG_EN_N,
-    BMC_XDP_PRST_IN,
-    POWER_BTN,
-    RESET_BTN
+    ALL_TARGET_CONTROL_GPIOS(TO_ENUM)
 } Target_Control_GPIOS;
-#define NUM_GPIOS 10
+
+static const char* TARGET_CONTROL_GPIO_STRINGS[] = {
+    ALL_TARGET_CONTROL_GPIOS(TO_STRING)};
 
 // Maps from ASD Protocol pin definitions to BMC GPIOs
 static const Target_Control_GPIOS ASD_PIN_TO_GPIO[] = {
@@ -119,17 +126,22 @@ typedef struct pollfd target_fdarr_t[NUM_GPIOS + NUM_DBUS_FDS];
 
 typedef STATUS (*TargetHandlerEventFunctionPtr)(void*, ASD_EVENT*);
 
+#define ALL_PIN_TYPES(FUNC)                                                    \
+    FUNC(PIN_NONE)                                                             \
+    FUNC(PIN_GPIO)                                                             \
+    FUNC(PIN_DBUS)                                                             \
+    FUNC(PIN_GPIOD)
+
 typedef enum
 {
-    PIN_NONE,
-    PIN_GPIO,
-    PIN_DBUS,
-    PIN_GPIOD
+    ALL_PIN_TYPES(TO_ENUM)
 } Pin_Type;
+
+static const char* PIN_TYPE_STRINGS[] = {ALL_PIN_TYPES(TO_STRING)};
 
 typedef struct Target_Control_GPIO
 {
-    char name[20];
+    char name[30];
     int number;
     TargetHandlerEventFunctionPtr handler;
     int fd;
@@ -149,6 +161,15 @@ typedef struct Target_Control_Handle
     Dbus_Handle* dbus;
     bool is_master_probe;
 } Target_Control_Handle;
+
+typedef struct data_json_map
+{
+    const char* fname_json;
+    char ftype;
+    size_t offset;
+    const char* (*enum_strings)[];
+    int arr_size;
+} data_json_map;
 
 Target_Control_Handle* TargetHandler();
 STATUS target_initialize(Target_Control_Handle* state);

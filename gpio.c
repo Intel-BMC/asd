@@ -29,13 +29,15 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <errno.h>
 #include <fcntl.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
-
-#include "mem_helper.h"
+// clang-format off
+#include <safe_str_lib.h>
+// clang-format on
 
 #define GPIO_EDGE_NONE_STRING "none"
 #define GPIO_EDGE_RISING_STRING "rising"
@@ -57,22 +59,22 @@ STATUS gpio_export(int gpio, int* gpio_fd)
     if (!gpio_fd)
         return ST_ERR;
     ia[0] = gpio;
-    snprintf_safe(buf, sizeof(buf), "/sys/class/gpio/gpio%d/value", ia, 1);
+    sprintf_s(buf, sizeof(buf), "/sys/class/gpio/gpio%d/value", ia, 1);
     *gpio_fd = open(buf, O_WRONLY);
     if (*gpio_fd == -1)
     {
         fd = open("/sys/class/gpio/export", O_WRONLY);
         if (fd >= 0)
         {
-            snprintf_safe(buf, sizeof(buf), "%d", ia, 1);
+            sprintf_s(buf, sizeof(buf), "%d", ia, 1);
             if (write(fd, buf, strlen(buf)) < 0)
             {
                 result = ST_ERR;
             }
             else
             {
-                snprintf_safe(buf, sizeof(buf), "/sys/class/gpio/gpio%d/value",
-                              ia, 1);
+                sprintf_s(buf, sizeof(buf), "/sys/class/gpio/gpio%d/value", ia,
+                          1);
                 *gpio_fd = open(buf, O_RDWR);
                 if (*gpio_fd == -1)
                     result = ST_ERR;
@@ -94,7 +96,7 @@ STATUS gpio_unexport(int gpio)
     STATUS result = ST_OK;
     int ia[1];
     ia[0] = gpio;
-    snprintf_safe(buf, sizeof(buf), "/sys/class/gpio/gpio%d/value", ia, 1);
+    sprintf_s(buf, sizeof(buf), "/sys/class/gpio/gpio%d/value", ia, 1);
     fd = open(buf, O_WRONLY);
     if (fd >= 0)
     {
@@ -106,7 +108,7 @@ STATUS gpio_unexport(int gpio)
 
         if (fd >= 0)
         {
-            snprintf_safe(buf, sizeof(buf), "%d", ia, 1);
+            sprintf_s(buf, sizeof(buf), "%d", ia, 1);
             if (write(fd, buf, strlen(buf)) < 0)
             {
                 result = ST_ERR;
@@ -160,7 +162,7 @@ STATUS gpio_set_edge(int gpio, GPIO_EDGE edge)
     ia[0] = gpio;
     STATUS result = ST_ERR;
 
-    snprintf_safe((buf), sizeof(buf), "/sys/class/gpio/gpio%d/edge", ia, 1);
+    sprintf_s((buf), sizeof(buf), "/sys/class/gpio/gpio%d/edge", ia, 1);
     fd = open(buf, O_WRONLY);
     if (fd >= 0)
     {
@@ -186,7 +188,7 @@ STATUS gpio_set_direction(int gpio, GPIO_DIRECTION direction)
     int ia[1];
     ia[0] = gpio;
     STATUS result = ST_ERR;
-    snprintf_safe(buf, sizeof(buf), "/sys/class/gpio/gpio%d/direction", ia, 1);
+    sprintf_s(buf, sizeof(buf), "/sys/class/gpio/gpio%d/direction", ia, 1);
     fd = open(buf, O_WRONLY);
     if (fd >= 0)
     {
@@ -215,7 +217,7 @@ STATUS gpio_set_active_low(int gpio, bool active_low)
     STATUS result = ST_ERR;
     int ia[1];
     ia[0] = gpio;
-    snprintf_safe(buf, sizeof(buf), "/sys/class/gpio/gpio%d/active_low", ia, 1);
+    sprintf_s(buf, sizeof(buf), "/sys/class/gpio/gpio%d/active_low", ia, 1);
     fd = open(buf, O_WRONLY);
     if (fd >= 0)
     {

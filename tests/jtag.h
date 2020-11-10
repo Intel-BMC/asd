@@ -138,6 +138,29 @@ struct jtag_tap_state
 };
 
 /**
+ * union pad_config - Padding Configuration:
+ *
+ * @type: transfer type
+ * @pre_pad_number: Number of prepadding bits bit[11:0]
+ * @post_pad_number: Number of prepadding bits bit[23:12]
+ * @pad_data : Bit value to be used by pre and post padding bit[24]
+ * @int_value: unsigned int packed padding configuration value bit[32:0]
+ *
+ * Structure provide pre and post padding configuration in a single __u32
+ */
+union pad_config
+{
+    struct
+    {
+        __u32 pre_pad_number : 12;
+        __u32 post_pad_number : 12;
+        __u32 pad_data : 1;
+        __u32 rsvd : 7;
+    };
+    __u32 int_value;
+};
+
+/**
  * struct jtag_xfer - jtag xfer:
  *
  * @type: transfer type
@@ -154,7 +177,7 @@ struct jtag_xfer
     __u8 direction;
     __u8 from;
     __u8 endstate;
-    __u8 padding;
+    __u32 padding;
     __u32 length;
     __u64 tdio;
 };

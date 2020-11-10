@@ -47,7 +47,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "cmocka.h"
 #include "i2c_msg_builder_tests.h"
 
-static const char BMC_VERSION[] = "OPENBMC_VERSION:\"wht-0.3-59-g064059a\"";
+static const char BMC_VERSION[] = "OPENBMC_VERSION:\"wht-0.22-0-ge37eb7922\"";
 // static char temporary_log_buffer[512];
 void __wrap_ASD_log(ASD_LogLevel level, ASD_LogStream stream,
                     ASD_LogOption options, const char* format, ...)

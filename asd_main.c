@@ -27,10 +27,12 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "asd_main.h"
 
+#include <arpa/inet.h>
 #include <fcntl.h>
 #include <getopt.h>
 #include <netdb.h>
 #include <pthread.h>
+#include <safe_str_lib.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -40,7 +42,6 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <systemd/sd-journal.h>
 #include <unistd.h>
 
-#include "mem_helper.h"
 #include "target_handler.h"
 
 #ifndef UNIT_TEST_MAIN
@@ -65,10 +66,10 @@ int asd_main(int argc, char** argv)
         if (result == ST_OK)
         {
             result = request_processing_loop(&state);
-            deinit_asd_state(&state);
             ASD_log(ASD_LogLevel_Warning, ASD_LogStream_Daemon,
                     ASD_LogOption_None, "ASD server closing.");
         }
+        deinit_asd_state(&state);
         free(state.extnet);
         free(state.session);
     }
@@ -262,28 +263,27 @@ STATUS init_asd_state(asd_state* state)
         state->session = session_init(state->extnet);
         if (!state->session)
             result = ST_ERR;
-    }
-
-    if (result == ST_OK)
-    {
-        state->event_fd = eventfd(0, O_NONBLOCK);
-        if (state->event_fd == -1)
+        else
         {
-            ASD_log(ASD_LogLevel_Error, ASD_LogStream_Daemon,
-                    ASD_LogOption_None,
-                    "Could not setup event file descriptor.");
-            result = ST_ERR;
+            state->event_fd = eventfd(0, O_NONBLOCK);
+            if (state->event_fd == -1)
+            {
+                ASD_log(ASD_LogLevel_Error, ASD_LogStream_Daemon,
+                        ASD_LogOption_None,
+                        "Could not setup event file descriptor.");
+                result = ST_ERR;
+            }
+            else
+            {
+                result = extnet_open_external_socket(
+                    state->extnet, state->args.session.cp_net_bind_device,
+                    state->args.session.n_port_number, &state->host_fd);
+                if (result != ST_OK)
+                    ASD_log(ASD_LogLevel_Error, ASD_LogStream_Daemon,
+                            ASD_LogOption_None,
+                            "Could not open the external socket");
+            }
         }
-    }
-
-    if (result == ST_OK)
-    {
-        result = extnet_open_external_socket(
-            state->extnet, state->args.session.cp_net_bind_device,
-            state->args.session.n_port_number, &state->host_fd);
-        if (result != ST_OK)
-            ASD_log(ASD_LogLevel_Error, ASD_LogStream_Daemon,
-                    ASD_LogOption_None, "Could not open the external socket");
     }
 
     return result;
@@ -743,8 +743,7 @@ void log_client_address(const extnet_conn_t* p_extcon)
         }
         else
         {
-            if (strcpy_safe(client_addr, INET6_ADDRSTRLEN, "address unknown",
-                            strlen("address unknown")))
+            if (strcpy_s(client_addr, INET6_ADDRSTRLEN, "address unknown"))
             {
                 ASD_log(ASD_LogLevel_Error, ASD_LogStream_Daemon,
                         ASD_LogOption_None, "strcpy_safe: address unknown");

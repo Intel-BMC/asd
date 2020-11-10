@@ -35,8 +35,6 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <string.h>
 #include <syslog.h>
 
-#include "mem_helper.h"
-
 static bool WriteToSyslog = false;
 static ShouldLogFunctionPtr shouldLogCallback = NULL;
 static LogFunctionPtr loggingCallback = NULL;
@@ -79,7 +77,7 @@ void ASD_log(ASD_LogLevel level, ASD_LogStream stream, ASD_LogOption options,
     if (remoteLog)
     {
         char buffer[CALLBACK_LOG_MESSAGE_LENGTH];
-        memset(buffer, '\0', CALLBACK_LOG_MESSAGE_LENGTH);
+        explicit_bzero(buffer, CALLBACK_LOG_MESSAGE_LENGTH);
         snprintf(buffer, CALLBACK_LOG_MESSAGE_LENGTH, format, args);
         loggingCallback(level, stream, buffer);
     }
@@ -110,7 +108,7 @@ void ASD_log_buffer(ASD_LogLevel level, ASD_LogStream stream,
      */
     while (i < len)
     {
-        memset(line, '\0', sizeof(line));
+        explicit_bzero(line, sizeof(line));
         snprintf(line, sizeof(line), "%-6.6s: %07x: ", prefixPtr, i);
         h = (unsigned char*)&line[17];
         for (l = 0; l < 16 && (l + i) < len; l++)
@@ -193,7 +191,7 @@ void ASD_log_shift(ASD_LogLevel level, ASD_LogStream stream,
     {
         return;
     }
-    memset(result, '\0', result_size + 1);
+    explicit_bzero(result, result_size + 1);
 
     buffer_to_hex(number_of_bits, number_of_bytes, buffer, result);
     ASD_log(level, stream, options, "%s: [%db] 0x%s", prefixPtr, number_of_bits,
@@ -221,7 +219,7 @@ bool strtolevel(char* input, ASD_LogLevel* output)
     char temp[STRTOLEVELMAX];
     if (input != NULL && output != NULL && strlen(input) <= (STRTOLEVELMAX - 1))
     {
-        memset(temp, '\0', sizeof(char) * STRTOLEVELMAX);
+        explicit_bzero(temp, sizeof(char) * STRTOLEVELMAX);
         for (int i = 0; i < strlen(input); i++)
             temp[i] = (char)tolower(input[i]);
         if (strcmp(temp, "off") == 0)
@@ -275,7 +273,7 @@ bool strtostreams(char* input, ASD_LogStream* output)
             {
                 if (strlen(token) <= (STRTOSTREAMMAX - 1))
                 {
-                    memset(temp, '\0', sizeof(char) * STRTOSTREAMMAX);
+                    explicit_bzero(temp, sizeof(char) * STRTOSTREAMMAX);
                     for (int i = 0; i < strlen(token); i++)
                         temp[i] = (char)tolower(token[i]);
                     if (strcmp(temp, "none") == 0)

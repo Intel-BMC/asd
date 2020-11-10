@@ -35,6 +35,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <errno.h>
 #include <openssl/rand.h>
+#include <safe_str_lib.h>
 #include <security/pam_appl.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -47,7 +48,6 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "authenticate.h"
 #include "ext_network.h"
 #include "logging.h"
-#include "mem_helper.h"
 #include "session.h"
 
 typedef enum
@@ -86,9 +86,8 @@ int pam_conversation_function(int numMsg, const struct pam_message** msg,
         char* pass = (char*)malloc(len);
         if (pass)
         {
-            memset(pass, 0, len);
-            if (strcpy_safe(pass, len, (char*)appdata_ptr,
-                            strlen((char*)(appdata_ptr))))
+            explicit_bzero(pass, len);
+            if (strcpy_s(pass, len, (char*)appdata_ptr))
             {
                 ASD_log(ASD_LogLevel_Error, ASD_LogStream_JTAG,
                         ASD_LogOption_None,
@@ -125,7 +124,10 @@ int pam_conversation_function(int numMsg, const struct pam_message** msg,
                 *resp = NULL;
             }
             if (pass)
+            {
+                explicit_bzero(pass, len);
                 free(pass);
+            }
         }
     }
 
@@ -154,7 +156,6 @@ static auth_ret_t credentials_are_valid(unsigned char* cp_password,
     const struct pam_conv pamc = {pam_conversation_function, cp_password};
     int pamerr;
     auth_ret_t ret = AUTHRET_UNAUTHORIZED;
-    char ca_passwd[MAX_PW_LEN];
 
     pamerr = pam_start(pam_svc, cp_username, &pamc, &pamh);
     if (PAM_SUCCESS != pamerr)
@@ -178,8 +179,7 @@ static auth_ret_t credentials_are_valid(unsigned char* cp_password,
         }
     }
     // remove all traces of password
-    memset(ca_passwd, 0, sizeof(ca_passwd));
-    memset(cp_password, 0, n_pwlen);
+    explicit_bzero(cp_password, n_pwlen);
 
     if (pamh)
     {
@@ -211,7 +211,7 @@ static auth_ret_t auth_track_attempt(auth_ret_t err_code)
     if (AUTHRET_OK == err_code)
     {
         // Valid authentication, clear out attempts.
-        memset(ats_attempts, 0, sizeof(ats_attempts));
+        explicit_bzero(ats_attempts, sizeof(ats_attempts));
     }
     else if (AUTHRET_UNAUTHORIZED == err_code ||
              AUTHRET_INVALIDDATA == err_code)
@@ -315,7 +315,7 @@ static STATUS auth_handshake_response(ExtNet* net_state,
     auth_handshake_resp_t resp;
     int n_wr;
 
-    memset(&resp, 0, sizeof(resp));
+    explicit_bzero(&resp, sizeof(resp));
     resp.svr_hdr_version = AUTH_HDR_VERSION;
     resp.result_code = c_resp;
 
@@ -417,7 +417,7 @@ STATUS authpam_client_handshake(Session* session, ExtNet* net_state,
                 ret = authenticate_client(ca_buf, n_read);
             }
         }
-        memset(&ca_buf, 0, sizeof(ca_buf));
+        explicit_bzero(&ca_buf, sizeof(ca_buf));
     }
     switch (ret)
     {

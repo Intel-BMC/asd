@@ -29,6 +29,8 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <fcntl.h>
 #include <getopt.h>
+#include <safe_mem_lib.h>
+#include <safe_str_lib.h>
 #include <signal.h>
 #include <stdarg.h>
 #include <stdint.h>
@@ -39,7 +41,6 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <unistd.h>
 
 #include "logging.h"
-#include "mem_helper.h"
 
 #ifndef timersub
 #define timersub(a, b, result)                                                 \
@@ -70,7 +71,7 @@ int jtag_test_main(int argc, char** argv)
 {
     JTAG_Handler* jtag = NULL;
     uncore_info uncore;
-    memset(uncore.idcode, 0x00, sizeof(uncore.idcode));
+    explicit_bzero(uncore.idcode, sizeof(uncore.idcode));
     uncore.numUncores = 0;
     jtag_test_args args;
     bool result;
@@ -96,10 +97,16 @@ int jtag_test_main(int argc, char** argv)
 
     if (result)
     {
-        if ((uncore.idcode[0] & ICX_ID_CODE_MASK) == ICX_ID_CODE_SIGNATURE)
+        if ((uncore.idcode[0] & IR_SIG_MASK) == IR14_SIG1)
         {
-            args.ir_shift_size = ICX_IR_SHIFT_SIZE;
+            args.ir_shift_size = IR14_SHIFT_SIZE;
             ASD_log(ASD_LogLevel_Debug, stream, option,
+                    "Using 0x%x for ir_shift_size", args.ir_shift_size);
+        }
+        else if ((uncore.idcode[0] & IR_SIG_MASK) == IR16_SIG1)
+        {
+            args.ir_shift_size = IR16_SHIFT_SIZE;
+            ASD_log(ASD_LogLevel_Error, stream, option,
                     "Using 0x%x for ir_shift_size", args.ir_shift_size);
         }
         result = reset_jtag_to_RTI(jtag);
@@ -198,11 +205,21 @@ bool parse_arguments(int argc, char** argv, jtag_test_args* args)
 
             case ARG_IR_SIZE:
                 args->ir_shift_size = (unsigned int)strtol(optarg, NULL, 16);
+                if (args->ir_shift_size > MAX_IR_SHIFT_SIZE)
+                {
+                    showUsage(argv);
+                    return false;
+                }
                 break;
 
             case ARG_DR_SIZE:
                 args->dr_shift_size = (unsigned int)strtol(optarg, NULL, 16);
                 args->manual_mode = true;
+                if (args->dr_shift_size > MAX_DR_SHIFT_SIZE)
+                {
+                    showUsage(argv);
+                    return false;
+                }
                 break;
 
             case ARG_IR_VALUE:
@@ -263,11 +280,11 @@ bool parse_arguments(int argc, char** argv, jtag_test_args* args)
         ASD_log(ASD_LogLevel_Error, stream, option, "DR shift size = 0x%x",
                 args->dr_shift_size);
     }
-    if (memcpy_safe(args->tap_data_pattern, sizeof(args->tap_data_pattern),
-                    &args->human_readable, sizeof(args->human_readable)))
+    if (memcpy_s(args->tap_data_pattern, sizeof(args->tap_data_pattern),
+                 &args->human_readable, sizeof(args->human_readable)))
     {
         ASD_log(ASD_LogLevel_Error, ASD_LogStream_JTAG, ASD_LogOption_None,
-                "memcpy_safe: human_readable to tap_data_pattern copy failed.");
+                "memcpy_s: human_readable to tap_data_pattern copy failed.");
         return false;
     }
 
@@ -293,10 +310,12 @@ void showUsage(char** argv)
         "\n"
         "  --dr-overshift=<hex value> Specify 64bit overscan (default: "
         "0x%llx)\n"
-        "  --ir-size=<hex bits>       Specify IR size (default: 0x%x)\n"
+        "  --ir-size=<hex bits>       Specify IR size (default: 0x%x) (max: "
+        "0x%x)\n"
         "                             0xb for 14nm-family\n"
         "                             0xe for 10nm-family\n"
-        "  --dr-size=<hex bits>       Specify DR size (default: 0x%x)\n"
+        "  --dr-size=<hex bits>       Specify DR size (default: 0x%x) (max: "
+        "0x%x)\n"
         "  --ir-value=<hex value>     Specify IR command (default: 0x%x)\n"
         "  --log-level=<level>        Specify Logging Level (default: %s)\n"
         "                             Levels:\n"
@@ -328,8 +347,9 @@ void showUsage(char** argv)
         "\n",
         argv[0], DEFAULT_NUMBER_TEST_ITERATIONS,
         DEFAULT_JTAG_CONTROLLER_MODE == SW_MODE ? "SW" : "HW", DEFAULT_JTAG_TCK,
-        DEFAULT_TAP_DATA_PATTERN, DEFAULT_IR_SHIFT_SIZE, DEFAULT_DR_SHIFT_SIZE,
-        DEFAULT_IR_VALUE, ASD_LogLevelString[DEFAULT_LOG_LEVEL],
+        DEFAULT_TAP_DATA_PATTERN, DEFAULT_IR_SHIFT_SIZE, MAX_IR_SHIFT_SIZE,
+        DEFAULT_DR_SHIFT_SIZE, MAX_DR_SHIFT_SIZE, DEFAULT_IR_VALUE,
+        ASD_LogLevelString[DEFAULT_LOG_LEVEL],
         ASD_LogLevelString[ASD_LogLevel_Off],
         ASD_LogLevelString[ASD_LogLevel_Error],
         ASD_LogLevelString[ASD_LogLevel_Warning],
@@ -387,7 +407,7 @@ bool uncore_discovery(JTAG_Handler* jtag, uncore_info* uncore,
         return false;
     }
 
-    memset(tdo, 0xff, sizeof(tdo));
+    memset_s(tdo, sizeof(tdo), 0xff, sizeof(tdo));
 
     // shift empty array, plus our known pattern so that we can hopefully
     // read out all of the idcodes on the target system
@@ -432,7 +452,7 @@ bool uncore_discovery(JTAG_Handler* jtag, uncore_info* uncore,
     for (int i = 0; i < uncore->numUncores; i++)
     {
         ia[0] = i;
-        snprintf_safe(prefix, sizeof(prefix), "Device %d", ia, 1);
+        sprintf_s(prefix, sizeof(prefix), "Device %d", ia, 1);
         ASD_log_shift(ASD_LogLevel_Info, stream, option, 32, 4, &tdo[i * 4],
                       prefix);
     }
@@ -440,11 +460,11 @@ bool uncore_discovery(JTAG_Handler* jtag, uncore_info* uncore,
                   &tdo[uncore->numUncores * 4], "Overshift");
 
     // save the idcodes for later comparison
-    if (memcpy_safe(uncore->idcode, sizeof(uncore->idcode), tdo,
-                    4 * uncore->numUncores))
+    if (memcpy_s(uncore->idcode, sizeof(uncore->idcode), tdo,
+                 4 * uncore->numUncores))
     {
         ASD_log(ASD_LogLevel_Error, ASD_LogStream_JTAG, ASD_LogOption_None,
-                "memcpy_safe: tdo to uncore->idcode \
+                "memcpy_s: tdo to uncore->idcode \
 				copy buffer failed.");
         return false;
     }
@@ -495,7 +515,7 @@ bool jtag_test(JTAG_Handler* jtag, uncore_info* uncore, jtag_test_args* args)
     unsigned char tdo[MAX_TDO_SIZE];
     size_t ir_size = ((uncore->numUncores * args->ir_shift_size) + 7) / 8;
     unsigned char ir_command[MAX_TDO_SIZE];
-    memset(&ir_command, '\0', ir_size);
+    explicit_bzero(&ir_command, ir_size);
 
     // set IR command for each uncore found
     for (i = 0; i < uncore->numUncores; i++)
@@ -507,20 +527,20 @@ bool jtag_test(JTAG_Handler* jtag, uncore_info* uncore, jtag_test_args* args)
     }
 
     // build compare data, which we will use to test each iterations success
-    memset(compare_data, 0x00, sizeof(compare_data));
-    if (memcpy_safe(compare_data, sizeof(compare_data), uncore->idcode,
-                    4 * uncore->numUncores))
+    explicit_bzero(compare_data, sizeof(compare_data));
+    if (memcpy_s(compare_data, sizeof(compare_data), uncore->idcode,
+                 4 * uncore->numUncores))
     {
         ASD_log(ASD_LogLevel_Error, ASD_LogStream_JTAG, ASD_LogOption_None,
-                "memcpy_safe: uncore->idcode to compare_data copy failed.");
+                "memcpy_s: uncore->idcode to compare_data copy failed.");
         return false;
     }
-    if (memcpy_safe(&compare_data[(4 * uncore->numUncores)],
-                    sizeof(compare_data) - (4 * uncore->numUncores),
-                    args->tap_data_pattern, sizeof(args->tap_data_pattern)))
+    if (memcpy_s(&compare_data[(4 * uncore->numUncores)],
+                 sizeof(compare_data) - (4 * uncore->numUncores),
+                 args->tap_data_pattern, sizeof(args->tap_data_pattern)))
     {
         ASD_log(ASD_LogLevel_Error, ASD_LogStream_JTAG, ASD_LogOption_None,
-                "memcpy_safe: tap_data_pattern to compare_data copy failed.");
+                "memcpy_s: tap_data_pattern to compare_data copy failed.");
         return false;
     }
 
@@ -557,7 +577,7 @@ bool jtag_test(JTAG_Handler* jtag, uncore_info* uncore, jtag_test_args* args)
             return false;
         }
 
-        memset(tdo, 0x00, sizeof(tdo));
+        explicit_bzero(tdo, sizeof(tdo));
 
         number_of_bits = (uncore->numUncores * args->dr_shift_size) +
                          (sizeof(args->tap_data_pattern) * 8);

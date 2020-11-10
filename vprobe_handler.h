@@ -1,5 +1,5 @@
 /*
-Copyright (c) 2019, Intel Corporation
+Copyright (c) 2020, Intel Corporation
 
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are met:
@@ -25,45 +25,28 @@ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
-#ifndef __GPIO_H_
-#define __GPIO_H_
+#ifndef _VPROBE_HANDLER_H_
+#define _VPROBE_HANDLER_H_
 
 #include <stdbool.h>
 
 #include "asd_common.h"
+#include "dbus_helper.h"
+#include "target_handler.h"
 
-#define ALL_GPIO_EDGES(FUNC)                                                   \
-    FUNC(GPIO_EDGE_NONE)                                                       \
-    FUNC(GPIO_EDGE_RISING)                                                     \
-    FUNC(GPIO_EDGE_FALLING)                                                    \
-    FUNC(GPIO_EDGE_BOTH)
+#define MAX_REMOTE_PROBES 8
+#define BUFFER_LINE_SIZE 150
 
-#define ALL_GPIO_DIRECTIONS(FUNC)                                              \
-    FUNC(GPIO_DIRECTION_IN)                                                    \
-    FUNC(GPIO_DIRECTION_OUT)                                                   \
-    FUNC(GPIO_DIRECTION_HIGH)                                                  \
-    FUNC(GPIO_DIRECTION_LOW)
-
-typedef enum
+typedef struct vProbe_Handler
 {
-    ALL_GPIO_EDGES(TO_ENUM)
-} GPIO_EDGE;
+    uint8_t remoteProbes;
+    uint8_t remoteConfigs;
+    char probesConfig[MAX_DATA_SIZE];
+    bool initialized;
+    Dbus_Handle* dbus;
+} vProbe_Handler;
 
-static const char* GPIO_EDGE_STRINGS[] = {ALL_GPIO_EDGES(TO_STRING)};
-
-typedef enum
-{
-    ALL_GPIO_DIRECTIONS(TO_ENUM)
-} GPIO_DIRECTION;
-
-static const char* GPIO_DIRECTION_STRINGS[] = {ALL_GPIO_DIRECTIONS(TO_STRING)};
-
-STATUS gpio_export(int gpio, int* fd);
-STATUS gpio_unexport(int gpio);
-STATUS gpio_get_value(int fd, int* value);
-STATUS gpio_set_value(int fd, int value);
-STATUS gpio_set_edge(int gpio, GPIO_EDGE edge);
-STATUS gpio_set_direction(int gpio, GPIO_DIRECTION direction);
-STATUS gpio_set_active_low(int gpio, bool active_low);
-
-#endif
+vProbe_Handler* vProbeHandler();
+STATUS vProbe_initialize(vProbe_Handler* state);
+STATUS vProbe_deinitialize(vProbe_Handler* state);
+#endif // _VPROBE_HANDLER_H_

@@ -27,6 +27,8 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "dbus_helper.h"
 
+#include <safe_mem_lib.h>
+#include <safe_str_lib.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -123,9 +125,9 @@ STATUS dbus_power_reset(Dbus_Handle* state)
     if (state && state->bus)
     {
         result = dbus_call_set_property_async(
-            state, POWER_SERVICE_CHASSIS, POWER_OBJECT_PATH_CHASSIS,
-            POWER_INTERFACE_NAME_CHASSIS, SET_POWER_STATE_METHOD_CHASSIS,
-            POWER_RESET_ARGUMENT_CHASSIS);
+            state, POWER_SERVICE_HOST, POWER_OBJECT_PATH_HOST,
+            POWER_INTERFACE_NAME_HOST, HOST_TRANSITION_PROPERTY,
+            RESET_ARGUMENT_HOST);
     }
     return result;
 }
@@ -402,7 +404,7 @@ int match_callback(sd_bus_message* msg, void* userdata, sd_bus_error* error)
     return result;
 }
 
-STATUS dbus_get_platform_path(const Dbus_Handle* state, char* path)
+STATUS dbus_get_path(const Dbus_Handle* state, char* name, char* path)
 {
     struct sd_bus_message* reply = NULL;
     sd_bus_error error __attribute__((__cleanup__(sd_bus_error_free))) =
@@ -412,18 +414,18 @@ STATUS dbus_get_platform_path(const Dbus_Handle* state, char* path)
     const char* str = NULL;
     const char* contents = NULL;
 
-    if ((state == NULL) || (path == NULL))
+    if ((state == NULL) || (name == NULL) || (path == NULL))
     {
         return ST_ERR;
     }
 
-    int scan_depth = 3;
-    int array_param_size = 1; // Only MOTHERBOARD_IDENTIFIER
+    int scan_depth = 0;
+    int array_param_size = 1; // Only Identifier
 
-    retcode = sd_bus_call_method(
-        state->bus, OBJECT_MAPPER_SERVICE, OBJECT_MAPPER_PATH,
-        OBJECT_MAPPER_INTERFACE, "GetSubTree", &error, &reply, "sias",
-        BASEBOARD_PATH, scan_depth, array_param_size, MOTHERBOARD_IDENTIFIER);
+    retcode = sd_bus_call_method(state->bus, OBJECT_MAPPER_SERVICE,
+                                 OBJECT_MAPPER_PATH, OBJECT_MAPPER_INTERFACE,
+                                 "GetSubTreePaths", &error, &reply, "sias", "",
+                                 scan_depth, array_param_size, name);
     if (retcode < 0)
     {
 #ifdef ENABLE_DEBUG_LOGGING
@@ -453,22 +455,13 @@ STATUS dbus_get_platform_path(const Dbus_Handle* state, char* path)
         return ST_ERR;
     }
 
-    retcode = sd_bus_message_enter_container(reply, SD_BUS_TYPE_DICT_ENTRY,
-                                             "sa{sas}");
-    if (retcode < 0)
-    {
-#ifdef ENABLE_DEBUG_LOGGING
-        ASD_log(ASD_LogLevel_Error, stream, option,
-                "Failed to enter into dictionary: %d", retcode);
-#endif
-        return ST_ERR;
-    }
-
     retcode = sd_bus_message_read(reply, "s", &str);
     if (retcode < 0)
     {
+#ifdef ENABLE_DEBUG_LOGGING
         ASD_log(ASD_LogLevel_Error, stream, option, "Failed to read string: %d",
                 retcode);
+#endif
         return ST_ERR;
     }
 
@@ -480,32 +473,75 @@ STATUS dbus_get_platform_path(const Dbus_Handle* state, char* path)
 #ifdef ENABLE_DEBUG_LOGGING
     ASD_log(ASD_LogLevel_Debug, stream, option, "Read string: %s", str);
 #endif
-    if (memcpy_safe(path, MAX_PLATFORM_PATH_SIZE, str, strlen(str) + 1))
+
+    if (strcpy_s(path, MAX_PLATFORM_PATH_SIZE, str))
     {
 #ifdef ENABLE_DEBUG_LOGGING
         ASD_log(ASD_LogLevel_Error, stream, option,
-                "memcpy_safe: platform path failed");
+                "strcpy_s: platform path failed");
 #endif
         return ST_ERR;
     }
+
+    sd_bus_message_exit_container(reply);
+
     return ST_OK;
 }
 
+STATUS dbus_get_platform_path(const Dbus_Handle* state, char* path)
+{
+    STATUS result = ST_ERR;
+    static char platform_path[MAX_PLATFORM_PATH_SIZE] = {0};
+    // If we already have the path don't go to dbus and return saved value
+    if (platform_path[0] != '\0')
+    {
+        if (strcpy_s(path, MAX_PLATFORM_PATH_SIZE, platform_path))
+        {
+#ifdef ENABLE_DEBUG_LOGGING
+            ASD_log(ASD_LogLevel_Error, stream, option,
+                    "strcpy_s: platform path failed");
+#endif
+            return ST_ERR;
+        }
+#ifdef ENABLE_DEBUG_LOGGING
+        ASD_log(ASD_LogLevel_Info, stream, option, "Return saved path: %s",
+                platform_path);
+#endif
+        return ST_OK;
+    }
+    result = dbus_get_path(state, MOTHERBOARD_IDENTIFIER, path);
+    if (result == ST_OK)
+    {
+        if (strcpy_s(platform_path, MAX_PLATFORM_PATH_SIZE, path))
+        {
+#ifdef ENABLE_DEBUG_LOGGING
+            ASD_log(ASD_LogLevel_Error, stream, option,
+                    "strcpy_s: platform path failed");
+#endif
+            platform_path[0] = '\0';
+        }
+    }
+    return result;
+}
 STATUS dbus_get_platform_id(const Dbus_Handle* state, uint64_t* pid)
 {
     STATUS result;
-    struct sd_bus_message* reply = NULL;
     sd_bus_error error __attribute__((__cleanup__(sd_bus_error_free))) =
         SD_BUS_ERROR_NULL;
     int retcode = 0;
-    char type;
-    const char* contents = NULL;
-    const char* str;
     char path[MAX_PLATFORM_PATH_SIZE] = {0};
+    static uint64_t platform_id = 0;
+    static bool read_from_dbus = true;
 
     if ((state == NULL) || (path == NULL))
     {
         return ST_ERR;
+    }
+
+    // If we already have the pid don't go to dbus and return saved value
+    if (read_from_dbus == false)
+    {
+        *pid = platform_id;
     }
 
     result = dbus_get_platform_path(state, path);
@@ -533,6 +569,166 @@ STATUS dbus_get_platform_id(const Dbus_Handle* state, uint64_t* pid)
 #endif
         return ST_ERR;
     }
+    read_from_dbus = false;
+    platform_id = *pid;
 
     return result;
+}
+
+STATUS dbus_read_asd_config(const Dbus_Handle* state, const char* interface,
+                            const char* name, char type, void* var)
+{
+    STATUS result = ST_OK;
+    int retcode;
+    static char path[MAX_PLATFORM_PATH_SIZE] = {0};
+    bool* bval = NULL;
+    char* str = NULL;
+    sd_bus_error error __attribute__((__cleanup__(sd_bus_error_free))) =
+        SD_BUS_ERROR_NULL;
+
+    if ((state == NULL) || (name == NULL) || (interface == NULL) ||
+        (var == NULL))
+    {
+        return ST_ERR;
+    }
+
+    if (path[0] == '\0')
+    {
+        result = dbus_get_path(state, ASD_CONFIG_PATH, path);
+    }
+
+    if (result != ST_OK)
+    {
+#ifdef ENABLE_DEBUG_LOGGING
+        ASD_log(ASD_LogLevel_Error, stream, option,
+                "Failed to dbus_get_path: %d", result);
+#endif
+        return result;
+    }
+
+    switch (type)
+    {
+        case 'b':
+            bval = (bool*)var;
+            retcode = sd_bus_get_property_trivial(
+                state->bus, ENTITY_MANAGER_SERVICE, path, interface, name,
+                &error, type, bval);
+            if (retcode < 0)
+            {
+#ifdef ENABLE_DEBUG_LOGGING
+                ASD_log(ASD_LogLevel_Trace, stream, option,
+                        "sd_bus_get_property_trivial can't be found or read %d",
+                        retcode);
+#endif
+                result = ST_ERR;
+            }
+            break;
+        case 's':
+            retcode =
+                sd_bus_get_property_string(state->bus, ENTITY_MANAGER_SERVICE,
+                                           path, interface, name, &error, &str);
+            if (retcode < 0)
+            {
+#ifdef ENABLE_DEBUG_LOGGING
+                ASD_log(ASD_LogLevel_Trace, stream, option,
+                        "sd_bus_get_property_string can't be found or read %d",
+                        retcode);
+#endif
+                result = ST_ERR;
+            }
+            else
+            {
+                if (str != NULL)
+                {
+                    strcpy_s(var, MAX_PLATFORM_PATH_SIZE, str);
+                    free(str);
+                    str = NULL;
+                }
+            }
+            break;
+        default:
+            result = ST_ERR;
+            break;
+    }
+    return result;
+}
+
+STATUS dbus_get_asd_interface_paths(const Dbus_Handle* state,
+                                    const char* names[],
+                                    char interfaces[][MAX_PLATFORM_PATH_SIZE],
+                                    int arr_size)
+{
+    STATUS result = ST_OK;
+    struct sd_bus_message* reply = NULL;
+    sd_bus_error error __attribute__((__cleanup__(sd_bus_error_free))) =
+        SD_BUS_ERROR_NULL;
+    int retcode;
+    char type;
+    const char* str = NULL;
+    const char* contents = NULL;
+    static char interface[MAX_PLATFORM_PATH_SIZE] = {0};
+
+    if ((state == NULL) || (names == NULL) || (interfaces == NULL))
+    {
+        return ST_ERR;
+    }
+
+    int scan_depth = 0;
+    int array_param_size = 1;
+
+    for (int i = 0; i < arr_size; i++)
+    {
+        explicit_bzero(interface, sizeof(interface));
+        sprintf_s(interface, MAX_PLATFORM_PATH_SIZE, "%s.%s", ASD_CONFIG_PATH,
+                  names[i]);
+
+        retcode = sd_bus_call_method(
+            state->bus, OBJECT_MAPPER_SERVICE, OBJECT_MAPPER_PATH,
+            OBJECT_MAPPER_INTERFACE, "GetSubTreePaths", &error, &reply, "sias",
+            "", scan_depth, array_param_size, interface);
+        if (retcode < 0)
+        {
+#ifdef ENABLE_DEBUG_LOGGING
+            ASD_log(ASD_LogLevel_Error, stream, option,
+                    "sd_bus_call failed: %d", retcode);
+#endif
+            return ST_ERR;
+        }
+
+        retcode = sd_bus_message_peek_type(reply, &type, &contents);
+        if (retcode < 0)
+        {
+#ifdef ENABLE_DEBUG_LOGGING
+            ASD_log(ASD_LogLevel_Error, stream, option,
+                    "Failed to get peek type: %d", retcode);
+#endif
+            return ST_ERR;
+        }
+
+        retcode = sd_bus_message_enter_container(reply, type, contents);
+        if (retcode < 0)
+        {
+#ifdef ENABLE_DEBUG_LOGGING
+            ASD_log(ASD_LogLevel_Error, stream, option,
+                    "Failed to enter container: %d", retcode);
+#endif
+            return ST_ERR;
+        }
+        retcode = sd_bus_message_read(reply, "s", &str);
+        if (retcode < 0)
+        {
+            ASD_log(ASD_LogLevel_Error, stream, option,
+                    "Failed to read string inside dictionary: %d", retcode);
+            return ST_ERR;
+        }
+        if (str != NULL)
+        {
+            strcpy_s((char*)&interfaces[i], MAX_PLATFORM_PATH_SIZE, interface);
+            ASD_log(ASD_LogLevel_Info, stream, option, "found interface[%d] %s",
+                    i, interfaces[i]);
+        }
+        retcode = sd_bus_message_exit_container(reply);
+    }
+
+    return ST_OK;
 }

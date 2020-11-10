@@ -38,11 +38,12 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "jtag_handler.h"
 #include "logging.h"
 #include "target_handler.h"
+#include "vprobe_handler.h"
 
 // Two simple rules for the version string are:
 // 1. less than 265 in length (or it will be truncated in the plugin)
 // 2. no dashes, as they are used later up the sw stack between components.
-static char asd_version[] = "ASD_BMC_v1.4.3";
+static char asd_version[] = "ASD_BMC_v1.4.4";
 
 #define NUM_IN_FLIGHT_BUFFERS_TO_USE 20
 #define MAX_MULTICHAINS 16
@@ -80,6 +81,7 @@ typedef struct ASD_MSG
     JTAG_Handler* jtag_handler;
     Target_Control_Handle* target_handler;
     I2C_Handler* i2c_handler;
+    vProbe_Handler* vprobe_handler;
     bool handlers_initialized;
     ShouldLogFunctionPtr should_remote_log;
     LogFunctionPtr send_remote_logging_message;

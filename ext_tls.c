@@ -136,8 +136,8 @@ static SSL_CTX* init_ssl_context(const char* cp_certfile,
                        SSL_OP_NO_TLSv1_1 | SSL_OP_NO_COMPRESSION |
                        SSL_OP_CIPHER_SERVER_PREFERENCE;
 
-    const char* cipher_list = "ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-"
-                              "GCM-SHA256:!aNULL:!eNULL@STRENGTH";
+    const char* cipher_list = "ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-"
+                              "GCM-SHA384:!aNULL:!eNULL@STRENGTH";
     char ca_errstr[256];
 
     SSL_CTX* ctx = SSL_CTX_new(method); // create the context
@@ -163,7 +163,7 @@ static SSL_CTX* init_ssl_context(const char* cp_certfile,
         else
         {
             /* configure ECDH to allow ECDH/ECDHE ciphers */
-            SSL_CTX_set_ecdh_auto(ctx, 1);
+            SSL_CTX_set1_curves_list(ctx, "P-384");
 
             /* configure certificate */
             if (SSL_CTX_use_certificate_file(ctx, cp_certfile,
@@ -397,7 +397,6 @@ STATUS exttls_on_close_client(extnet_conn_t* pconn)
 static STATUS exttls_has_read_error_closed(SSL* ssl, int n_errcode)
 {
     int ssl_err = SSL_get_error(ssl, n_errcode);
-    STATUS st_ret = ST_OK;
     char ca_errstr[256] = {0};
 
     if ((ssl_err == SSL_ERROR_NONE) || (ssl_err == SSL_ERROR_ZERO_RETURN))

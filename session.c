@@ -44,6 +44,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "session.h"
 
 #include <netinet/in.h>
+#include <safe_mem_lib.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -55,7 +56,6 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "asd_common.h"
 #include "ext_network.h"
 #include "logging.h"
-#include "mem_helper.h"
 
 /** @brief Initialize session information
  *
@@ -175,12 +175,12 @@ STATUS session_open(Session* state, extnet_conn_t* p_extconn)
         }
         else
         {
-            if (memcpy_safe(&p_sess->extconn, sizeof(p_sess->extconn),
-                            p_extconn, sizeof(p_sess->extconn)))
+            if (memcpy_s(&p_sess->extconn, sizeof(p_sess->extconn), p_extconn,
+                         sizeof(p_sess->extconn)))
             {
                 ASD_log(ASD_LogLevel_Error, ASD_LogStream_JTAG,
                         ASD_LogOption_None,
-                        "memcpy_safe: p_extconn to p_sess copy failed.");
+                        "memcpy_s: p_extconn to p_sess copy failed.");
             }
             p_sess->t_auth_tout = SESSION_AUTH_EXPIRE_TIMEOUT + time(0);
             p_sess->b_authenticated = false;
@@ -393,13 +393,12 @@ STATUS session_get_authenticated_conn(Session* state,
     {
         if (p_authd_conn)
         {
-            if (memcpy_safe(p_authd_conn, sizeof(extnet_conn_t),
-                            &state->sessions[state->n_authenticated_id].extconn,
-                            sizeof(extnet_conn_t)))
+            if (memcpy_s(p_authd_conn, sizeof(extnet_conn_t),
+                         &state->sessions[state->n_authenticated_id].extconn,
+                         sizeof(extnet_conn_t)))
             {
                 ASD_log(ASD_LogLevel_Error, ASD_LogStream_JTAG,
-                        ASD_LogOption_None,
-                        "memcpy_safe: n_aunthenticated_id to \
+                        ASD_LogOption_None, "memcpy_s: n_aunthenticated_id to \
 						p_authd_conn copy failed.");
                 st_ret = ST_ERR;
             }

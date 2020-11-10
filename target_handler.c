@@ -30,6 +30,9 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <fcntl.h>
 #include <gpiod.h>
 #include <poll.h>
+#include <safe_mem_lib.h>
+#include <safe_str_lib.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -40,7 +43,6 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "asd_common.h"
 #include "gpio.h"
 #include "logging.h"
-#include "mem_helper.h"
 
 #define JTAG_CLOCK_CYCLE_MILLISECONDS 1000
 #define GPIOD_CONSUMER_LABEL "ASD"
@@ -103,6 +105,22 @@ static inline void get_pin_events(Target_Control_GPIO gpio, short* events)
     }
 }
 
+static inline void string_to_enum(char* str, const char* (*enum_strings)[],
+                                  int arr_size, int* val)
+{
+    if ((str != NULL) && (enum_strings != NULL) && (val != NULL))
+    {
+        for (int index = 0; index < arr_size; index++)
+        {
+            if (strcmp(str, (*enum_strings)[index]) == 0)
+            {
+                *val = index;
+                return;
+            }
+        }
+    }
+}
+
 STATUS initialize_gpios(Target_Control_Handle* state);
 #ifdef GPIO_SYSFS_SUPPORT_DEPRECATED
 STATUS initialize_gpio(Target_Control_GPIO* gpio);
@@ -137,6 +155,8 @@ Target_Control_Handle* TargetHandler()
 
     state->initialized = false;
 
+    explicit_bzero(&state->gpios, sizeof(state->gpios));
+
     for (int i = 0; i < NUM_GPIOS; i++)
     {
         state->gpios[i].number = -1;
@@ -148,69 +168,60 @@ Target_Control_Handle* TargetHandler()
         state->gpios[i].type = PIN_GPIOD;
     }
 
-    strcpy_safe(state->gpios[BMC_TCK_MUX_SEL].name,
-                sizeof(state->gpios[BMC_TCK_MUX_SEL].name), "TCK_MUX_SEL",
-                sizeof("TCK_MUX_SEL"));
+    strcpy_s(state->gpios[BMC_TCK_MUX_SEL].name,
+             sizeof(state->gpios[BMC_TCK_MUX_SEL].name), "TCK_MUX_SEL");
     state->gpios[BMC_TCK_MUX_SEL].direction = GPIO_DIRECTION_LOW;
     state->gpios[BMC_TCK_MUX_SEL].edge = GPIO_EDGE_NONE;
 
-    strcpy_safe(state->gpios[BMC_PREQ_N].name,
-                sizeof(state->gpios[BMC_PREQ_N].name), "PREQ_N",
-                sizeof("PREQ_N"));
+    strcpy_s(state->gpios[BMC_PREQ_N].name,
+             sizeof(state->gpios[BMC_PREQ_N].name), "PREQ_N");
     state->gpios[BMC_PREQ_N].direction = GPIO_DIRECTION_HIGH;
     state->gpios[BMC_PREQ_N].edge = GPIO_EDGE_NONE;
     state->gpios[BMC_PREQ_N].active_low = true;
 
-    strcpy_safe(state->gpios[BMC_PRDY_N].name,
-                sizeof(state->gpios[BMC_PRDY_N].name), "PRDY_N",
-                sizeof("PRDY_N"));
+    strcpy_s(state->gpios[BMC_PRDY_N].name,
+             sizeof(state->gpios[BMC_PRDY_N].name), "PRDY_N");
     state->gpios[BMC_PRDY_N].direction = GPIO_DIRECTION_IN;
     state->gpios[BMC_PRDY_N].edge = GPIO_EDGE_FALLING;
     state->gpios[BMC_PRDY_N].active_low = true;
 
-    strcpy_safe(state->gpios[BMC_RSMRST_B].name,
-                sizeof(state->gpios[BMC_RSMRST_B].name), "RSMRST_N",
-                sizeof("RSMRST_N"));
+    strcpy_s(state->gpios[BMC_RSMRST_B].name,
+             sizeof(state->gpios[BMC_RSMRST_B].name), "RSMRST_N");
     state->gpios[BMC_RSMRST_B].direction = GPIO_DIRECTION_IN;
     state->gpios[BMC_RSMRST_B].edge = GPIO_EDGE_NONE;
 
-    strcpy_safe(state->gpios[BMC_CPU_PWRGD].name,
-                sizeof(state->gpios[BMC_CPU_PWRGD].name), "SIO_POWER_GOOD",
-                sizeof("SIO_POWER_GOOD"));
+    strcpy_s(state->gpios[BMC_CPU_PWRGD].name,
+             sizeof(state->gpios[BMC_CPU_PWRGD].name), "SIO_POWER_GOOD");
     state->gpios[BMC_CPU_PWRGD].direction = GPIO_DIRECTION_IN;
     state->gpios[BMC_CPU_PWRGD].edge = GPIO_EDGE_BOTH;
     state->gpios[BMC_CPU_PWRGD].type = PIN_DBUS;
 
-    strcpy_safe(state->gpios[BMC_PLTRST_B].name,
-                sizeof(state->gpios[BMC_PLTRST_B].name), "PLTRST_N",
-                sizeof("PLTRST_N"));
+    strcpy_s(state->gpios[BMC_PLTRST_B].name,
+             sizeof(state->gpios[BMC_PLTRST_B].name), "PLTRST_N");
     state->gpios[BMC_PLTRST_B].direction = GPIO_DIRECTION_IN;
     state->gpios[BMC_PLTRST_B].edge = GPIO_EDGE_BOTH;
+    state->gpios[BMC_PLTRST_B].active_low = true;
 
-    strcpy_safe(state->gpios[BMC_SYSPWROK].name,
-                sizeof(state->gpios[BMC_SYSPWROK].name), "SYSPWROK",
-                sizeof("SYSPWROK"));
+    strcpy_s(state->gpios[BMC_SYSPWROK].name,
+             sizeof(state->gpios[BMC_SYSPWROK].name), "SYSPWROK");
     state->gpios[BMC_SYSPWROK].direction = GPIO_DIRECTION_HIGH;
     state->gpios[BMC_SYSPWROK].edge = GPIO_EDGE_NONE;
     state->gpios[BMC_SYSPWROK].active_low = true;
 
-    strcpy_safe(state->gpios[BMC_PWR_DEBUG_N].name,
-                sizeof(state->gpios[BMC_PWR_DEBUG_N].name), "PWR_DEBUG_N",
-                sizeof("PWR_DEBUG_N"));
+    strcpy_s(state->gpios[BMC_PWR_DEBUG_N].name,
+             sizeof(state->gpios[BMC_PWR_DEBUG_N].name), "PWR_DEBUG_N");
     state->gpios[BMC_PWR_DEBUG_N].direction = GPIO_DIRECTION_HIGH;
     state->gpios[BMC_PWR_DEBUG_N].edge = GPIO_EDGE_NONE;
     state->gpios[BMC_PWR_DEBUG_N].active_low = true;
 
-    strcpy_safe(state->gpios[BMC_DEBUG_EN_N].name,
-                sizeof(state->gpios[BMC_DEBUG_EN_N].name), "DEBUG_EN_N",
-                sizeof("DEBUG_EN_N"));
+    strcpy_s(state->gpios[BMC_DEBUG_EN_N].name,
+             sizeof(state->gpios[BMC_DEBUG_EN_N].name), "DEBUG_EN_N");
     state->gpios[BMC_DEBUG_EN_N].direction = GPIO_DIRECTION_HIGH;
     state->gpios[BMC_DEBUG_EN_N].edge = GPIO_EDGE_NONE;
     state->gpios[BMC_DEBUG_EN_N].active_low = true;
 
-    strcpy_safe(state->gpios[BMC_XDP_PRST_IN].name,
-                sizeof(state->gpios[BMC_XDP_PRST_IN].name), "XDP_PRST_N",
-                sizeof("XDP_PRST_N"));
+    strcpy_s(state->gpios[BMC_XDP_PRST_IN].name,
+             sizeof(state->gpios[BMC_XDP_PRST_IN].name), "XDP_PRST_N");
     state->gpios[BMC_XDP_PRST_IN].direction = GPIO_DIRECTION_IN;
     state->gpios[BMC_XDP_PRST_IN].active_low = true;
     state->gpios[BMC_XDP_PRST_IN].edge = GPIO_EDGE_BOTH;
@@ -258,11 +269,88 @@ STATUS initialize_powergood_pin_handler(Target_Control_Handle* state)
     return result;
 }
 
+STATUS platform_override_gpio(const Dbus_Handle* dbus, char* interface,
+                              Target_Control_GPIO* gpio)
+{
+    STATUS result = ST_ERR;
+    int* enum_val = NULL;
+    bool* bool_val = NULL;
+    int match = 0;
+    union out_data
+    {
+        bool bval;
+        char str[MAX_PLATFORM_PATH_SIZE];
+    } rval;
+
+    static const data_json_map TARGET_JSON_MAP[] = {
+        {"PinName", 's', offsetof(Target_Control_GPIO, name), NULL, 0},
+        {"PinDirection", 's', offsetof(Target_Control_GPIO, direction),
+         &GPIO_DIRECTION_STRINGS,
+         sizeof(GPIO_DIRECTION_STRINGS) / sizeof(char*)},
+        {"PinEdge", 's', offsetof(Target_Control_GPIO, edge),
+         &GPIO_EDGE_STRINGS, sizeof(GPIO_EDGE_STRINGS) / sizeof(char*)},
+        {"PinActiveLow", 'b', offsetof(Target_Control_GPIO, active_low), NULL,
+         0},
+        {"PinType", 's', offsetof(Target_Control_GPIO, type), &PIN_TYPE_STRINGS,
+         sizeof(PIN_TYPE_STRINGS) / sizeof(char*)}};
+
+    if ((dbus == NULL) || (interface == NULL))
+    {
+        return ST_ERR;
+    }
+
+    // Search for Target_Control_GPIO settings in the interface
+    for (int i = 0; i < sizeof(TARGET_JSON_MAP) / sizeof(data_json_map); i++)
+    {
+        result =
+            dbus_read_asd_config(dbus, interface, TARGET_JSON_MAP[i].fname_json,
+                                 TARGET_JSON_MAP[i].ftype, &rval);
+        if (result == ST_OK)
+        {
+            switch (TARGET_JSON_MAP[i].ftype)
+            {
+                case 'b':
+                    // Copy active_low
+                    bool_val = (bool*)((char*)gpio + TARGET_JSON_MAP[i].offset);
+#ifdef ENABLE_DEBUG_LOGGING
+                    ASD_log(ASD_LogLevel_Trace, stream, option, "%s = %d",
+                            TARGET_JSON_MAP[i].fname_json, rval.bval);
+#endif
+                    *bool_val = rval.bval;
+                    break;
+                case 's':
+                    // Copy GPIO name
+                    match = 0;
+                    strcmp_s(TARGET_JSON_MAP[i].fname_json, strlen("PinName"),
+                             "PinName", &match);
+                    if (match == 0)
+                    {
+                        // Copy Pin Name from dbus object to
+                        memcpy_s((char*)gpio + TARGET_JSON_MAP[i].offset,
+                                 MAX_PLATFORM_PATH_SIZE, &rval.str,
+                                 strlen(rval.str));
+                        break;
+                    }
+                    // Convert strings to enum values and set values
+                    enum_val = (int*)((char*)gpio + TARGET_JSON_MAP[i].offset);
+                    string_to_enum(rval.str, TARGET_JSON_MAP[i].enum_strings,
+                                   TARGET_JSON_MAP[i].arr_size, enum_val);
+                    break;
+                default:
+                    return ST_ERR;
+            }
+        }
+    }
+    return result;
+}
+
 STATUS platform_init(Target_Control_Handle* state)
 {
     STATUS result = ST_ERR;
     Dbus_Handle* dbus = dbus_helper();
+    char interfaces[NUM_GPIOS][MAX_PLATFORM_PATH_SIZE];
 
+    // Read configuration from dbus
     if (dbus)
     {
         // Connect to the system bus
@@ -280,31 +368,28 @@ STATUS platform_init(Target_Control_Handle* state)
             }
             else
             {
-                uint64_t pid = 0;
-                result = dbus_get_platform_id(dbus, &pid);
-                if (result == ST_OK)
+                // get interface paths
+                explicit_bzero(interfaces, sizeof(interfaces));
+                dbus_get_asd_interface_paths(dbus, TARGET_CONTROL_GPIO_STRINGS,
+                                             interfaces, NUM_GPIOS);
+                for (int i = 0; i < NUM_GPIOS; i++)
                 {
-#ifdef ENABLE_DEBUG_LOGGING
-                    ASD_log(ASD_LogLevel_Debug, stream, option,
-                            "dbus_get_platform_id: %d", pid, pid);
-#endif
-                    if (pid == COOPER_CITY_PLATFORM_ID)
+                    if (strlen(interfaces[i]) != 0)
                     {
-#ifdef ENABLE_DEBUG_LOGGING
-                        ASD_log(ASD_LogLevel_Error, stream, option,
-                                "Disable XDP Presence pin for platform: 0x%x",
-                                pid);
-#endif
-                        state->gpios[BMC_XDP_PRST_IN].type = PIN_NONE;
+                        ASD_log(ASD_LogLevel_Info, stream, option,
+                                "interface[%d]: %s - %s", i,
+                                TARGET_CONTROL_GPIO_STRINGS[i], interfaces[i]);
+                        // Override Target_Control_GPIO settings for pin using
+                        // entity mnager ASD settings.
+                        platform_override_gpio(dbus, interfaces[i],
+                                               &state->gpios[i]);
                     }
                 }
-                else
-                {
 #ifdef ENABLE_DEBUG_LOGGING
-                    ASD_log(ASD_LogLevel_Error, stream, option,
-                            "Failed to dbus_get_platform_id: %d", result);
+                ASD_log_buffer(ASD_LogLevel_Debug, stream, option,
+                               (char*)&state->gpios, sizeof(state->gpios),
+                               "JSON");
 #endif
-                }
             }
             dbus_deinitialize(dbus);
         }
@@ -480,9 +565,9 @@ STATUS initialize_gpiod(Target_Control_GPIO* gpio)
         return ST_ERR;
     }
 
-    memset(chip_name, 0x0, CHIP_BUFFER_SIZE);
-    memcpy_safe(chip_name, CHIP_BUFFER_SIZE, GPIOD_DEV_ROOT_FOLDER,
-                GPIOD_DEV_ROOT_FOLDER_STRLEN);
+    explicit_bzero(chip_name, CHIP_BUFFER_SIZE);
+    memcpy_s(chip_name, CHIP_BUFFER_SIZE, GPIOD_DEV_ROOT_FOLDER,
+             GPIOD_DEV_ROOT_FOLDER_STRLEN);
 
     rv = gpiod_ctxless_find_line(
         gpio->name, &chip_name[GPIOD_DEV_ROOT_FOLDER_STRLEN],
@@ -644,12 +729,12 @@ STATUS find_gpio_base(char* gpio_name, int* gpio_base)
     char ch;
 
     *gpio_base = 0;
-    if (memcpy_safe(buf, sizeof(buf), AST2500_GPIO_BASE_FILE,
-                    strlen(AST2500_GPIO_BASE_FILE) + 1))
+    if (memcpy_s(buf, sizeof(buf), AST2500_GPIO_BASE_FILE,
+                 strlen(AST2500_GPIO_BASE_FILE) + 1))
     {
 #ifdef ENABLE_DEBUG_LOGGING
         ASD_log(ASD_LogLevel_Debug, stream, option,
-                "memcpy_safe: gpio base filename failed");
+                "memcpy_s: gpio base filename failed");
 #endif
         return ST_ERR;
     }
@@ -897,7 +982,7 @@ STATUS on_platform_reset_event(Target_Control_Handle* state, ASD_EVENT* event)
         ASD_log(ASD_LogLevel_Error, stream, option,
                 "Failed to get event status for PLTRST: %d", result);
     }
-    else if (value == 1)
+    else if (value == 0)
     {
 #ifdef ENABLE_DEBUG_LOGGING
         ASD_log(ASD_LogLevel_Debug, stream, option, "Platform reset asserted");
@@ -1016,6 +1101,7 @@ STATUS target_write(Target_Control_Handle* state, const Pin pin,
             {
                 if (result == ST_OK)
                 {
+                    gpio = state->gpios[BMC_CPU_PWRGD];
                     read_pin_value(state->gpios[BMC_CPU_PWRGD], &value,
                                    &result);
                     if (state->gpios[BMC_CPU_PWRGD].type == PIN_DBUS)
@@ -1085,6 +1171,7 @@ STATUS target_read(Target_Control_Handle* state, Pin pin, bool* asserted)
     switch (pin)
     {
         case PIN_PWRGOOD:
+            gpio = state->gpios[ASD_PIN_TO_GPIO[pin]];
             read_pin_value(state->gpios[BMC_CPU_PWRGD], &value, &result);
             if (state->gpios[BMC_CPU_PWRGD].type == PIN_DBUS)
             {
@@ -1129,7 +1216,7 @@ STATUS target_read(Target_Control_Handle* state, Pin pin, bool* asserted)
         default:
 #ifdef ENABLE_DEBUG_LOGGING
             ASD_log(ASD_LogLevel_Debug, stream, option,
-                    "Pin read: unsupported gpio '%s'", gpio.name);
+                    "Pin read: unsupported gpio read for pin: %d", pin);
 #endif
             result = ST_ERR;
     }
@@ -1292,7 +1379,7 @@ STATUS target_get_fds(Target_Control_Handle* state, target_fdarr_t* fds,
     if (state == NULL || !state->initialized || fds == NULL || num_fds == NULL)
     {
 #ifdef ENABLE_DEBUG_LOGGING
-        ASD_log(ASD_LogLevel_Trace, stream, option,
+        ASD_log(ASD_LogLevel_Error, stream, option,
                 "target_get_fds, null or uninitialized state");
 #endif
         return ST_ERR;

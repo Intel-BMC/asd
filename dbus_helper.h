@@ -33,6 +33,12 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "asd_common.h"
 
+#define POWER_SERVICE_HOST "xyz.openbmc_project.State.Host"
+#define POWER_INTERFACE_NAME_HOST "xyz.openbmc_project.State.Host"
+#define POWER_OBJECT_PATH_HOST "/xyz/openbmc_project/state/host0"
+#define HOST_TRANSITION_PROPERTY "RequestedHostTransition"
+#define RESET_ARGUMENT_HOST                                                    \
+    "xyz.openbmc_project.State.Host.Transition.ForceWarmReboot"
 #define POWER_SERVICE_CHASSIS "xyz.openbmc_project.State.Chassis"
 #define POWER_INTERFACE_NAME_CHASSIS "xyz.openbmc_project.State.Chassis"
 #define POWER_OBJECT_PATH_CHASSIS "/xyz/openbmc_project/state/chassis0"
@@ -68,6 +74,7 @@ arg0namespace='xyz.openbmc_project.State.Chassis'"
 
 #define ENTITY_MANAGER_SERVICE "xyz.openbmc_project.EntityManager"
 #define ENTITY_MANAGER_PROPERTIES_INTERFACE "org.freedesktop.DBus.Properties"
+#define ASD_CONFIG_PATH "xyz.openbmc_project.Configuration.ASD"
 
 #define SD_BUS_ASYNC_TIMEOUT 10000
 #define MAX_PLATFORM_PATH_SIZE 120
@@ -99,6 +106,12 @@ STATUS dbus_process_event(Dbus_Handle* state, ASD_EVENT* event);
 STATUS dbus_get_powerstate(Dbus_Handle* state, int* value);
 STATUS dbus_get_platform_path(const Dbus_Handle* state, char* path);
 STATUS dbus_get_platform_id(const Dbus_Handle* state, uint64_t* pid);
+STATUS dbus_read_asd_config(const Dbus_Handle* state, const char* interface,
+                            const char* name, char type, void* var);
+STATUS dbus_get_asd_interface_paths(const Dbus_Handle* state,
+                                    const char* names[],
+                                    char interfaces[][MAX_PLATFORM_PATH_SIZE],
+                                    int arr_size);
 int match_callback(sd_bus_message* m, void* userdata, sd_bus_error* error);
 
 #endif

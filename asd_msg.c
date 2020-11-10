@@ -27,6 +27,8 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "asd_msg.h"
 
+#include <safe_mem_lib.h>
+#include <safe_str_lib.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -35,7 +37,6 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "i2c_handler.h"
 #include "i2c_msg_builder.h"
-#include "mem_helper.h"
 
 static void get_scan_length(unsigned char cmd, uint8_t* num_of_bits,
                             uint8_t* num_of_bytes);
@@ -58,7 +59,8 @@ STATUS read_openbmc_version(ASD_MSG* state)
     char* line = NULL;
     size_t len = 0;
     ssize_t read;
-    memset(&state->bmc_version, 0, sizeof(state->bmc_version));
+    explicit_bzero(&state->bmc_version, sizeof(state->bmc_version));
+    state->bmc_version_size = 0;
     fp = fopen("/etc/os-release", "r");
     if (fp == NULL)
     {
@@ -74,11 +76,11 @@ STATUS read_openbmc_version(ASD_MSG* state)
             {
                 line = line + sizeof(OPENBMC_V);
                 state->bmc_version_size = read - sizeof(OPENBMC_V) - 1;
-                if (memcpy_safe(state->bmc_version, sizeof(state->bmc_version),
-                                line, state->bmc_version_size) == 1)
+                if (memcpy_s(state->bmc_version, sizeof(state->bmc_version),
+                             line, state->bmc_version_size) == 1)
                 {
                     ASD_log(ASD_LogLevel_Debug, ASD_LogStream_SDK,
-                            ASD_LogOption_None, "Memcpy_safe failed");
+                            ASD_LogOption_None, "memcpy_s failed");
                     break;
                 }
                 else
@@ -154,22 +156,13 @@ ASD_MSG* asd_msg_init(SendFunctionPtr send_function,
             state->jtag_handler = JTAGHandler();
             state->target_handler = TargetHandler();
             state->i2c_handler = I2CHandler(&asd_cfg->i2c);
+            state->vprobe_handler = vProbeHandler();
             if (!state->jtag_handler || !state->target_handler ||
-                !state->i2c_handler)
+                !state->i2c_handler || !state->vprobe_handler)
             {
                 ASD_log(ASD_LogLevel_Error, ASD_LogStream_SDK,
                         ASD_LogOption_None, "Failed to create handlers");
-                if (state->jtag_handler)
-                    free(state->jtag_handler);
-                if (state->target_handler)
-                {
-                    free(state->target_handler->dbus);
-                    free(state->target_handler);
-                }
-                if (state->i2c_handler)
-                    free(state->i2c_handler);
-                free(state);
-                state = NULL;
+                asd_msg_free(state);
             }
             else
             {
@@ -195,14 +188,17 @@ ASD_MSG* asd_msg_init(SendFunctionPtr send_function,
 
 STATUS asd_msg_free(ASD_MSG* state)
 {
-    STATUS result = ST_OK;
+    STATUS jtag_result = ST_OK;
+    STATUS i2c_result = ST_OK;
+    STATUS target_result = ST_OK;
+    STATUS vprobe_result = ST_OK;
 
     if (state)
     {
         if (state->jtag_handler)
         {
-            result = JTAG_deinitialize(state->jtag_handler);
-            if (result != ST_OK)
+            jtag_result = JTAG_deinitialize(state->jtag_handler);
+            if (jtag_result != ST_OK)
             {
                 ASD_log(ASD_LogLevel_Error, ASD_LogStream_SDK,
                         ASD_LogOption_None,
@@ -214,8 +210,8 @@ STATUS asd_msg_free(ASD_MSG* state)
 
         if (state->i2c_handler)
         {
-            result = i2c_deinitialize(state->i2c_handler);
-            if (result != ST_OK)
+            i2c_result = i2c_deinitialize(state->i2c_handler);
+            if (i2c_result != ST_OK)
             {
                 ASD_log(ASD_LogLevel_Error, ASD_LogStream_SDK,
                         ASD_LogOption_None,
@@ -227,24 +223,43 @@ STATUS asd_msg_free(ASD_MSG* state)
 
         if (state->target_handler)
         {
-            STATUS temp_result = target_deinitialize(state->target_handler);
-            if (temp_result != ST_OK)
+            target_result = target_deinitialize(state->target_handler);
+            if (target_result != ST_OK)
             {
                 ASD_log(ASD_LogLevel_Error, ASD_LogStream_SDK,
                         ASD_LogOption_None,
                         "Failed to de-initialize the Target handler");
-                result = temp_result;
             }
             free(state->target_handler);
             state->target_handler = NULL;
+        }
+
+        if (state->vprobe_handler)
+        {
+            vprobe_result = vProbe_deinitialize(state->vprobe_handler);
+            if (vprobe_result != ST_OK)
+            {
+                ASD_log(ASD_LogLevel_Error, ASD_LogStream_SDK,
+                        ASD_LogOption_None,
+                        "Failed to de-initialize the vProbe handler");
+            }
+            free(state->vprobe_handler);
+            state->vprobe_handler = NULL;
         }
         instance = NULL;
     }
     else
     {
-        result = ST_ERR;
+        return ST_ERR;
     }
-    return result;
+
+    if ((jtag_result != ST_OK) || (i2c_result != ST_OK) ||
+        (target_result != ST_OK) || (vprobe_result != ST_OK))
+    {
+        return ST_ERR;
+    }
+
+    return ST_OK;
 }
 
 STATUS asd_msg_on_msg_recv(ASD_MSG* state)
@@ -269,11 +284,11 @@ STATUS asd_msg_on_msg_recv(ASD_MSG* state)
     }
     if (msg->header.type == AGENT_CONTROL_TYPE)
     {
-        if (memcpy_safe(&state->out_msg.header, sizeof(struct message_header),
-                        &msg->header, sizeof(struct message_header)))
+        if (memcpy_s(&state->out_msg.header, sizeof(struct message_header),
+                     &msg->header, sizeof(struct message_header)))
         {
             ASD_log(ASD_LogLevel_Error, ASD_LogStream_JTAG, ASD_LogOption_None,
-                    "memcpy_safe: msg header to out msg header copy buffer "
+                    "memcpy_s: msg header to out msg header copy buffer "
                     "failed.");
             result = ST_ERR;
         }
@@ -329,47 +344,90 @@ STATUS asd_msg_on_msg_recv(ASD_MSG* state)
                 }
                 break;
             }
+            case SUPPORTED_REMOTE_PROBES_CMD:
+                if (!state->vprobe_handler->initialized)
+                {
+                    if (vProbe_initialize(state->vprobe_handler) != ST_OK)
+                    {
+                        result = ST_ERR;
+                        ASD_log(ASD_LogLevel_Error, ASD_LogStream_SDK,
+                                ASD_LogOption_None,
+                                "Failed to initialize the vprobe handler");
+                        send_error_message(state, msg,
+                                           ASD_FAILURE_INIT_VPROBE_HANDLER);
+                        return result;
+                    }
+                }
+                state->out_msg.buffer[1] = state->vprobe_handler->remoteProbes;
+                state->out_msg.header.size_lsb = 2;
+                state->out_msg.header.size_msb = 0;
+                break;
+            case REMOTE_PROBES_CONFIG_CMD:
+                if (state->vprobe_handler->remoteConfigs > 0)
+                {
+                    uint16_t config_size = 0;
+
+                    if (strcpy_s(&state->out_msg.buffer[1],
+                                 sizeof(state->out_msg.buffer) - 1,
+                                 state->vprobe_handler->probesConfig))
+                    {
+                        ASD_log(ASD_LogLevel_Error, ASD_LogStream_JTAG,
+                                ASD_LogOption_None,
+                                "strcpy_s: remote probe config to out msg "
+                                "buffer copy failed.");
+                        result = ST_ERR;
+                    }
+                    config_size = (uint16_t)(
+                        strnlen(state->vprobe_handler->probesConfig,
+                                sizeof(state->vprobe_handler->probesConfig)) +
+                        1);
+                    state->out_msg.header.size_lsb =
+                        (uint8_t)(config_size & 0xFF);
+                    state->out_msg.header.size_msb =
+                        (uint8_t)(config_size >> 8);
+                }
+                break;
             case OBTAIN_DOWNSTREAM_VERSION_CMD:
                 // The +/-1 references below are to account for the
                 // write of cmd_stat to buffer position 0 above
-                if (memcpy_safe(&state->out_msg.buffer[1], sizeof(asd_version),
-                                asd_version, sizeof(asd_version)))
+                if (memcpy_s(&state->out_msg.buffer[1], sizeof(asd_version),
+                             asd_version, sizeof(asd_version)))
                 {
                     ASD_log(ASD_LogLevel_Error, ASD_LogStream_JTAG,
                             ASD_LogOption_None,
-                            "memcpy_safe: asd_version to out msg buffer copy "
+                            "memcpy_s: asd_version to out msg buffer copy "
                             "failed.");
                     result = ST_ERR;
                 }
                 state->out_msg.header.size_lsb += sizeof(asd_version);
-                if (memcpy_safe(&state->out_msg.buffer[sizeof(asd_version)], 1,
-                                "_", 1))
+                if (memcpy_s(&state->out_msg.buffer[sizeof(asd_version)], 1,
+                             "_", 1))
                 {
                     ASD_log(ASD_LogLevel_Error, ASD_LogStream_JTAG,
                             ASD_LogOption_None,
-                            "memcpy_safe: asd_version to out msg buffer copy "
+                            "memcpy_s: asd_version to out msg buffer copy "
                             "failed.");
                     result = ST_ERR;
                 }
-                if (memcpy_safe(&state->out_msg.buffer[sizeof(asd_version) + 1],
-                                state->bmc_version_size, state->bmc_version,
-                                state->bmc_version_size))
+                if (memcpy_s(&state->out_msg.buffer[sizeof(asd_version) + 1],
+                             state->bmc_version_size, state->bmc_version,
+                             state->bmc_version_size))
                 {
                     ASD_log(ASD_LogLevel_Error, ASD_LogStream_JTAG,
                             ASD_LogOption_None,
-                            "memcpy_safe: asd_version to out msg buffer copy "
+                            "memcpy_s: asd_version to out msg buffer copy "
                             "failed.");
                     result = ST_ERR;
                 }
                 state->out_msg.header.size_lsb += state->bmc_version_size;
-                if (memcpy_safe(
+                if (memcpy_s(
                         &state->out_msg.buffer[sizeof(asd_version) +
                                                state->bmc_version_size + 1],
                         1, "\0", 1))
                 {
                     ASD_log(ASD_LogLevel_Error, ASD_LogStream_JTAG,
                             ASD_LogOption_None,
-                            "memcpy_safe: asd_version to out msg buffer copy "
+                            "memcpy_s: asd_version to out msg buffer copy "
                             "failed.");
                     result = ST_ERR;
                 }
@@ -531,11 +589,11 @@ void send_error_message(ASD_MSG* state, struct asd_message* input_message,
     if (!state || !input_message)
         return;
     struct asd_message error_message = {{0}}; // initialize the struct
-    if (memcpy_safe(&error_message.header, sizeof(struct message_header),
-                    &(input_message->header), sizeof(struct message_header)))
+    if (memcpy_s(&error_message.header, sizeof(struct message_header),
+                 &(input_message->header), sizeof(struct message_header)))
     {
         ASD_log(ASD_LogLevel_Error, ASD_LogStream_JTAG, ASD_LogOption_None,
-                "memcpy_safe: input header to error header copy  failed.");
+                "memcpy_s: input header to error header copy  failed.");
     }
     error_message.header.type = 1;
     error_message.header.size_lsb = 0;
@@ -591,11 +649,11 @@ void send_remote_log_message(ASD_LogLevel asd_level, ASD_LogStream asd_stream,
         msg.buffer[0] = AGENT_CONFIGURATION_CMD;
         msg.buffer[1] = config_byte.value;
         // Copy message into remaining buffer space.
-        if (memcpy_safe(&msg.buffer[2], sizeof(msg.buffer), message,
-                        message_length))
+        if (memcpy_s(&msg.buffer[2], sizeof(msg.buffer), message,
+                     message_length))
         {
             ASD_log(ASD_LogLevel_Error, ASD_LogStream_JTAG, ASD_LogOption_None,
-                    "memcpy_safe: message to msg buffer[2] copy failed.");
+                    "memcpy_s: message to msg buffer[2] copy failed.");
         }
         // Store the message size into the msb and lsb fields.
         // The size is the length of the message string, plus 2
@@ -746,8 +804,8 @@ STATUS process_jtag_message(ASD_MSG* state, struct asd_message* s_message)
         return ST_ERR;
     }
 
-    memset(&state->out_msg.header, 0, sizeof(struct message_header));
-    memset(&state->out_msg.buffer, 0, MAX_DATA_SIZE);
+    explicit_bzero(&state->out_msg.header, sizeof(struct message_header));
+    explicit_bzero(&state->out_msg.buffer, MAX_DATA_SIZE);
 
 #ifdef ENABLE_DEBUG_LOGGING
     ASD_log(ASD_LogLevel_Debug, ASD_LogStream_Network, ASD_LogOption_No_Remote,
@@ -895,7 +953,7 @@ STATUS process_jtag_message(ASD_MSG* state, struct asd_message* s_message)
                     // bytes_length: Chain: 0x20 0000
                     char line[MAX_MULTICHAINS * CHARS_PER_CHAIN];
                     uint8_t pos = 0;
-                    memset(line, sizeof(line), '\0');
+                    explicit_bzero(line, sizeof(line));
                     for (int i = chain_bytes_length - 1; i >= 0; i--)
                     {
                         snprintf(&line[pos], sizeof(line), "%02X",
@@ -1188,12 +1246,11 @@ STATUS process_jtag_message(ASD_MSG* state, struct asd_message* s_message)
 
     if (status == ST_OK)
     {
-        if (memcpy_safe(&state->out_msg.header, sizeof(struct message_header),
-                        &s_message->header, sizeof(struct message_header)))
+        if (memcpy_s(&state->out_msg.header, sizeof(struct message_header),
+                     &s_message->header, sizeof(struct message_header)))
         {
-            ASD_log(
-                ASD_LogLevel_Error, ASD_LogStream_JTAG, ASD_LogOption_None,
-                "memcpy_safe: message header to out msg header copy failed.");
+            ASD_log(ASD_LogLevel_Error, ASD_LogStream_JTAG, ASD_LogOption_None,
+                    "memcpy_s: message header to out msg header copy failed.");
             status = ST_ERR;
         }
 
@@ -1455,6 +1512,8 @@ STATUS determine_shift_end_state(ASD_MSG* state, ScanType scan_type,
                     ((*next_cmd2_ptr & TAP_STATE_MASK) == jtag_pau_dr ||
                      (*next_cmd2_ptr & TAP_STATE_MASK) == jtag_pau_ir))
                 {
+                    *end_state =
+                        (enum jtag_states)(*next_cmd2_ptr & TAP_STATE_MASK);
 #ifdef ENABLE_DEBUG_LOGGING
                     ASD_log(ASD_LogLevel_Debug, ASD_LogStream_SDK,
                             ASD_LogOption_None, "Staying in state: 0x%02x",
@@ -1522,8 +1581,8 @@ STATUS asd_msg_read(ASD_MSG* state, void* conn, bool* data_pending)
         {
             case READ_STATE_INITIAL:
             {
-                memset(&msg->header, 0, sizeof(struct message_header));
-                memset(&msg->buffer, 0, MAX_DATA_SIZE);
+                explicit_bzero(&msg->header, sizeof(struct message_header));
+                explicit_bzero(&msg->buffer, MAX_DATA_SIZE);
                 state->in_msg.read_state = READ_STATE_HEADER;
                 state->in_msg.read_index = 0;
                 state->in_msg.data_size = 0;
@@ -1713,19 +1772,18 @@ STATUS send_response(ASD_MSG* state, struct asd_message* message)
 
     send_buffer_size = sizeof(struct message_header) + size;
 
-    if (memcpy_safe(&send_buffer, MAX_PACKET_SIZE,
-                    (unsigned char*)&message->header, sizeof(message->header)))
+    if (memcpy_s(&send_buffer, MAX_PACKET_SIZE,
+                 (unsigned char*)&message->header, sizeof(message->header)))
     {
         ASD_log(ASD_LogLevel_Error, ASD_LogStream_JTAG, ASD_LogOption_None,
-                "memcpy_safe: message header to send_buffer copy failed.");
+                "memcpy_s: message header to send_buffer copy failed.");
     }
-    if (memcpy_safe(&send_buffer[sizeof(message->header)],
-                    MAX_PACKET_SIZE - sizeof(message->header), message->buffer,
-                    (size_t)size))
+    if (memcpy_s(&send_buffer[sizeof(message->header)],
+                 MAX_PACKET_SIZE - sizeof(message->header), message->buffer,
+                 (size_t)size))
     {
-        ASD_log(
-            ASD_LogLevel_Error, ASD_LogStream_JTAG, ASD_LogOption_None,
-            "memcpy_safe: message buffer to send buffer offset copy failed.");
+        ASD_log(ASD_LogLevel_Error, ASD_LogStream_JTAG, ASD_LogOption_None,
+                "memcpy_s: message buffer to send buffer offset copy failed.");
     }
 
     return state->send_function(state->callback_state, send_buffer,
@@ -1743,7 +1801,12 @@ STATUS asd_msg_get_fds(ASD_MSG* state, target_fdarr_t* fds, int* num_fds)
     }
     else
     {
-        result = target_get_fds(state->target_handler, fds, num_fds);
+        struct asd_message* msg = &state->in_msg.msg;
+        // skip target_get_fds call for AGENT_CONTROL_TYPE commands
+        if (msg->header.type != AGENT_CONTROL_TYPE)
+        {
+            result = target_get_fds(state->target_handler, fds, num_fds);
+        }
     }
     return result;
 }
@@ -2025,7 +2088,7 @@ STATUS build_responses(ASD_MSG* state, int* response_cnt,
                     break;
 
                 if ((msg.length + (*response_cnt) + 2) > MAX_DATA_SIZE)
-                {   // 2 for command header
+                { // 2 for command header
                     // and ack
                     // bytes
                     // buffer is too full for this next
@@ -2045,7 +2108,7 @@ STATUS build_responses(ASD_MSG* state, int* response_cnt,
                                 "Failed to send message back on the socket");
                         break;
                     }
-                    memset(state->out_msg.buffer, 0, MAX_DATA_SIZE);
+                    explicit_bzero(state->out_msg.buffer, MAX_DATA_SIZE);
                     (*response_cnt) = 0;
                 }
 
@@ -2117,14 +2180,14 @@ STATUS process_i2c_messages(ASD_MSG* state, struct asd_message* in_msg)
         else
         {
 
-            memset(&state->out_msg.header, 0, sizeof(struct message_header));
-            memset(&state->out_msg.buffer, 0, MAX_DATA_SIZE);
-            if (memcpy_safe(&state->out_msg.header,
-                            sizeof(struct message_header), &in_msg->header,
-                            sizeof(struct message_header)))
+            explicit_bzero(&state->out_msg.header,
+                           sizeof(struct message_header));
+            explicit_bzero(&state->out_msg.buffer, MAX_DATA_SIZE);
+            if (memcpy_s(&state->out_msg.header, sizeof(struct message_header),
+                         &in_msg->header, sizeof(struct message_header)))
             {
                 ASD_log(ASD_LogLevel_Error, ASD_LogStream_JTAG,
-                        ASD_LogOption_None, "memcpy_safe: message header to \
+                        ASD_LogOption_None, "memcpy_s: message header to \
 							out msg header copy failed.");
             }
             status = i2c_msg_initialize(builder);

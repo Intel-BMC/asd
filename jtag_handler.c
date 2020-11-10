@@ -28,15 +28,18 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "jtag_handler.h"
 
 #include <fcntl.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
 #include <unistd.h>
+// clang-format off
+#include <safe_mem_lib.h>
+// clang-format on
 
 #include "logging.h"
-#include "mem_helper.h"
 
 static const ASD_LogStream stream = ASD_LogStream_JTAG;
 static const ASD_LogOption option = ASD_LogOption_None;
@@ -77,8 +80,9 @@ JTAG_Handler* JTAGHandler()
     state->active_chain = &state->chains[SCAN_CHAIN_0];
     initialize_jtag_chains(state);
     state->sw_mode = true;
-    memset(state->padDataOne, ~0, sizeof(state->padDataOne));
-    memset(state->padDataZero, 0, sizeof(state->padDataZero));
+    memset_s(state->padDataOne, sizeof(state->padDataOne), ~0,
+             sizeof(state->padDataOne));
+    explicit_bzero(state->padDataZero, sizeof(state->padDataZero));
     state->JTAG_driver_handle = -1;
 
     for (unsigned int i = 0; i < MAX_WAIT_CYCLES; i++)
@@ -296,6 +300,10 @@ STATUS JTAG_shift(JTAG_Handler* state, unsigned int number_of_bits,
     if (state == NULL)
         return ST_ERR;
 
+    if (!state->sw_mode)
+        return JTAG_shift_hw(state, number_of_bits, input_bytes, input,
+                             output_bytes, output, end_tap_state);
+
     unsigned int preFix = 0;
     unsigned int postFix = 0;
     unsigned char* padData = NULL;
@@ -357,6 +365,115 @@ STATUS JTAG_shift(JTAG_Handler* state, unsigned int number_of_bits,
     return ST_OK;
 }
 
+STATUS JTAG_shift_hw(JTAG_Handler* state, unsigned int number_of_bits,
+                     unsigned int input_bytes, unsigned char* input,
+                     unsigned int output_bytes, unsigned char* output,
+                     enum jtag_states end_tap_state)
+{
+    struct jtag_xfer xfer;
+    unsigned char tdio[MAX_DATA_SIZE];
+    enum jtag_states current_state;
+    union pad_config padding;
+
+    if (state == NULL)
+        return ST_ERR;
+
+    JTAG_get_tap_state(state, &current_state);
+
+    padding.int_value = 0;
+
+    if (current_state == jtag_shf_ir)
+    {
+        padding.pre_pad_number = state->active_chain->shift_padding.irPre;
+        padding.post_pad_number = state->active_chain->shift_padding.irPost;
+        padding.pad_data = 1;
+    }
+    else if (current_state == jtag_shf_dr)
+    {
+        padding.pre_pad_number = state->active_chain->shift_padding.drPre;
+        padding.post_pad_number = state->active_chain->shift_padding.drPost;
+        padding.pad_data = 0;
+    }
+    else
+    {
+        ASD_log(ASD_LogLevel_Error, stream, option,
+                "Shift called but the tap is not in a Shift IR/DR tap state");
+        return ST_ERR;
+    }
+
+    xfer.from = current_state;
+    xfer.endstate = end_tap_state;
+    xfer.type = (current_state == jtag_shf_ir) ? JTAG_SIR_XFER : JTAG_SDR_XFER;
+    xfer.length = number_of_bits;
+    xfer.direction = JTAG_READ_WRITE_XFER;
+
+    if (state->active_chain->scan_state == JTAGScanState_Done)
+    {
+        state->active_chain->scan_state = JTAGScanState_Run;
+    }
+    else
+    {
+        padding.pre_pad_number = 0;
+    }
+
+    if (current_state == end_tap_state)
+    {
+        padding.post_pad_number = 0;
+    }
+    else
+    {
+        state->active_chain->scan_state = JTAGScanState_Done;
+    }
+
+    xfer.padding = padding.int_value;
+
+    if (output != NULL)
+    {
+        if (memcpy_s(output, output_bytes, input,
+                     DIV_ROUND_UP(number_of_bits, BITS_PER_BYTE)))
+        {
+            ASD_log(ASD_LogLevel_Error, stream, option,
+                    "memcpy_s: input to output copy buffer failed.");
+        }
+        xfer.tdio = (__u64)output;
+    }
+    else
+    {
+        if (memcpy_s(tdio, DIV_ROUND_UP(number_of_bits, BITS_PER_BYTE), input,
+                     DIV_ROUND_UP(number_of_bits, BITS_PER_BYTE)))
+        {
+            ASD_log(ASD_LogLevel_Error, stream, option,
+                    "memcpy_s: input to tdio buffer copy failed.");
+        }
+        xfer.tdio = (__u64)tdio;
+    }
+    if (ioctl(state->JTAG_driver_handle, JTAG_IOCXFER, &xfer) < 0)
+    {
+        ASD_log(ASD_LogLevel_Error, stream, option,
+                "ioctl JTAG_IOCXFER failed");
+        return ST_ERR;
+    }
+
+    state->active_chain->tap_state = end_tap_state;
+
+#ifdef ENABLE_DEBUG_LOGGING
+    if (padding.pre_pad_number || padding.post_pad_number)
+        ASD_log(ASD_LogLevel_Debug, stream, option, "PadConfig = 0x%x",
+                xfer.padding);
+    if (input != NULL)
+        ASD_log_shift(ASD_LogLevel_Debug, stream, option, number_of_bits,
+                      input_bytes, input,
+                      (current_state == jtag_shf_dr) ? "Shift DR TDI"
+                                                     : "Shift IR TDI");
+    if (output != NULL)
+        ASD_log_shift(ASD_LogLevel_Debug, stream, option, number_of_bits,
+                      output_bytes, output,
+                      (current_state == jtag_shf_dr) ? "Shift DR TDO"
+                                                     : "Shift IR TDO");
+#endif
+    return ST_OK;
+}
+
 //
 //  Optionally write and read the requested number of
 //  bits and go to the requested target state
@@ -398,21 +515,21 @@ STATUS perform_shift(JTAG_Handler* state, unsigned int number_of_bits,
 
     if (output != NULL)
     {
-        if (memcpy_safe(output, output_bytes, input,
-                        DIV_ROUND_UP(number_of_bits, BITS_PER_BYTE)))
+        if (memcpy_s(output, output_bytes, input,
+                     DIV_ROUND_UP(number_of_bits, BITS_PER_BYTE)))
         {
             ASD_log(ASD_LogLevel_Error, stream, option,
-                    "memcpy_safe: input to output copy buffer failed.");
+                    "memcpy_s: input to output copy buffer failed.");
         }
         xfer.tdio = (__u64)output;
     }
     else
     {
-        if (memcpy_safe(tdio, DIV_ROUND_UP(number_of_bits, BITS_PER_BYTE),
-                        input, DIV_ROUND_UP(number_of_bits, BITS_PER_BYTE)))
+        if (memcpy_s(tdio, DIV_ROUND_UP(number_of_bits, BITS_PER_BYTE), input,
+                     DIV_ROUND_UP(number_of_bits, BITS_PER_BYTE)))
         {
             ASD_log(ASD_LogLevel_Error, stream, option,
-                    "memcpy_safe: input to tdio buffer copy failed.");
+                    "memcpy_s: input to tdio buffer copy failed.");
         }
         xfer.tdio = (__u64)tdio;
     }

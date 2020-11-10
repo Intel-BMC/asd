@@ -137,6 +137,10 @@ STATUS JTAG_shift(JTAG_Handler* state, unsigned int number_of_bits,
                   unsigned int input_bytes, unsigned char* input,
                   unsigned int output_bytes, unsigned char* output,
                   enum jtag_states end_tap_state);
+STATUS JTAG_shift_hw(JTAG_Handler* state, unsigned int number_of_bits,
+                     unsigned int input_bytes, unsigned char* input,
+                     unsigned int output_bytes, unsigned char* output,
+                     enum jtag_states end_tap_state);
 STATUS JTAG_wait_cycles(JTAG_Handler* state, unsigned int number_of_cycles);
 STATUS JTAG_set_jtag_tck(JTAG_Handler* state, unsigned int tck);
 STATUS JTAG_set_active_chain(JTAG_Handler* state, scanChain chain);

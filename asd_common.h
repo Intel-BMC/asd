@@ -1,5 +1,5 @@
 /*
-Copyright (c) 2019, Intel Corporation
+Copyright (c) 2021, Intel Corporation
 
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are met:
@@ -40,6 +40,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #define MAX_REG_NAME 256
 #define MAX_WAIT_CYCLES 256
 #define BROADCAST_MESSAGE_ORIGIN_ID 7
+#define MAX_FIELD_NAME_SIZE 40
 
 #define TO_ENUM(ENUM) ENUM,
 #define TO_STRING(STRING) #STRING,
@@ -47,8 +48,8 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 // ASD Protocol Event IDs
 typedef enum
 {
-    ASD_EVENT_PLRSTDEASSRT = 1,
-    ASD_EVENT_PLRSTASSERT,
+    ASD_EVENT_PLRSTASSERT = 1,
+    ASD_EVENT_PLRSTDEASSRT,
     ASD_EVENT_PRDY_EVENT,
     ASD_EVENT_PWRRESTORE,
     ASD_EVENT_PWRFAIL,
@@ -108,6 +109,7 @@ typedef enum
 #define SUPPORTED_I2C_BUSES_CMD 15
 #define SUPPORTED_REMOTE_PROBES_CMD 16
 #define REMOTE_PROBES_CONFIG_CMD 17
+#define LOOPBACK_CMD 18
 
 // AGENT_CONFIGURATION_CMD types
 #define AGENT_CONFIG_TYPE_LOGGING 1
@@ -200,11 +202,29 @@ typedef struct remote_logging_config
     };
 } __attribute__((packed)) remote_logging_config;
 
-typedef struct i2c_options
+#define MAX_IxC_BUSES 4
+
+#define ALL_BUS_CONFIG_TYPES(FUNC)                                             \
+    FUNC(BUS_CONFIG_NOT_ALLOWED)                                               \
+    FUNC(BUS_CONFIG_I2C)                                                       \
+    FUNC(BUS_CONFIG_I3C)
+
+typedef enum
 {
-    bool enable;
+    ALL_BUS_CONFIG_TYPES(TO_ENUM)
+} bus_config_type;
+
+static const char* BUS_CONFIG_TYPE_STRINGS[] = {
+    ALL_BUS_CONFIG_TYPES(TO_STRING)};
+
+typedef struct bus_options
+{
+    bool enable_i2c;
+    bool enable_i3c;
+    uint8_t bus_config_map[MAX_IxC_BUSES];
+    bus_config_type bus_config_type[MAX_IxC_BUSES];
     uint8_t bus;
-} i2c_options;
+} bus_options;
 
 //  At Scale Debug Commands
 //

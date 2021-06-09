@@ -1,5 +1,5 @@
 /*
-Copyright (c) 2019, Intel Corporation
+Copyright (c) 2021, Intel Corporation
 
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are met:
@@ -34,6 +34,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <stdlib.h>
 #include <string.h>
 #include <sys/file.h>
+#include <unistd.h>
 
 #include "i2c_handler.h"
 #include "i2c_msg_builder.h"
@@ -46,10 +47,10 @@ void send_remote_log_message(ASD_LogLevel, ASD_LogStream, const char* message);
 bool should_remote_log(ASD_LogLevel, ASD_LogStream);
 STATUS write_cfg(ASD_MSG* state, writeCfg cmd, struct packet_data* packet);
 STATUS asd_write_set_active_chain_event(ASD_MSG* state, uint8_t scan_chain);
-STATUS do_bus_select_command(I2C_Handler* i2c_handler,
-                             struct packet_data* packet);
-STATUS do_set_sclk_command(I2C_Handler* i2c_handler,
-                           struct packet_data* packet);
+bus_config_type bus_type(ASD_MSG* state, uint8_t bus);
+STATUS do_bus_select_command(ASD_MSG* state, struct packet_data* packet);
+STATUS do_set_sclk_command(ASD_MSG* state, struct packet_data* packet);
+STATUS do_read_write(ASD_MSG* state, void* msg_set);
 static ASD_MSG* instance = NULL;
 
 STATUS read_openbmc_version(ASD_MSG* state)
@@ -123,13 +124,52 @@ void init_logging_map(ASD_MSG* state)
     state->ipc_asd_log_map[ASD_LogLevel_Trace] = IPC_LogType_Trace;
 }
 
-STATUS flock_i2c(ASD_MSG* state, int op)
+STATUS dev_flock(ASD_MSG* state, uint8_t bus, int op)
 {
-    if (flock(state->i2c_handler->i2c_driver_handle, op) != 0)
+    STATUS status = ST_OK;
+
+    if (state == NULL || state->buscfg == NULL)
     {
+        ASD_log(ASD_LogLevel_Error, ASD_LogStream_I2C, ASD_LogOption_None,
+                "Failed to read data for flock");
         return ST_ERR;
     }
-    return ST_OK;
+
+    switch (bus_type(state, bus))
+    {
+        case BUS_CONFIG_I2C:
+            if (state->i2c_handler == NULL)
+            {
+                ASD_log(ASD_LogLevel_Debug, ASD_LogStream_I2C,
+                        ASD_LogOption_None, "Null i2c handler in flock");
+                status = ST_ERR;
+                break;
+            }
+            status = i2c_bus_flock(state->i2c_handler, bus, op);
+            break;
+        case BUS_CONFIG_I3C:
+            if (state->i3c_handler == NULL)
+            {
+                ASD_log(ASD_LogLevel_Debug, ASD_LogStream_I2C,
+                        ASD_LogOption_None, "Null i3c handler in flock");
+                status = ST_ERR;
+                break;
+            }
+            status = i3c_bus_flock(state->i3c_handler, bus, op);
+            break;
+        case BUS_CONFIG_NOT_ALLOWED:
+        default:
+            ASD_log(ASD_LogLevel_Debug, ASD_LogStream_I2C, ASD_LogOption_None,
+                    "flock not allowed");
+            status = ST_ERR;
+    }
+    if (status != ST_OK)
+    {
+        ASD_log(ASD_LogLevel_Error, ASD_LogStream_I2C, ASD_LogOption_None,
+                "bus %d device failed to %s", bus,
+                op == LOCK_EX ? "Lock" : "Unlock");
+    }
+    return status;
 }
 
 ASD_MSG* asd_msg_init(SendFunctionPtr send_function,
@@ -155,10 +195,13 @@ ASD_MSG* asd_msg_init(SendFunctionPtr send_function,
         {
             state->jtag_handler = JTAGHandler();
             state->target_handler = TargetHandler();
-            state->i2c_handler = I2CHandler(&asd_cfg->i2c);
+            state->buscfg = &asd_cfg->buscfg;
+            state->i2c_handler = I2CHandler(state->buscfg);
+            state->i3c_handler = I3CHandler(state->buscfg);
             state->vprobe_handler = vProbeHandler();
             if (!state->jtag_handler || !state->target_handler ||
-                !state->i2c_handler || !state->vprobe_handler)
+                !state->i2c_handler || !state->i3c_handler ||
+                !state->vprobe_handler)
             {
                 ASD_log(ASD_LogLevel_Error, ASD_LogStream_SDK,
                         ASD_LogOption_None, "Failed to create handlers");
@@ -190,6 +233,7 @@ STATUS asd_msg_free(ASD_MSG* state)
 {
     STATUS jtag_result = ST_OK;
     STATUS i2c_result = ST_OK;
+    STATUS i3c_result = ST_OK;
     STATUS target_result = ST_OK;
     STATUS vprobe_result = ST_OK;
 
@@ -219,6 +263,19 @@ STATUS asd_msg_free(ASD_MSG* state)
             }
             free(state->i2c_handler);
             state->i2c_handler = NULL;
+        }
+
+        if (state->i3c_handler)
+        {
+            i3c_result = i3c_deinitialize(state->i3c_handler);
+            if (i3c_result != ST_OK)
+            {
+                ASD_log(ASD_LogLevel_Error, ASD_LogStream_SDK,
+                        ASD_LogOption_None,
+                        "Failed to de-initialize the i3c handler");
+            }
+            free(state->i3c_handler);
+            state->i3c_handler = NULL;
         }
 
         if (state->target_handler)
@@ -272,6 +329,7 @@ STATUS asd_msg_on_msg_recv(ASD_MSG* state)
     }
 
     struct asd_message* msg = &state->in_msg.msg;
+    struct asd_message* msg_out = &state->out_msg;
 
     int data_size = get_message_size(msg);
     if (msg->header.enc_bit)
@@ -321,18 +379,23 @@ STATUS asd_msg_on_msg_recv(ASD_MSG* state)
             case SUPPORTED_I2C_BUSES_CMD:
             {
                 unsigned char supported_buses = 0;
-                if (state->i2c_handler->config->enable_i2c)
+                if (state->buscfg->enable_i2c || state->buscfg->enable_i3c)
                 {
-                    for (int i = 0; i < MAX_I2C_BUSES; i++)
+                    for (int i = 0; i < MAX_IxC_BUSES; i++)
                     {
-                        if (state->asd_cfg->i2c.allowed_buses[i] == true)
+                        switch (state->buscfg->bus_config_type[i])
                         {
-                            supported_buses++;
+                            case BUS_CONFIG_I2C:
+                            case BUS_CONFIG_I3C:
+                                state->out_msg.buffer[2 + supported_buses++] =
+                                    state->buscfg->bus_config_map[i];
+                                break;
+                            case BUS_CONFIG_NOT_ALLOWED:
+                            default:
+                                break;
                         }
                     }
                     state->out_msg.buffer[1] = supported_buses;
-                    state->out_msg.buffer[2] =
-                        state->i2c_handler->config->default_bus;
                     state->out_msg.header.size_lsb = supported_buses + 2;
                     state->out_msg.header.size_msb = 0;
                 }
@@ -511,6 +574,24 @@ STATUS asd_msg_on_msg_recv(ASD_MSG* state)
                 }
                 break;
             }
+            case LOOPBACK_CMD:
+                ASD_log(ASD_LogLevel_Trace, ASD_LogStream_Network,
+                        ASD_LogOption_None, "LOOPBACK MODE.");
+                uint16_t delay = (msg->buffer[0]) + (msg->buffer[0] << 8);
+                uint16_t size =
+                    (msg->header.size_lsb) + (msg->header.size_msb << 8);
+                if (size > MAX_DATA_SIZE)
+                {
+                    size = MAX_DATA_SIZE;
+                }
+                msg_out->header = msg->header;
+                for (uint16_t index = 0; index < size; index++)
+                {
+                    msg_out->buffer[index] = msg->buffer[index];
+                }
+                // We convert from microseconds to milliseconds.
+                usleep((__useconds_t)(delay * 1000));
+                break;
             default:
             {
 #ifdef ENABLE_DEBUG_LOGGING
@@ -544,7 +625,7 @@ STATUS asd_msg_on_msg_recv(ASD_MSG* state)
                 return result;
             }
 
-            if (state->i2c_handler->config->enable_i2c)
+            if (state->buscfg->enable_i2c)
             {
                 if (i2c_initialize(state->i2c_handler) != ST_OK)
                 {
@@ -558,9 +639,28 @@ STATUS asd_msg_on_msg_recv(ASD_MSG* state)
                 }
             }
 
-            if (target_initialize(state->target_handler) == ST_OK)
+            if (state->buscfg->enable_i3c)
+            {
+                if (i3c_initialize(state->i3c_handler) != ST_OK)
+                {
+                    result = ST_ERR;
+                    ASD_log(ASD_LogLevel_Error, ASD_LogStream_SDK,
+                            ASD_LogOption_None,
+                            "Failed to initialize the i3c handler");
+                    send_error_message(state, msg,
+                                       ASD_FAILURE_INIT_I2C_HANDLER);
+                    return result;
+                }
+            }
+
+            if (target_initialize(state->target_handler,
+                                  state->xdp_fail_enable) == ST_OK)
             {
                 state->handlers_initialized = true;
+                if (state->target_handler->xdp_present == true)
+                {
+                    send_error_message(state, msg, ASD_FAILURE_XDP_PRESENT);
+                }
             }
             else
             {
@@ -695,12 +795,12 @@ void process_message(ASD_MSG* state)
     }
     else if (msg->header.type == I2C_TYPE)
     {
-        if (state->i2c_handler->config->enable_i2c)
+        if (state->buscfg->enable_i2c || state->buscfg->enable_i3c)
         {
-            if (flock_i2c(state, LOCK_EX) != ST_OK)
+            if (dev_flock(state, state->buscfg->default_bus, LOCK_EX) != ST_OK)
             {
                 ASD_log(ASD_LogLevel_Error, ASD_LogStream_SDK,
-                        ASD_LogOption_None, "Failed to apply i2c lock");
+                        ASD_LogOption_None, "Failed to lock device");
                 send_error_message(state, msg, ASD_FAILURE_PROCESS_I2C_LOCK);
                 return;
             }
@@ -710,10 +810,10 @@ void process_message(ASD_MSG* state)
                         ASD_LogOption_None, "Failed to process I2C message");
                 send_error_message(state, msg, ASD_FAILURE_PROCESS_I2C_MSG);
             }
-            if (flock_i2c(state, LOCK_UN) != ST_OK)
+            if (dev_flock(state, state->buscfg->default_bus, LOCK_UN) != ST_OK)
             {
                 ASD_log(ASD_LogLevel_Error, ASD_LogStream_SDK,
-                        ASD_LogOption_None, "Failed to remove i2c lock");
+                        ASD_LogOption_None, "Failed to lock device");
                 send_error_message(state, msg, ASD_FAILURE_REMOVE_I2C_LOCK);
             }
             return;
@@ -738,8 +838,7 @@ STATUS write_event_config(ASD_MSG* state, const uint8_t data_byte)
     // Bits 0 through 6 are an unsigned int indicating the event config
     // register
     uint8_t event_cfg_raw = (uint8_t)(data_byte & WRITE_CFG_MASK);
-    if ((event_cfg_raw > WRITE_CONFIG_MIN) &&
-        (event_cfg_raw < WRITE_CONFIG_MAX))
+    if (event_cfg_raw < WRITE_CONFIG_MAX)
     {
         WriteConfig event_cfg = (WriteConfig)event_cfg_raw;
         status =
@@ -892,6 +991,32 @@ STATUS process_jtag_message(ASD_MSG* state, struct asd_message* s_message)
                             status);
                     break;
                 }
+#ifdef SKIP_WAIT_CYCLES_DURING_RESET
+                if (pin == PIN_RESET_BUTTON && assert == true)
+                {
+                    while (packet.used < packet.total)
+                    {
+                        data_ptr = get_packet_data(&packet, 2);
+                        if (data_ptr == NULL)
+                        {
+                            ASD_log(ASD_LogLevel_Error, ASD_LogStream_SDK,
+                                    ASD_LogOption_None,
+                                    "Failed to read WAIT_CYCLES data");
+                            status = ST_ERR;
+                            break;
+                        }
+                        data = *data_ptr;
+                        if (data != WAIT_CYCLES_TCK_DISABLE)
+                        {
+                            packet.next_data -= 2;
+                            packet.used -= 2;
+                            break;
+                        }
+                    }
+                    if (status == ST_ERR)
+                        break;
+                }
+#endif
             }
             else if ((index & SCAN_CHAIN_SELECT) == SCAN_CHAIN_SELECT)
             {
@@ -1189,7 +1314,7 @@ STATUS process_jtag_message(ASD_MSG* state, struct asd_message* s_message)
             }
             response_cnt += num_of_bytes;
         }
-        else if (cmd >= READ_WRITE_SCAN_MIN && cmd <= READ_WRITE_SCAN_MAX)
+        else if (cmd >= READ_WRITE_SCAN_MIN)
         {
             uint8_t num_of_bits = 0;
             uint8_t num_of_bytes = 0;
@@ -1853,9 +1978,13 @@ STATUS asd_msg_event(ASD_MSG* state, struct pollfd poll_fd)
             if (event == ASD_EVENT_XDP_PRESENT)
             {
                 // return an error so that everything
-                // can be shut down
+                // can be shut down if condition to ignore
+                // XDP is not set.
                 send_error_message(state, msg, ASD_FAILURE_XDP_PRESENT);
-                result = ST_ERR;
+                if (state->xdp_fail_enable == true)
+                {
+                    result = ST_ERR;
+                }
             }
             else if (event != ASD_EVENT_NONE)
             {
@@ -1886,54 +2015,146 @@ STATUS asd_write_set_active_chain_event(ASD_MSG* state, uint8_t scan_chain)
     return result;
 }
 
-STATUS do_bus_select_command(I2C_Handler* i2c_handler,
-                             struct packet_data* packet)
+bus_config_type bus_type(ASD_MSG* state, uint8_t bus)
 {
-    STATUS status;
+    for (int i = 0; i < MAX_IxC_BUSES; i++)
+    {
+        if (state->buscfg->bus_config_map[i] == bus)
+            return state->buscfg->bus_config_type[i];
+    }
+    return BUS_CONFIG_NOT_ALLOWED;
+}
+
+STATUS do_bus_select_command(ASD_MSG* state, struct packet_data* packet)
+{
+    STATUS status = ST_OK;
     uint8_t* data_ptr = get_packet_data(packet, 1);
 
-    if (data_ptr == NULL || i2c_handler == NULL)
+    if (data_ptr == NULL || state == NULL)
     {
         ASD_log(ASD_LogLevel_Error, ASD_LogStream_I2C, ASD_LogOption_None,
                 "Failed to read data for I2C_WRITE_CFG_BUS_SELECT, "
                 "short packet");
-        status = ST_ERR;
+        return ST_ERR;
     }
-    else
+
+    uint8_t bus = (uint8_t)*data_ptr;
+    if (state->buscfg == NULL)
     {
-        status = i2c_bus_select(i2c_handler, (uint8_t)*data_ptr);
+        ASD_log(ASD_LogLevel_Error, ASD_LogStream_I2C, ASD_LogOption_None,
+                "state->buscfg == NULL");
+        return ST_ERR;
+    }
+
+    // Release lock on previous bus and lock selected bus if required.
+    if (state->buscfg->default_bus != bus)
+    {
+        status = dev_flock(state, state->buscfg->default_bus, LOCK_UN);
         if (status != ST_OK)
         {
-            ASD_log(ASD_LogLevel_Error, ASD_LogStream_I2C, ASD_LogOption_None,
-                    "i2c_bus_select failed, %d", status);
+            ASD_log(ASD_LogLevel_Error, ASD_LogStream_SDK, ASD_LogOption_None,
+                    "Failed to remove dev lock ");
+            send_error_message(state, &packet, ASD_FAILURE_REMOVE_I2C_LOCK);
         }
+        status = dev_flock(state, bus, LOCK_EX);
+        if (status != ST_OK)
+        {
+            ASD_log(ASD_LogLevel_Error, ASD_LogStream_SDK, ASD_LogOption_None,
+                    "Failed to remove dev lock");
+            send_error_message(state, &packet, ASD_FAILURE_PROCESS_I2C_LOCK);
+            return ST_ERR;
+        }
+    }
+
+    switch (bus_type(state, bus))
+    {
+        case BUS_CONFIG_I2C:
+            if (state->i2c_handler == NULL)
+            {
+                ASD_log(ASD_LogLevel_Debug, ASD_LogStream_I2C,
+                        ASD_LogOption_None, "Null i2c handler on bus select");
+                status = ST_ERR;
+                break;
+            }
+            status = i2c_bus_select(state->i2c_handler, bus);
+            break;
+        case BUS_CONFIG_I3C:
+            if (state->i3c_handler == NULL)
+            {
+                ASD_log(ASD_LogLevel_Debug, ASD_LogStream_I2C,
+                        ASD_LogOption_None, "Null i3c handler on bus select");
+                status = ST_ERR;
+                break;
+            }
+            status = i3c_bus_select(state->i3c_handler, bus);
+            break;
+        case BUS_CONFIG_NOT_ALLOWED:
+        default:
+            ASD_log(ASD_LogLevel_Debug, ASD_LogStream_I2C, ASD_LogOption_None,
+                    "Bus selection not allowed");
+            status = ST_ERR;
+    }
+
+    if (status != ST_OK)
+    {
+        ASD_log(ASD_LogLevel_Error, ASD_LogStream_I2C, ASD_LogOption_None,
+                "bus select command failed for bus %d", bus);
     }
 
     return status;
 }
 
-STATUS do_set_sclk_command(I2C_Handler* i2c_handler, struct packet_data* packet)
+STATUS do_set_sclk_command(ASD_MSG* state, struct packet_data* packet)
 {
-    STATUS status;
+    STATUS status = ST_OK;
     uint8_t* data_ptr = get_packet_data(packet, 2);
 
-    if (data_ptr == NULL || i2c_handler == NULL)
+    if (data_ptr == NULL || state == NULL)
     {
         ASD_log(ASD_LogLevel_Error, ASD_LogStream_I2C, ASD_LogOption_None,
                 "Failed to read data for I2C_WRITE_CFG_SCLK, short packet");
-        status = ST_ERR;
+        return ST_ERR;
     }
-    else
+
+    uint8_t bus = state->buscfg->default_bus;
+    uint8_t lsb = *data_ptr;
+    uint8_t msb = *(data_ptr + 1);
+    switch (bus_type(state, bus))
     {
-        uint8_t lsb = *data_ptr;
-        uint8_t msb = *(data_ptr + 1);
-        status = i2c_set_sclk(i2c_handler, (uint16_t)((msb << 8) + lsb));
-        if (status != ST_OK)
-        {
-            ASD_log(ASD_LogLevel_Error, ASD_LogStream_I2C, ASD_LogOption_None,
-                    "i2c_set_sclk failed, %d", status);
-        }
+        case BUS_CONFIG_I2C:
+            if (state->i2c_handler == NULL)
+            {
+                ASD_log(ASD_LogLevel_Debug, ASD_LogStream_I2C,
+                        ASD_LogOption_None, "Null i2c handler on set sclk");
+                status = ST_ERR;
+                break;
+            }
+            status =
+                i2c_set_sclk(state->i2c_handler, (uint16_t)((msb << 8) + lsb));
+            break;
+        case BUS_CONFIG_I3C:
+            if (state->i3c_handler == NULL)
+            {
+                ASD_log(ASD_LogLevel_Debug, ASD_LogStream_I2C,
+                        ASD_LogOption_None, "Null i3c handler on set sclk");
+                status = ST_ERR;
+                break;
+            }
+            status =
+                i3c_set_sclk(state->i3c_handler, (uint16_t)((msb << 8) + lsb));
+            break;
+        case BUS_CONFIG_NOT_ALLOWED:
+        default:
+            ASD_log(ASD_LogLevel_Debug, ASD_LogStream_I2C, ASD_LogOption_None,
+                    "Set sclk not allowed");
+            status = ST_ERR;
     }
+    if (status != ST_OK)
+    {
+        ASD_log(ASD_LogLevel_Error, ASD_LogStream_I2C, ASD_LogOption_None,
+                "Set sclk command failed for bus %d", bus);
+    }
+
     return status;
 }
 
@@ -1945,9 +2166,6 @@ STATUS do_read_command(uint8_t cmd, I2C_Msg_Builder* builder,
     uint8_t* data_ptr;
     msg.length = (uint8_t)(cmd & I2C_LENGTH_MASK);
     msg.read = true;
-    // ASD_log(ASD_LogLevel_Debug, ASD_LogStream_I2C,
-    // ASD_LogOption_No_Remote,
-    //		"i2c read, length: %d", msg.length);
 
     if (force_stop == NULL)
     {
@@ -2010,9 +2228,6 @@ STATUS do_write_command(uint8_t cmd, I2C_Msg_Builder* builder,
         *force_stop = false;
         msg.length = (uint8_t)(cmd & I2C_LENGTH_MASK);
         msg.read = false;
-        // ASD_log(ASD_LogLevel_Debug, ASD_LogStream_I2C,
-        // ASD_LogOption_No_Remote,
-        //		"i2c write, length: %d", msg.length);
 
         data_ptr = get_packet_data(packet, 1);
         if (data_ptr == NULL)
@@ -2057,6 +2272,56 @@ STATUS do_write_command(uint8_t cmd, I2C_Msg_Builder* builder,
 #endif
             }
         }
+    }
+
+    return status;
+}
+
+STATUS do_read_write(ASD_MSG* state, void* msg_set)
+{
+    STATUS status;
+    uint8_t bus;
+
+    if (state == NULL || msg_set == NULL)
+    {
+        ASD_log(ASD_LogLevel_Error, ASD_LogStream_I2C, ASD_LogOption_None,
+                "Failed to read data for do_read_write operation");
+        return ST_ERR;
+    }
+
+    bus = state->buscfg->default_bus;
+    switch (bus_type(state, bus))
+    {
+        case BUS_CONFIG_I2C:
+            if (state->i2c_handler == NULL)
+            {
+                ASD_log(ASD_LogLevel_Debug, ASD_LogStream_I2C,
+                        ASD_LogOption_None, "Null i2c handler on read/write");
+                status = ST_ERR;
+                break;
+            }
+            status = i2c_read_write(state->i2c_handler, msg_set);
+            break;
+        case BUS_CONFIG_I3C:
+            if (state->i3c_handler == NULL)
+            {
+                ASD_log(ASD_LogLevel_Debug, ASD_LogStream_I2C,
+                        ASD_LogOption_None, "Null i3c handler on read/write");
+                status = ST_ERR;
+                break;
+            }
+            status = i3c_read_write(state->i3c_handler, msg_set);
+            break;
+        case BUS_CONFIG_NOT_ALLOWED:
+        default:
+            ASD_log(ASD_LogLevel_Debug, ASD_LogStream_I2C, ASD_LogOption_None,
+                    "Read/Write not allowed");
+            status = ST_ERR;
+    }
+    if (status != ST_OK)
+    {
+        ASD_log(ASD_LogLevel_Error, ASD_LogStream_I2C, ASD_LogOption_None,
+                "Read/Write failed on bus %d", bus);
     }
 
     return status;
@@ -2218,13 +2483,11 @@ STATUS process_i2c_messages(ASD_MSG* state, struct asd_message* in_msg)
                     cmd = *data_ptr;
                     if (cmd == I2C_WRITE_CFG_BUS_SELECT)
                     {
-                        status =
-                            do_bus_select_command(state->i2c_handler, &packet);
+                        status = do_bus_select_command(state, &packet);
                     }
                     else if (cmd == I2C_WRITE_CFG_SCLK)
                     {
-                        status =
-                            do_set_sclk_command(state->i2c_handler, &packet);
+                        status = do_set_sclk_command(state, &packet);
                     }
                     else if (cmd >= I2C_READ_MIN && cmd <= I2C_READ_MAX)
                     {
@@ -2262,8 +2525,7 @@ STATUS process_i2c_messages(ASD_MSG* state, struct asd_message* in_msg)
                     {
                         i2c_command_pending = false;
                         force_stop = false;
-                        status = i2c_read_write(state->i2c_handler,
-                                                builder->msg_set);
+                        status = do_read_write(state, builder->msg_set);
                         if (status != ST_OK)
                         {
                             ASD_log(ASD_LogLevel_Error, ASD_LogStream_I2C,

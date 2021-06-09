@@ -612,7 +612,8 @@ bool jtag_test(JTAG_Handler* jtag, uncore_info* uncore, jtag_test_args* args)
         else if (memcmp(compare_data, tdo, ((number_of_bits + 7) / 8)) != 0)
         {
             ASD_log(ASD_LogLevel_Error, stream, option,
-                    "TAP results comparison failed.");
+                    "TAP results comparison failed on iteration %d",
+                    iterations);
             ASD_log_shift(ASD_LogLevel_Error, stream, option, number_of_bits,
                           sizeof(tdo), tdo, "Actual");
             ASD_log_shift(ASD_LogLevel_Error, stream, option, number_of_bits,

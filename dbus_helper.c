@@ -394,10 +394,6 @@ int match_callback(sd_bus_message* msg, void* userdata, sd_bus_error* error)
                             "Failed to exit container: %d", retcode);
                     result = ST_ERR;
                 }
-                else
-                {
-                    result == ST_OK;
-                }
             }
         }
     }
@@ -664,7 +660,7 @@ STATUS dbus_get_asd_interface_paths(const Dbus_Handle* state,
         SD_BUS_ERROR_NULL;
     int retcode;
     char type;
-    const char* str = NULL;
+    const char* str;
     const char* contents = NULL;
     static char interface[MAX_PLATFORM_PATH_SIZE] = {0};
 
@@ -679,6 +675,7 @@ STATUS dbus_get_asd_interface_paths(const Dbus_Handle* state,
     for (int i = 0; i < arr_size; i++)
     {
         explicit_bzero(interface, sizeof(interface));
+        str = NULL;
         sprintf_s(interface, MAX_PLATFORM_PATH_SIZE, "%s.%s", ASD_CONFIG_PATH,
                   names[i]);
 
@@ -731,4 +728,146 @@ STATUS dbus_get_asd_interface_paths(const Dbus_Handle* state,
     }
 
     return ST_OK;
+}
+
+STATUS dbus_get_platform_bus_config(const Dbus_Handle* state,
+                                    bus_options* busopt)
+{
+    STATUS status = ST_OK;
+    static char path[MAX_PLATFORM_PATH_SIZE] = {0};
+    char* str;
+    uint64_t bus = 0;
+    int retcode = 0;
+    int cmp = 0;
+    sd_bus_error error __attribute__((__cleanup__(sd_bus_error_free))) =
+        SD_BUS_ERROR_NULL;
+
+    if ((state == NULL) || (busopt == NULL))
+    {
+        return ST_ERR;
+    }
+
+    // Load bus default config with all buses disabled
+    busopt->enable_i2c = false;
+    busopt->enable_i3c = false;
+
+    for (int i = 0; i < MAX_IxC_BUSES; i++)
+    {
+        busopt->bus_config_type[i] = BUS_CONFIG_NOT_ALLOWED;
+        busopt->bus_config_map[i] = 0;
+    }
+
+    // Find ASD object path
+    if (path[0] == '\0')
+    {
+        status = dbus_get_path(state, ASD_CONFIG_PATH, path);
+    }
+
+    if (status != ST_OK)
+    {
+        ASD_log(ASD_LogLevel_Error, stream, option,
+                "Failed to dbus_get_path: %d", status);
+        return status;
+    }
+
+    ASD_log(ASD_LogLevel_Debug, stream, option, "ASD Path: %s", path);
+
+    static char interface[MAX_PLATFORM_PATH_SIZE] = {0};
+    explicit_bzero(interface, sizeof(interface));
+
+    // Read i2c/i3c bus config from BusConfig entry inside ASD object
+    for (int i = 0; i < MAX_IxC_BUSES; i++)
+    {
+        str = NULL;
+        sprintf_s(interface, MAX_PLATFORM_PATH_SIZE, "%s.%s%d", ASD_CONFIG_PATH,
+                  "BusConfig", i);
+
+        ASD_log(ASD_LogLevel_Debug, stream, option, "Bus Config interface: %s",
+                interface);
+
+        retcode = sd_bus_get_property_trivial(
+            state->bus, ENTITY_MANAGER_SERVICE, path, interface, "BusNum",
+            &error, 't', &bus);
+        if (retcode < 0)
+        {
+            ASD_log(ASD_LogLevel_Debug, stream, option,
+                    "sd_bus_get_property_trivial can't be found or read %d",
+                    retcode);
+            break;
+        }
+
+        ASD_log(ASD_LogLevel_Debug, stream, option, "BusNum read: %d", bus);
+        busopt->bus_config_map[i] = (uint8_t)bus;
+
+        retcode =
+            sd_bus_get_property_string(state->bus, ENTITY_MANAGER_SERVICE, path,
+                                       interface, "BusType", &error, &str);
+        if (retcode < 0)
+        {
+            ASD_log(ASD_LogLevel_Error, stream, option,
+                    "sd_bus_get_property_string can't be found or read %d",
+                    retcode);
+            status = ST_ERR;
+            break;
+        }
+
+        ASD_log(ASD_LogLevel_Debug, stream, option, "BusType read: %s", str);
+
+        strcmp_s(str, MAX_FIELD_NAME_SIZE,
+                 BUS_CONFIG_TYPE_STRINGS[BUS_CONFIG_NOT_ALLOWED], &cmp);
+        if (cmp == 0)
+        {
+            busopt->bus_config_type[i] = BUS_CONFIG_NOT_ALLOWED;
+        }
+        else
+        {
+            strcmp_s(str, MAX_FIELD_NAME_SIZE,
+                     BUS_CONFIG_TYPE_STRINGS[BUS_CONFIG_I2C], &cmp);
+            if (cmp == 0)
+            {
+                busopt->bus_config_type[i] = BUS_CONFIG_I2C;
+                if (!busopt->enable_i2c)
+                {
+                    busopt->enable_i2c = true;
+                    busopt->bus = (uint8_t)bus;
+                }
+            }
+            else
+            {
+                strcmp_s(str, MAX_FIELD_NAME_SIZE,
+                         BUS_CONFIG_TYPE_STRINGS[BUS_CONFIG_I3C], &cmp);
+                if (cmp == 0)
+                {
+                    busopt->bus_config_type[i] = BUS_CONFIG_I3C;
+                    if (!busopt->enable_i3c)
+                    {
+                        busopt->enable_i3c = true;
+                        busopt->bus = (uint8_t)bus;
+                    }
+                }
+                else
+                {
+                    ASD_log(ASD_LogLevel_Debug, stream, option,
+                            "Unknown bus config type");
+                    status = ST_ERR;
+                    break;
+                }
+            }
+        }
+    }
+
+    // If config read fails, then return all buses disabled
+    if (status != ST_OK)
+    {
+        busopt->enable_i2c = false;
+        busopt->enable_i3c = false;
+
+        for (int i = 0; i < MAX_IxC_BUSES; i++)
+        {
+            busopt->bus_config_type[i] = BUS_CONFIG_NOT_ALLOWED;
+            busopt->bus_config_map[i] = 0;
+        }
+    }
+
+    return status;
 }

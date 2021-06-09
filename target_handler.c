@@ -1,5 +1,5 @@
 /*
-Copyright (c) 2019, Intel Corporation
+Copyright (c) 2021, Intel Corporation
 
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are met:
@@ -168,6 +168,11 @@ Target_Control_Handle* TargetHandler()
         state->gpios[i].type = PIN_GPIOD;
     }
 
+    /*******************************************************************************
+        Not all pins are defined for each applicable platform.
+        Please see At-Scale Debug Documentation Appendix on Pin Descriptions.
+    *******************************************************************************/
+
     strcpy_s(state->gpios[BMC_TCK_MUX_SEL].name,
              sizeof(state->gpios[BMC_TCK_MUX_SEL].name), "TCK_MUX_SEL");
     state->gpios[BMC_TCK_MUX_SEL].direction = GPIO_DIRECTION_LOW;
@@ -233,6 +238,7 @@ Target_Control_Handle* TargetHandler()
     state->event_cfg.report_PLTRST = false;
     state->event_cfg.report_PRDY = false;
     state->event_cfg.reset_break = false;
+    state->xdp_present = false;
 
     initialize_powergood_pin_handler(state);
     state->gpios[BMC_PLTRST_B].handler =
@@ -405,7 +411,7 @@ STATUS platform_init(Target_Control_Handle* state)
     return result;
 }
 
-STATUS target_initialize(Target_Control_Handle* state)
+STATUS target_initialize(Target_Control_Handle* state, bool xdp_fail_enable)
 {
     STATUS result;
     int value = 0;
@@ -424,9 +430,15 @@ STATUS target_initialize(Target_Control_Handle* state)
         }
         else if (value == 1)
         {
-            result = ST_ERR;
+            state->xdp_present = true;
+            if (xdp_fail_enable)
+            {
+                ASD_log(ASD_LogLevel_Error, stream, option,
+                        "Exiting due XDP presence detected");
+                result = ST_ERR;
+            }
             ASD_log(ASD_LogLevel_Error, stream, option,
-                    "XDP Presence Detected");
+                    "XDP presence detected");
         }
     }
 
@@ -828,6 +840,7 @@ STATUS deinitialize_gpios(Target_Control_Handle* state)
     STATUS retcode = ST_OK;
     int i;
 
+    // Configure all ASD PINs as input to deinitialize GPIOs
     for (i = 0; i < NUM_GPIOS; i++)
     {
 #ifdef GPIO_SYSFS_SUPPORT_DEPRECATED
@@ -854,6 +867,17 @@ STATUS deinitialize_gpios(Target_Control_Handle* state)
 #endif
             if (state->gpios[i].type == PIN_GPIOD)
         {
+            int rv;
+            gpiod_line_release(state->gpios[i].line);
+            rv = gpiod_line_request_input(state->gpios[i].line,
+                                          GPIOD_CONSUMER_LABEL);
+            if (rv)
+            {
+                ASD_log(ASD_LogLevel_Error, stream, option,
+                        "Failed to process line request input for %s",
+                        state->gpios[i].name);
+                result = ST_ERR;
+            }
             gpiod_chip_close(state->gpios[i].chip);
         }
     }
@@ -985,9 +1009,10 @@ STATUS on_platform_reset_event(Target_Control_Handle* state, ASD_EVENT* event)
     else if (value == 0)
     {
 #ifdef ENABLE_DEBUG_LOGGING
-        ASD_log(ASD_LogLevel_Debug, stream, option, "Platform reset asserted");
+        ASD_log(ASD_LogLevel_Debug, stream, option,
+                "Platform reset de-asserted");
 #endif
-        *event = ASD_EVENT_PLRSTASSERT;
+        *event = ASD_EVENT_PLRSTDEASSRT;
         if (state->event_cfg.reset_break)
         {
 #ifdef ENABLE_DEBUG_LOGGING
@@ -1006,10 +1031,9 @@ STATUS on_platform_reset_event(Target_Control_Handle* state, ASD_EVENT* event)
     else
     {
 #ifdef ENABLE_DEBUG_LOGGING
-        ASD_log(ASD_LogLevel_Debug, stream, option,
-                "Platform reset de-asserted");
+        ASD_log(ASD_LogLevel_Debug, stream, option, "Platform reset asserted");
 #endif
-        *event = ASD_EVENT_PLRSTDEASSRT;
+        *event = ASD_EVENT_PLRSTASSERT;
     }
 
     return result;
@@ -1088,8 +1112,9 @@ STATUS target_write(Target_Control_Handle* state, const Pin pin,
             ASD_log(ASD_LogLevel_Info, stream, option,
                     "Pin Write: %s reset button",
                     assert ? "assert" : "deassert");
-            if (result == ST_OK)
+            if (result == ST_OK && assert == true)
             {
+                ASD_log(ASD_LogLevel_Info, stream, option, "dbus_power_reset");
                 result = dbus_power_reset(state->dbus);
             }
             break;
@@ -1119,10 +1144,14 @@ STATUS target_write(Target_Control_Handle* state, const Pin pin,
                         if (value)
                         {
                             result = dbus_power_off(state->dbus);
+                            ASD_log(ASD_LogLevel_Info, stream, option,
+                                    "dbus_power_off");
                         }
                         else
                         {
                             result = dbus_power_on(state->dbus);
+                            ASD_log(ASD_LogLevel_Info, stream, option,
+                                    "dbus_power_on");
                         }
                     }
                 }
@@ -1510,11 +1539,14 @@ STATUS target_wait_sync(Target_Control_Handle* state, const uint16_t timeout,
     return result;
 }
 
-STATUS target_get_i2c_config(i2c_options* i2c)
+STATUS target_get_i2c_i3c_config(bus_options* busopt)
 {
     STATUS result = ST_ERR;
-    Dbus_Handle* dbus = dbus_helper();
 
+    if (busopt == NULL)
+        return ST_ERR;
+
+    Dbus_Handle* dbus = dbus_helper();
     if (dbus)
     {
         // Connect to the system bus
@@ -1529,44 +1561,44 @@ STATUS target_get_i2c_config(i2c_options* i2c)
             }
             else
             {
-                uint64_t pid = 0;
-                result = dbus_get_platform_id(dbus, &pid);
-                if (result == ST_OK)
-                {
-                    switch (pid)
-                    {
-                        case WOLF_PASS_PLATFORM_ID:
-                            i2c->bus = 4;
-                            i2c->enable = true;
-                            break;
-                        case COOPER_CITY_PLATFORM_ID:
-                        case WILSON_CITY_PLATFORM_ID:
-                        case WILSON_POINT_PLATFORM_ID:
-                            i2c->bus = 9;
-                            i2c->enable = true;
-                            break;
-                        default:
-                            i2c->enable = false;
-                            break;
-                    }
-                }
-                else
+                result = dbus_get_platform_bus_config(dbus, busopt);
+                if (result != ST_OK)
                 {
                     ASD_log(ASD_LogLevel_Error, stream, option,
-                            "dbus_get_platform_id failed");
+                            "dbus_get_platform_bus_config failed");
                 }
             }
             dbus_deinitialize(dbus);
         }
+        free(dbus);
     }
     else
     {
         ASD_log(ASD_LogLevel_Error, stream, option,
                 "failed to get dbus handle");
     }
+
+#ifdef PLATFORM_IxC_LOCAL_CONFIG
+    ASD_log(ASD_LogLevel_Info, stream, option,
+            "Using local(override) i2c/i3c bus configuration");
+
+    busopt->enable_i2c = false;
+    busopt->enable_i3c = false;
+
+    for (int i = 0; i < MAX_IxC_BUSES; i++)
+    {
+        busopt->bus_config_type[i] = BUS_CONFIG_NOT_ALLOWED;
+        busopt->bus_config_map[i] = 0;
+    }
+#endif
+
 #ifdef ENABLE_DEBUG_LOGGING
-    ASD_log(ASD_LogLevel_Debug, stream, option, "i2c.enable: %d i2c.bus: %d",
-            i2c->enable, i2c->bus);
+    for (int i = 0; i < MAX_IxC_BUSES; i++)
+    {
+        ASD_log(ASD_LogLevel_Debug, stream, option, "Bus %d: %s",
+                busopt->bus_config_map[i],
+                BUS_CONFIG_TYPE_STRINGS[busopt->bus_config_type[i]]);
+    }
 #endif
     return result;
 }

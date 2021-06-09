@@ -1,5 +1,5 @@
 /*
-Copyright (c) 2019, Intel Corporation
+Copyright (c) 2021, Intel Corporation
 
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are met:
@@ -43,22 +43,22 @@ typedef struct jtag_config
     JTAG_CHAIN_SELECT_MODE chain_mode;
 } jtag_config;
 
-#define MAX_I2C_BUSES 20
-typedef struct i2c_config
+typedef struct bus_config
 {
     bool enable_i2c;
+    bool enable_i3c;
     uint8_t default_bus;
-    // if 0th item is false, bus 0 is not allowed
-    bool allowed_buses[MAX_I2C_BUSES];
-} i2c_config;
+    bus_config_type bus_config_type[MAX_IxC_BUSES];
+    uint8_t bus_config_map[MAX_IxC_BUSES];
+} bus_config;
 
 typedef struct config
 {
     jtag_config jtag;
     remote_logging_config remote_logging;
-    i2c_config i2c;
+    bus_config buscfg;
 } config;
 
-STATUS set_config_defaults(config* config, const i2c_options* i2c);
+STATUS set_config_defaults(config* config, const bus_options* opt);
 
 #endif // __CONFIG_H_

@@ -112,6 +112,8 @@ STATUS dbus_get_asd_interface_paths(const Dbus_Handle* state,
                                     const char* names[],
                                     char interfaces[][MAX_PLATFORM_PATH_SIZE],
                                     int arr_size);
+STATUS dbus_get_platform_bus_config(const Dbus_Handle* state,
+                                    bus_options* busopt);
 int match_callback(sd_bus_message* m, void* userdata, sd_bus_error* error);
 
 #endif

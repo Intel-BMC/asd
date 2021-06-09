@@ -1,5 +1,5 @@
 /*
-Copyright (c) 2019, Intel Corporation
+Copyright (c) 2021, Intel Corporation
 
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are met:
@@ -51,10 +51,9 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #define CHIP_FNAME_BUFF_SIZE 48
 #endif
 
-#define WOLF_PASS_PLATFORM_ID 0x7B
-#define WILSON_CITY_PLATFORM_ID 0x91
-#define WILSON_POINT_PLATFORM_ID 0x9A
-#define COOPER_CITY_PLATFORM_ID 0x9D
+// Use this macro to override the i2c/i3c bus configuration described on the
+// entity manager ASD dbus object.
+//#define PLATFORM_IxC_LOCAL_CONFIG
 
 typedef enum
 {
@@ -160,6 +159,7 @@ typedef struct Target_Control_Handle
     Target_Control_GPIO gpios[NUM_GPIOS];
     Dbus_Handle* dbus;
     bool is_master_probe;
+    bool xdp_present;
 } Target_Control_Handle;
 
 typedef struct data_json_map
@@ -172,7 +172,7 @@ typedef struct data_json_map
 } data_json_map;
 
 Target_Control_Handle* TargetHandler();
-STATUS target_initialize(Target_Control_Handle* state);
+STATUS target_initialize(Target_Control_Handle* state, bool xdp_fail_enable);
 STATUS target_deinitialize(Target_Control_Handle* state);
 STATUS target_write(Target_Control_Handle* state, Pin pin, bool assert);
 STATUS target_read(Target_Control_Handle* state, Pin pin, bool* asserted);
@@ -187,5 +187,5 @@ STATUS target_wait_sync(Target_Control_Handle* state, uint16_t timeout,
                         uint16_t delay);
 STATUS on_power_event(Target_Control_Handle* state, ASD_EVENT* event);
 STATUS initialize_powergood_pin_handler(Target_Control_Handle* state);
-STATUS target_get_i2c_config(i2c_options* i2c);
+STATUS target_get_i2c_i3c_config(bus_options* busopt);
 #endif // _TARGET_CONTROL_HANDLER_H_

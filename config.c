@@ -1,5 +1,5 @@
 /*
-Copyright (c) 2019, Intel Corporation
+Copyright (c) 2021, Intel Corporation
 
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are met:
@@ -32,9 +32,9 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "logging.h"
 
-STATUS set_config_defaults(config* config, const i2c_options* i2c)
+STATUS set_config_defaults(config* config, const bus_options* opt)
 {
-    if (config == NULL || i2c == NULL)
+    if (config == NULL || opt == NULL)
     {
         return ST_ERR;
     }
@@ -42,18 +42,23 @@ STATUS set_config_defaults(config* config, const i2c_options* i2c)
     config->jtag.chain_mode = JTAG_CHAIN_SELECT_MODE_SINGLE;
     config->remote_logging.logging_level = IPC_LogType_Off;
     config->remote_logging.logging_stream = 0;
+    config->buscfg.enable_i2c = opt->enable_i2c;
+    config->buscfg.enable_i3c = opt->enable_i3c;
+    config->buscfg.default_bus = opt->bus;
 
-    for (int i = 0; i < MAX_I2C_BUSES; i++)
+    for (int i = 0; i < MAX_IxC_BUSES; i++)
     {
-        config->i2c.allowed_buses[i] = false;
+        if (opt->enable_i2c || opt->enable_i3c)
+        {
+            config->buscfg.bus_config_type[i] = opt->bus_config_type[i];
+            config->buscfg.bus_config_map[i] = opt->bus_config_map[i];
+        }
+        else
+        {
+            config->buscfg.bus_config_type[i] = BUS_CONFIG_NOT_ALLOWED;
+            config->buscfg.bus_config_map[i] = 0;
+        }
     }
-
-    if (i2c->enable)
-    {
-        config->i2c.allowed_buses[i2c->bus] = true;
-    }
-    config->i2c.enable_i2c = i2c->enable;
-    config->i2c.default_bus = i2c->bus;
 
     return ST_OK;
 }

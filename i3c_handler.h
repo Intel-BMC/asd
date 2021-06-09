@@ -25,25 +25,26 @@ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
-#ifndef _I2C_HANDLER_H_
-#define _I2C_HANDLER_H_
+#ifndef _I3C_HANDLER_H_
+#define _I3C_HANDLER_H_
 
 #include "config.h"
 
-#define UNINITIALIZED_I2C_DRIVER_HANDLE -1
+#define UNINITIALIZED_I3C_DRIVER_HANDLE -1
+#define i3C_MAX_DEV_HANDLERS 8
 
-typedef struct I2C_Handler
+typedef struct I3C_Handler
 {
-    uint8_t i2c_bus;
+    uint8_t i3c_bus;
     bus_config* config;
-    int i2c_driver_handle;
-} I2C_Handler;
+    int i3c_driver_handlers[i3C_MAX_DEV_HANDLERS];
+} I3C_Handler;
 
-I2C_Handler* I2CHandler(bus_config* config);
-STATUS i2c_initialize(I2C_Handler* state);
-STATUS i2c_deinitialize(I2C_Handler* state);
-STATUS i2c_bus_select(I2C_Handler* state, uint8_t bus);
-STATUS i2c_set_sclk(I2C_Handler* state, uint16_t sclk);
-STATUS i2c_read_write(I2C_Handler* state, void* msg_set);
+I3C_Handler* I3CHandler(bus_config* config);
+STATUS i3c_initialize(I3C_Handler* state);
+STATUS i3c_deinitialize(I3C_Handler* state);
+STATUS i3c_bus_select(I3C_Handler* state, uint8_t bus);
+STATUS i3c_set_sclk(I3C_Handler* state, uint16_t sclk);
+STATUS i3c_read_write(I3C_Handler* state, void* msg_set);
 
 #endif

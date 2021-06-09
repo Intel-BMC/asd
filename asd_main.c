@@ -1,5 +1,5 @@
 /*
-Copyright (c) 2019, Intel Corporation
+Copyright (c) 2021, Intel Corporation
 
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are met:
@@ -79,12 +79,14 @@ int asd_main(int argc, char** argv)
 bool process_command_line(int argc, char** argv, asd_args* args)
 {
     int c = 0;
-    opterr = 0; // prevent getopt_long from printing shell messages
+    opterr = 0;              // prevent getopt_long from printing shell messages
+    uint8_t bus_counter = 0; // Up to 4 buses
 
     // Set Default argument values.
 
-    args->i2c.enable = DEFAULT_I2C_ENABLE;
-    args->i2c.bus = DEFAULT_I2C_BUS;
+    args->busopt.enable_i2c = DEFAULT_I2C_ENABLE;
+    args->busopt.enable_i3c = DEFAULT_I3C_ENABLE;
+    args->busopt.bus = DEFAULT_I2C_BUS;
     args->use_syslog = DEFAULT_LOG_TO_SYSLOG;
     args->log_level = DEFAULT_LOG_LEVEL;
     args->log_streams = DEFAULT_LOG_STREAMS;
@@ -93,22 +95,25 @@ bool process_command_line(int argc, char** argv, asd_args* args)
     args->session.cp_net_bind_device = NULL;
     args->session.e_extnet_type = EXTNET_HDLR_TLS;
     args->session.e_auth_type = AUTH_HDLR_PAM;
+    args->xdp_fail_enable = DEFAULT_XDP_FAIL_ENABLE;
 
     enum
     {
         ARG_LOG_LEVEL = 256,
         ARG_LOG_STREAMS,
-        ARG_HELP
+        ARG_HELP,
+        ARG_XDP
     };
 
     struct option opts[] = {
+        {"xdp-ignore", 0, NULL, ARG_XDP},
         {"log-level", 1, NULL, ARG_LOG_LEVEL},
         {"log-streams", 1, NULL, ARG_LOG_STREAMS},
         {"help", 0, NULL, ARG_HELP},
         {NULL, 0, NULL, 0},
     };
 
-    while ((c = getopt_long(argc, argv, "p:uk:n:si:", opts, NULL)) != -1)
+    while ((c = getopt_long(argc, argv, "p:uk:n:si:c:", opts, NULL)) != -1)
     {
         switch (c)
         {
@@ -142,9 +147,84 @@ bool process_command_line(int argc, char** argv, asd_args* args)
             }
             case 'i':
             {
-                args->i2c.enable = true;
-                args->i2c.bus = (uint8_t)strtol(optarg, NULL, 10);
-                fprintf(stderr, "Enabling I2C bus: %d\n", args->i2c.bus);
+                char* pch;
+                uint8_t bus;
+                bool first_i2c = true;
+                char* endptr;
+                args->busopt.enable_i2c = true;
+                pch = strtok(optarg, ",");
+                while (pch != NULL)
+                {
+                    errno = 0;
+                    bus = (uint8_t)strtol(pch, &endptr, 10);
+                    if ((errno == ERANGE) || (endptr == pch))
+                    {
+                        fprintf(stderr, "Wrong I2C bus list arguments(-i)\n");
+                        break;
+                    }
+                    if (bus_counter >= MAX_IxC_BUSES)
+                    {
+                        fprintf(stderr, "Discard I2C bus: %d\n", bus);
+                    }
+                    else
+                    {
+                        if (first_i2c)
+                        {
+                            args->busopt.bus = bus;
+                            first_i2c = false;
+                        }
+                        fprintf(stderr, "Enabling I2C bus: %d\n", bus);
+                        args->busopt.bus_config_type[bus_counter] =
+                            BUS_CONFIG_I2C;
+                        args->busopt.bus_config_map[bus_counter] = bus;
+                    }
+                    pch = strtok(NULL, ",");
+                    bus_counter++;
+                }
+                break;
+            }
+            case 'c':
+            {
+                char* pch;
+                uint8_t bus;
+                bool first_i3c = true;
+                char* endptr;
+                args->busopt.enable_i3c = true;
+                pch = strtok(optarg, ",");
+                while (pch != NULL)
+                {
+                    errno = 0;
+                    bus = (uint8_t)strtol(pch, &endptr, 10);
+                    if ((errno == ERANGE) || (endptr == pch))
+                    {
+                        fprintf(stderr, "Wrong I3C bus list arguments(-c)\n");
+                        break;
+                    }
+                    if (bus_counter >= MAX_IxC_BUSES)
+                    {
+                        fprintf(stderr, "Discard I3C bus: %d\n", bus);
+                    }
+                    else
+                    {
+                        if (first_i3c)
+                        {
+                            args->busopt.bus = bus;
+                            first_i3c = false;
+                        }
+                        fprintf(stderr, "Enabling I3C bus: %d\n", bus);
+                        args->busopt.bus_config_type[bus_counter] =
+                            BUS_CONFIG_I3C;
+                        args->busopt.bus_config_map[bus_counter] = bus;
+                    }
+                    pch = strtok(NULL, ",");
+                    bus_counter++;
+                }
+                break;
+            }
+            case ARG_XDP:
+            {
+                args->xdp_fail_enable = false;
+                fprintf(stderr, "Ignore XDP presence\n");
                 break;
             }
             case ARG_LOG_LEVEL:
@@ -186,7 +266,20 @@ void showUsage(char** argv)
         "  -u          Run in plain TCP, no SSL (default: SSL/Auth Mode)\n"
         "  -k <file>   Specify SSL Certificate/Key file (default: %s)\n"
         "  -n <device> Bind only to specific network device (eth0, etc)\n"
-        "  -i <bus>    Decimal i2c bus number (default: disabled)\n"
+        "  -i <buses>  Decimal i2c allowed bus list(default: none)\n"
+        "              Use comma to enable multiple i2c buses: -i 2,9\n"
+        "              The first bus will be used as default bus.\n"
+        "              The total number of i2c/i3c bus assignments cannot\n"
+        "              exceed 4 buses.\n"
+        "  -c <buses>  Decimal i3c allowed bus list(default: none)\n"
+        "              Use comma to enable multiple i3c buses: -c 0,1,2,3\n"
+        "              The first bus will be used as default bus.\n"
+        "              The total number of i2c/i3c bus assignments cannot\n"
+        "              exceed 4 buses.\n"
+        "  --xdp-ignore               Connect ASD even with XDP connected\n"
+        "                             Warning: Driving signals from both\n"
+        "                             ASD and XDP may cause electrical issues\n"
+        "                             or lead into a HW damage.\n"
         "  --log-level=<level>        Specify Logging Level (default: %s)\n"
         "                             Levels:\n"
         "                               %s\n"
@@ -213,6 +306,8 @@ void showUsage(char** argv)
         "\n"
         "Log from the daemon and jtag at trace level.\n"
         "     asd --log-level=trace --log-streams=daemon,jtag\n"
+        "Enable i2c bus 2 and bus 9.\n"
+        "     asd -i 2,9\n"
         "\n"
         "Default logging, only listen on eth0.\n"
         "     asd -n eth0\n"
@@ -236,7 +331,7 @@ void showUsage(char** argv)
 STATUS init_asd_state(asd_state* state)
 {
 
-    STATUS result = set_config_defaults(&state->config, &state->args.i2c);
+    STATUS result = set_config_defaults(&state->config, &state->args.busopt);
 
     if (result == ST_OK)
     {
@@ -567,6 +662,7 @@ STATUS process_client_message(asd_state* state, const struct pollfd poll_fd)
 
         if (result == ST_OK)
         {
+            state->asd_msg->xdp_fail_enable = state->args.xdp_fail_enable;
             result = asd_msg_read(state->asd_msg, p_extconn, &b_data_pending);
             if (result != ST_OK)
             {
@@ -658,8 +754,7 @@ STATUS ensure_client_authenticated(asd_state* state, extnet_conn_t* p_extconn)
 STATUS on_client_connect(asd_state* state, extnet_conn_t* p_extcon)
 {
     STATUS result = ST_OK;
-    static bool i2c_platform_checked = false;
-    static i2c_options target_i2c = {false, 0};
+    static bus_options target_bus_options;
 
     if (!state || !p_extcon)
     {
@@ -675,30 +770,38 @@ STATUS on_client_connect(asd_state* state, extnet_conn_t* p_extcon)
 
         log_client_address(p_extcon);
 
-        if (!i2c_platform_checked)
-        {
-            if (target_get_i2c_config(&target_i2c) != ST_OK)
-            {
+        result = target_get_i2c_i3c_config(&target_bus_options);
+
 #ifdef ENABLE_DEBUG_LOGGING
-                ASD_log(ASD_LogLevel_Warning, ASD_LogStream_Daemon,
-                        ASD_LogOption_No_Remote,
-                        "Failed to read i2c platform config");
-#endif
-            }
-            if (target_i2c.enable)
-            {
-                ASD_log(ASD_LogLevel_Error, ASD_LogStream_Daemon,
-                        ASD_LogOption_No_Remote, "Enabling I2C bus: %d\n",
-                        target_i2c.bus);
-            }
-        }
-        if (state->args.i2c.enable)
+        if (result != ST_OK)
         {
-            result = set_config_defaults(&state->config, &state->args.i2c);
+            ASD_log(ASD_LogLevel_Warning, ASD_LogStream_Daemon,
+                    ASD_LogOption_No_Remote,
+                    "Failed to read i2c/i3c platform config");
+        }
+#endif
+        if (state->args.busopt.enable_i2c || state->args.busopt.enable_i3c)
+        {
+            result = set_config_defaults(&state->config, &state->args.busopt);
         }
         else
         {
-            result = set_config_defaults(&state->config, &target_i2c);
+            for (int i = 0; i < MAX_IxC_BUSES; i++)
+            {
+                if (target_bus_options.bus_config_type[i] == BUS_CONFIG_I2C)
+                {
+                    ASD_log(ASD_LogLevel_Error, ASD_LogStream_Daemon,
+                            ASD_LogOption_No_Remote, "Enabling I2C bus: %d",
+                            target_bus_options.bus_config_map[i]);
+                }
+                if (target_bus_options.bus_config_type[i] == BUS_CONFIG_I3C)
+                {
+                    ASD_log(ASD_LogLevel_Error, ASD_LogStream_Daemon,
+                            ASD_LogOption_No_Remote, "Enabling I3C bus: %d",
+                            target_bus_options.bus_config_map[i]);
+                }
+            }
+            result = set_config_defaults(&state->config, &target_bus_options);
         }
     }
 
@@ -783,7 +886,7 @@ STATUS on_client_disconnect(asd_state* state)
                 "Cleaning up after client connection");
 #endif
 
-        result = set_config_defaults(&state->config, &state->args.i2c);
+        result = set_config_defaults(&state->config, &state->args.busopt);
     }
 
     if (result == ST_OK)

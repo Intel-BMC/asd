@@ -1,5 +1,5 @@
 /*
-Copyright (c) 2019, Intel Corporation
+Copyright (c) 2021, Intel Corporation
 
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are met:
@@ -41,12 +41,14 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 // DEFAULTS
 #define DEFAULT_I2C_ENABLE false
+#define DEFAULT_I3C_ENABLE false
 #define DEFAULT_I2C_BUS 0x04
 #define DEFAULT_PORT 5123
 #define DEFAULT_CERT_FILE "/etc/ssl/certs/https/server.pem"
 #define DEFAULT_LOG_TO_SYSLOG false
 #define DEFAULT_LOG_LEVEL ASD_LogLevel_Warning
 #define DEFAULT_LOG_STREAMS ASD_LogStream_All
+#define DEFAULT_XDP_FAIL_ENABLE true
 
 typedef struct session_options
 {
@@ -60,10 +62,11 @@ typedef struct session_options
 typedef struct asd_args
 {
     session_options session;
-    i2c_options i2c;
+    bus_options busopt;
     bool use_syslog;
     ASD_LogLevel log_level;
     ASD_LogStream log_streams;
+    bool xdp_fail_enable;
 } asd_args;
 
 typedef struct asd_state

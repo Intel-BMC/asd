@@ -1,5 +1,5 @@
 /*
-Copyright (c) 2019, Intel Corporation
+Copyright (c) 2021, Intel Corporation
 
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are met:
@@ -27,20 +27,25 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "i2c_handler.h"
 
+// Disabling clang-format to avoid include alphabetical re-order that leads
+// into a conflict for i2c-dev.h that requires std headers to be added before.
+
+// clang-format off
 #include <errno.h>
 #include <fcntl.h>
-#include <linux/i2c-dev.h>
-#include <linux/i2c.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
 #include <unistd.h>
+#include <linux/i2c-dev.h>
+#include <linux/i2c.h>
+// clang-format on
 
 #include "logging.h"
 
-#define FILE_NAME "/dev/i2c"
+#define I2C_DEV_FILE_NAME "/dev/i2c"
 #define MAX_I2C_DEV_FILENAME 256
 
 static const ASD_LogStream stream = ASD_LogStream_I2C;
@@ -51,7 +56,7 @@ STATUS i2c_open_driver(I2C_Handler* state, uint8_t bus);
 void i2c_close_driver(I2C_Handler* state);
 bool i2c_bus_allowed(I2C_Handler* state, uint8_t bus);
 
-I2C_Handler* I2CHandler(i2c_config* config)
+I2C_Handler* I2CHandler(bus_config* config)
 {
     if (config == NULL)
     {
@@ -92,6 +97,20 @@ STATUS i2c_deinitialize(I2C_Handler* state)
     i2c_close_driver(state);
     state = NULL;
     return ST_OK;
+}
+
+STATUS i2c_bus_flock(I2C_Handler* state, uint8_t bus, int op)
+{
+    STATUS status = ST_OK;
+    ASD_log(ASD_LogLevel_Debug, ASD_LogStream_I2C, ASD_LogOption_None,
+            "i2c - bus %d %s", bus, op == LOCK_EX ? "LOCK" : "UNLOCK");
+    if (flock(state->i2c_driver_handle, op) != 0)
+    {
+        ASD_log(ASD_LogLevel_Debug, ASD_LogStream_I2C, ASD_LogOption_None,
+                "i2c flock for bus %d failed", bus);
+        status = ST_ERR;
+    }
+    return status;
 }
 
 STATUS i2c_bus_select(I2C_Handler* state, uint8_t bus)
@@ -155,7 +174,7 @@ bool i2c_enabled(I2C_Handler* state)
 STATUS i2c_open_driver(I2C_Handler* state, uint8_t bus)
 {
     char i2c_dev[MAX_I2C_DEV_FILENAME];
-    snprintf(i2c_dev, sizeof(i2c_dev), "%s-%d", FILE_NAME, bus);
+    snprintf(i2c_dev, sizeof(i2c_dev), "%s-%d", I2C_DEV_FILE_NAME, bus);
     state->i2c_driver_handle = open(i2c_dev, O_RDWR);
     if (state->i2c_driver_handle == -1)
     {
@@ -164,6 +183,7 @@ STATUS i2c_open_driver(I2C_Handler* state, uint8_t bus)
         return ST_ERR;
     }
     state->i2c_bus = bus;
+    state->config->default_bus = bus;
     return ST_OK;
 }
 
@@ -178,7 +198,11 @@ void i2c_close_driver(I2C_Handler* state)
 
 bool i2c_bus_allowed(I2C_Handler* state, uint8_t bus)
 {
-    if (bus > (MAX_I2C_BUSES - 1))
-        return false;
-    return state->config->allowed_buses[bus];
+    for (int i = 0; i < MAX_IxC_BUSES; i++)
+    {
+        if (state->config->bus_config_map[i] == bus &&
+            state->config->bus_config_type[i] == BUS_CONFIG_I2C)
+            return true;
+    }
+    return false;
 }

@@ -186,7 +186,8 @@ static auth_ret_t credentials_are_valid(unsigned char* cp_password,
         if (PAM_SUCCESS != (pamerr = pam_end(pamh, pamerr)))
         {
             ASD_log(ASD_LogLevel_Error, ASD_LogStream_Network,
-                    ASD_LogOption_None, "pam_end(%d) error %d", pamerr);
+                    ASD_LogOption_None, "pam_end(%d) error %d", (int)pamh,
+                    pamerr);
         }
     }
     return ret;

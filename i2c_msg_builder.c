@@ -27,12 +27,13 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "i2c_msg_builder.h"
 
-#include <linux/i2c-dev.h>
-#include <linux/i2c.h>
 #include <stdint.h>
 #include <stdlib.h>
 
 #include "logging.h"
+
+#include <linux/i2c-dev.h>
+#include <linux/i2c.h>
 
 STATUS copy_i2c_to_asd(asd_i2c_msg* asd, struct i2c_msg* i2c);
 STATUS copy_asd_to_i2c(const asd_i2c_msg* asd, struct i2c_msg* i2c);

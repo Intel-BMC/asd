@@ -300,9 +300,11 @@ STATUS JTAG_shift(JTAG_Handler* state, unsigned int number_of_bits,
     if (state == NULL)
         return ST_ERR;
 
+#ifndef JTAG_LEGACY_DRIVER
     if (!state->sw_mode)
         return JTAG_shift_hw(state, number_of_bits, input_bytes, input,
                              output_bytes, output, end_tap_state);
+#endif
 
     unsigned int preFix = 0;
     unsigned int postFix = 0;

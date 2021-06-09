@@ -1,5 +1,5 @@
 /*
-Copyright (c) 2019, Intel Corporation
+Copyright (c) 2021, Intel Corporation
 
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are met:
@@ -35,6 +35,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "asd_common.h"
 #include "i2c_handler.h"
 #include "i2c_msg_builder.h"
+#include "i3c_handler.h"
 #include "jtag_handler.h"
 #include "logging.h"
 #include "target_handler.h"
@@ -43,13 +44,30 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 // Two simple rules for the version string are:
 // 1. less than 265 in length (or it will be truncated in the plugin)
 // 2. no dashes, as they are used later up the sw stack between components.
-static char asd_version[] = "ASD_BMC_v1.4.4";
+static char asd_version[] = "ASD_BMC_v1.4.6";
 
 #define NUM_IN_FLIGHT_BUFFERS_TO_USE 20
 #define MAX_MULTICHAINS 16
 #define CHARS_PER_CHAIN 5
 #define OPENBMC_V "OPENBMC_VERSION"
 #define ASCII_DOUBLE_QUOTES 34
+
+// Reset operation request comes in a bundle where a request to assert
+// the reset signal is sent first, followed to an instruction for ASD
+// application to wait(WAIT_CYCLE) and ends with a request for de-asssert
+// reset signal. The sequence is an standard flow intended for a reset
+// signal driven by a GPIO.
+// After reset is de-asserted it is expected from BMC to detect the reset
+// and report it back to the client. However in our base code and some BMC
+// implementations reset execution is tied to an internal BMC function
+// (triggered during assertion) rather than a GPIO. In this scenario reset
+// events may occur while ASD application is still processing the wait cycles
+// preventing ASD to perform a proper detection.
+// You can use the following flag to skip wait cycles and allow ASD
+// application to be ready for processing platform events. On the other
+// hand if your RESET_BTN signal is driven by a GPIO this option should be
+// disabled and a separate process to monitor for events is suggested.
+#define SKIP_WAIT_CYCLES_DURING_RESET
 
 typedef STATUS (*SendFunctionPtr)(void* state, unsigned char* buffer,
                                   size_t length);
@@ -80,7 +98,9 @@ typedef struct ASD_MSG
     struct asd_message out_msg;
     JTAG_Handler* jtag_handler;
     Target_Control_Handle* target_handler;
+    bus_config* buscfg;
     I2C_Handler* i2c_handler;
+    I3C_Handler* i3c_handler;
     vProbe_Handler* vprobe_handler;
     bool handlers_initialized;
     ShouldLogFunctionPtr should_remote_log;
@@ -91,6 +111,7 @@ typedef struct ASD_MSG
     JTAG_CHAIN_SELECT_MODE jtag_chain_mode;
     char bmc_version[120];
     int bmc_version_size;
+    bool xdp_fail_enable;
 } ASD_MSG;
 
 struct packet_data

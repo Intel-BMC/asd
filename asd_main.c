@@ -391,7 +391,13 @@ void deinit_asd_state(asd_state* state)
         close(state->host_fd);
     if (state->asd_msg)
     {
-        asd_msg_free(state->asd_msg);
+        if (asd_msg_free(state->asd_msg) != ST_OK)
+        {
+            ASD_log(ASD_LogLevel_Error, ASD_LogStream_Daemon,
+                    ASD_LogOption_None, "Failed to de-initialize the asd_msg");
+        }
+        free(state->asd_msg);
+        state->asd_msg = NULL;
     }
 }
 
@@ -895,11 +901,17 @@ STATUS on_client_disconnect(asd_state* state)
                                     state->args.log_streams,
                                     state->args.use_syslog, NULL, NULL);
 
-        if (asd_msg_free(state->asd_msg) != ST_OK)
+        if (state->asd_msg)
         {
-            ASD_log(ASD_LogLevel_Error, ASD_LogStream_Daemon,
-                    ASD_LogOption_None, "Failed to de-initialize the asd_msg");
-            result = ST_ERR;
+            if (asd_msg_free(state->asd_msg) != ST_OK)
+            {
+                ASD_log(ASD_LogLevel_Error, ASD_LogStream_Daemon,
+                        ASD_LogOption_None,
+                        "Failed to de-initialize the asd_msg");
+                result = ST_ERR;
+            }
+            free(state->asd_msg);
+            state->asd_msg = NULL;
         }
     }
 

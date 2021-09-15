@@ -82,7 +82,7 @@ int pam_conversation_function(int numMsg, const struct pam_message** msg,
     if (appdata_ptr && msg && resp)
     {
         *resp = NULL;
-        size_t len = strlen((char*)(appdata_ptr)) + 1;
+        size_t len = strnlen_s((char*)(appdata_ptr), MAX_PW_LEN) + 1;
         char* pass = (char*)malloc(len);
         if (pass)
         {

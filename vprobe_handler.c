@@ -69,7 +69,7 @@ STATUS vProbeConfigAppend(char** buff, size_t* destsize, const char* str)
     if (destsize == NULL || str == NULL || buff == NULL)
         return ST_ERR;
 
-    uint32_t count = strlen(str);
+    uint32_t count = strnlen_s(str, MAX_DATA_SIZE);
     if (strcpy_s(*buff, *destsize, str))
     {
         return ST_ERR;
@@ -147,7 +147,12 @@ STATUS vProbe_deinitialize(vProbe_Handler* state)
     if (state == NULL || !state->initialized)
         return ST_ERR;
 
-    dbus_deinitialize(state->dbus);
+    if (state->dbus != NULL)
+    {
+        dbus_deinitialize(state->dbus);
+        free(state->dbus);
+        state->dbus = NULL;
+    }
 
     return ST_OK;
 }

@@ -28,6 +28,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "logging.h"
 
 #include <ctype.h>
+#include <safe_str_lib.h>
 #include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -215,45 +216,53 @@ void ASD_initialize_log_settings(ASD_LogLevel level, ASD_LogStream stream,
 #define STRTOLEVELMAX 10
 bool strtolevel(char* input, ASD_LogLevel* output)
 {
-    bool result = false;
     char temp[STRTOLEVELMAX];
-    if (input != NULL && output != NULL && strlen(input) <= (STRTOLEVELMAX - 1))
+    int cmp = 0;
+
+    if (input != NULL && output != NULL)
     {
         explicit_bzero(temp, sizeof(char) * STRTOLEVELMAX);
-        for (int i = 0; i < strlen(input); i++)
+        for (int i = 0; i < strnlen_s(input, STRTOLEVELMAX); i++)
             temp[i] = (char)tolower(input[i]);
-        if (strcmp(temp, "off") == 0)
+
+        strcmp_s(temp, STRTOLEVELMAX, "off", &cmp);
+        if (cmp == 0)
         {
             *output = ASD_LogLevel_Off;
-            result = true;
+            return true;
         }
-        else if (strcmp(temp, "trace") == 0)
+        strcmp_s(temp, STRTOLEVELMAX, "trace", &cmp);
+        if (cmp == 0)
         {
             *output = ASD_LogLevel_Trace;
-            result = true;
+            return true;
         }
-        else if (strcmp(temp, "debug") == 0)
+        strcmp_s(temp, STRTOLEVELMAX, "debug", &cmp);
+        if (cmp == 0)
         {
             *output = ASD_LogLevel_Debug;
-            result = true;
+            return true;
         }
-        else if (strcmp(temp, "info") == 0)
+        strcmp_s(temp, STRTOLEVELMAX, "info", &cmp);
+        if (cmp == 0)
         {
             *output = ASD_LogLevel_Info;
-            result = true;
+            return true;
         }
-        else if (strcmp(temp, "warning") == 0)
+        strcmp_s(temp, STRTOLEVELMAX, "warning", &cmp);
+        if (cmp == 0)
         {
             *output = ASD_LogLevel_Warning;
-            result = true;
+            return true;
         }
-        else if (strcmp(temp, "error") == 0)
+        strcmp_s(temp, STRTOLEVELMAX, "error", &cmp);
+        if (cmp == 0)
         {
             *output = ASD_LogLevel_Error;
-            result = true;
+            return true;
         }
     }
-    return result;
+    return false;
 }
 
 #define STRTOSTREAMMAX 10
@@ -263,6 +272,8 @@ bool strtostreams(char* input, ASD_LogStream* output)
     bool result = false;
     char *string, *token, *original;
     char temp[STRTOSTREAMMAX];
+    int cmp = 0;
+
     if (input != NULL && output != NULL)
     {
         *output = ASD_LogStream_None;
@@ -271,67 +282,79 @@ bool strtostreams(char* input, ASD_LogStream* output)
         {
             while ((token = strsep(&string, ",")) != NULL)
             {
-                if (strlen(token) <= (STRTOSTREAMMAX - 1))
+                explicit_bzero(temp, sizeof(char) * STRTOSTREAMMAX);
+                for (int i = 0; i < strnlen_s(token, STRTOSTREAMMAX); i++)
+                    temp[i] = (char)tolower(token[i]);
+                do
                 {
-                    explicit_bzero(temp, sizeof(char) * STRTOSTREAMMAX);
-                    for (int i = 0; i < strlen(token); i++)
-                        temp[i] = (char)tolower(token[i]);
-                    if (strcmp(temp, "none") == 0)
+                    strcmp_s(temp, STRTOSTREAMMAX, "none", &cmp);
+                    if (cmp == 0)
                     {
                         *output |= ASD_LogStream_None;
                         result = true;
+                        break;
                     }
-                    else if (strcmp(temp, "network") == 0)
+                    strcmp_s(temp, STRTOSTREAMMAX, "network", &cmp);
+                    if (cmp == 0)
                     {
                         *output |= ASD_LogStream_Network;
                         result = true;
+                        break;
                     }
-                    else if (strcmp(temp, "jtag") == 0)
+                    strcmp_s(temp, STRTOSTREAMMAX, "jtag", &cmp);
+                    if (cmp == 0)
                     {
                         *output |= ASD_LogStream_JTAG;
                         result = true;
+                        break;
                     }
-                    else if (strcmp(temp, "pins") == 0)
+                    strcmp_s(temp, STRTOSTREAMMAX, "pins", &cmp);
+                    if (cmp == 0)
                     {
                         *output |= ASD_LogStream_Pins;
                         result = true;
+                        break;
                     }
-                    else if (strcmp(temp, "i2c") == 0)
+                    strcmp_s(temp, STRTOSTREAMMAX, "i2c", &cmp);
+                    if (cmp == 0)
                     {
                         *output |= ASD_LogStream_I2C;
                         result = true;
+                        break;
                     }
-                    else if (strcmp(temp, "test") == 0)
+                    strcmp_s(temp, STRTOSTREAMMAX, "test", &cmp);
+                    if (cmp == 0)
                     {
                         *output |= ASD_LogStream_Test;
                         result = true;
+                        break;
                     }
-                    else if (strcmp(temp, "daemon") == 0)
+                    strcmp_s(temp, STRTOSTREAMMAX, "daemon", &cmp);
+                    if (cmp == 0)
                     {
                         *output |= ASD_LogStream_Daemon;
                         result = true;
+                        break;
                     }
-                    else if (strcmp(temp, "sdk") == 0)
+                    strcmp_s(temp, STRTOSTREAMMAX, "sdk", &cmp);
+                    if (cmp == 0)
                     {
                         *output |= ASD_LogStream_SDK;
                         result = true;
+                        break;
                     }
-                    else if (strcmp(temp, "all") == 0)
+                    strcmp_s(temp, STRTOSTREAMMAX, "all", &cmp);
+                    if (cmp == 0)
                     {
                         *output |= ASD_LogStream_All;
                         result = true;
+                        break;
                     }
                     else
                     {
                         result = false;
-                        break;
                     }
-                }
-                else
-                {
-                    result = false;
-                    break;
-                }
+                } while (0);
             }
             free(original);
         }

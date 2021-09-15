@@ -166,6 +166,7 @@ STATUS dbus_power_toggle(Dbus_Handle* state)
     sd_bus_error error = SD_BUS_ERROR_NULL;
     sd_bus_message* reply = NULL;
     const char* value;
+    int cmp = 0;
 
     if (state && state->bus)
     {
@@ -176,7 +177,9 @@ STATUS dbus_power_toggle(Dbus_Handle* state)
         if (retcode >= 0)
         {
             sd_bus_message_read(reply, "s", &value);
-            if (strcmp(value, POWER_ON_PROPERTY_CHASSIS) == 0)
+            strcmp_s(value, MAX_PLATFORM_PATH_SIZE, POWER_ON_PROPERTY_CHASSIS,
+                     &cmp);
+            if (cmp == 0)
                 result = dbus_power_off(state);
             else
                 result = dbus_power_on(state);
@@ -212,7 +215,8 @@ STATUS dbus_get_powerstate(Dbus_Handle* state, int* value)
             {
                 sd_bus_message_read(reply, "s", &value_string);
                 if (strncmp(value_string, POWER_ON_PROPERTY_CHASSIS,
-                            strlen(POWER_ON_PROPERTY_CHASSIS)) == 0)
+                            strnlen_s(POWER_ON_PROPERTY_CHASSIS,
+                                      MAX_PLATFORM_PATH_SIZE)) == 0)
                     *value = STATE_ON;
                 else
                     *value = STATE_OFF;
@@ -314,7 +318,8 @@ int match_callback(sd_bus_message* msg, void* userdata, sd_bus_error* error)
     Dbus_Handle* state = (Dbus_Handle*)userdata;
     int result = ST_ERR;
     const char* str;
-    //(s interface, a{sv}
+    int cmp = 0;
+
     int retcode = sd_bus_message_skip(msg, "s");
     if (retcode < 0)
     {
@@ -349,7 +354,9 @@ int match_callback(sd_bus_message* msg, void* userdata, sd_bus_error* error)
                 //  Focus in CurrentPowerState messages only,
                 //  discard LastStateChangeTime and
                 //  RequestedPowerTransition
-                if (strcmp(str, GET_POWER_STATE_PROPERTY_CHASSIS) != 0)
+                strcmp_s(str, MAX_PLATFORM_PATH_SIZE,
+                         GET_POWER_STATE_PROPERTY_CHASSIS, &cmp);
+                if (cmp != 0)
                 {
                     result = ST_ERR;
                     continue;
@@ -379,7 +386,9 @@ int match_callback(sd_bus_message* msg, void* userdata, sd_bus_error* error)
             }
             if (result == ST_OK)
             {
-                if (strcmp(str, POWER_OFF_PROPERTY_CHASSIS) == 0)
+                strcmp_s(str, MAX_PLATFORM_PATH_SIZE,
+                         POWER_OFF_PROPERTY_CHASSIS, &cmp);
+                if (cmp == 0)
                 {
                     state->power_state = STATE_OFF;
                 }
@@ -870,4 +879,123 @@ STATUS dbus_get_platform_bus_config(const Dbus_Handle* state,
     }
 
     return status;
+}
+
+STATUS dbus_read_i3c_ownership(const Dbus_Handle* state, I3c_Ownership* owner)
+{
+    int retcode = 0;
+    sd_bus_error error __attribute__((__cleanup__(sd_bus_error_free))) =
+        SD_BUS_ERROR_NULL;
+
+    if ((state == NULL) || (owner == NULL))
+    {
+        return ST_ERR;
+    }
+
+    retcode = sd_bus_get_property_trivial(state->bus, CLTT_SERVICE, CLTT_PATH,
+                                          CLTT_INTERFACE, "IsBmcOwner", &error,
+                                          'b', owner);
+    if (retcode < 0)
+    {
+        ASD_log(ASD_LogLevel_Error, stream, option,
+                "sd_bus_get_property_trivial failed to read IsBmcOwner %d",
+                retcode);
+        return ST_ERR;
+    }
+    ASD_log(ASD_LogLevel_Debug, stream, option,
+            "dbus_get_i3c_ownership IsBmcOwner %s", *owner ? "true" : "false");
+
+    return ST_OK;
+}
+
+STATUS dbus_req_i3c_ownership(const Dbus_Handle* state, int* token)
+{
+    struct sd_bus_message* reply = NULL;
+    sd_bus_error error __attribute__((__cleanup__(sd_bus_error_free))) =
+        SD_BUS_ERROR_NULL;
+    int retcode;
+    bool isOwner;
+    char type;
+    const char* contents = NULL;
+
+    if ((state == NULL) || (token == NULL))
+    {
+        return ST_ERR;
+    }
+
+    retcode =
+        sd_bus_call_method(state->bus, CLTT_SERVICE, CLTT_PATH, CLTT_INTERFACE,
+                           "RequestOwnership", &error, &reply, "s", "Forced");
+    if (retcode < 0)
+    {
+        ASD_log(ASD_LogLevel_Error, stream, option,
+                "sd_bus_call_method RequestOwnership failed: %d", retcode);
+        return ST_ERR;
+    }
+
+    retcode = sd_bus_message_peek_type(reply, &type, &contents);
+    if (retcode < 0)
+    {
+        ASD_log(ASD_LogLevel_Error, stream, option,
+                "Failed to get peek type: %d", retcode);
+        return ST_ERR;
+    }
+
+    retcode = sd_bus_message_enter_container(reply, type, contents);
+    if (retcode < 0)
+    {
+        ASD_log(ASD_LogLevel_Error, stream, option,
+                "Failed to enter container: %d", retcode);
+        return ST_ERR;
+    }
+
+    retcode = sd_bus_message_read(reply, "i", token);
+    if (retcode < 0)
+    {
+        ASD_log(ASD_LogLevel_Error, stream, option, "Failed to read token: %d",
+                retcode);
+        return ST_ERR;
+    }
+    ASD_log(ASD_LogLevel_Debug, stream, option, "Read token: %d", *token);
+
+    retcode = sd_bus_message_read(reply, "b", &isOwner);
+    if (retcode < 0)
+    {
+        ASD_log(ASD_LogLevel_Error, stream, option, "Failed to read bool: %d",
+                retcode);
+        return ST_ERR;
+    }
+    ASD_log(ASD_LogLevel_Debug, stream, option, "isOwner: %d %s", isOwner,
+            isOwner ? "true" : "false");
+
+    sd_bus_message_exit_container(reply);
+    if (isOwner == false)
+        return ST_ERR;
+
+    return ST_OK;
+}
+
+STATUS dbus_rel_i3c_ownership(const Dbus_Handle* state, int token)
+{
+    struct sd_bus_message* reply = NULL;
+    sd_bus_error error __attribute__((__cleanup__(sd_bus_error_free))) =
+        SD_BUS_ERROR_NULL;
+    int retcode;
+
+    if (state == NULL)
+    {
+        return ST_ERR;
+    }
+
+    retcode = sd_bus_call_method(state->bus, CLTT_SERVICE, CLTT_PATH,
+                                 CLTT_INTERFACE, "ReleaseOwnership", &error,
+                                 &reply, "si", "Forced", token);
+    if (retcode < 0)
+    {
+        ASD_log(ASD_LogLevel_Error, stream, option,
+                "sd_bus_call_method ReleaseOwnership failed: %d", retcode);
+        return ST_ERR;
+    }
+
+    return ST_OK;
 }

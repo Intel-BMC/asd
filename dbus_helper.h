@@ -76,6 +76,10 @@ arg0namespace='xyz.openbmc_project.State.Chassis'"
 #define ENTITY_MANAGER_PROPERTIES_INTERFACE "org.freedesktop.DBus.Properties"
 #define ASD_CONFIG_PATH "xyz.openbmc_project.Configuration.ASD"
 
+#define CLTT_SERVICE "xyz.openbmc_project.CLTT"
+#define CLTT_PATH "/xyz/openbmc_project/AllSpdBuses"
+#define CLTT_INTERFACE "xyz.openbmc_project.BusControl"
+
 #define SD_BUS_ASYNC_TIMEOUT 10000
 #define MAX_PLATFORM_PATH_SIZE 120
 
@@ -92,6 +96,12 @@ typedef struct Dbus_Handle
     int fd;
     Power_State power_state;
 } Dbus_Handle;
+
+typedef enum
+{
+    CPU_OWNER,
+    BMC_OWNER
+} I3c_Ownership;
 
 Dbus_Handle* dbus_helper();
 STATUS dbus_initialize(Dbus_Handle*);
@@ -114,6 +124,9 @@ STATUS dbus_get_asd_interface_paths(const Dbus_Handle* state,
                                     int arr_size);
 STATUS dbus_get_platform_bus_config(const Dbus_Handle* state,
                                     bus_options* busopt);
+STATUS dbus_read_i3c_ownership(const Dbus_Handle* state, I3c_Ownership* owner);
+STATUS dbus_req_i3c_ownership(const Dbus_Handle* state, int* token);
+STATUS dbus_rel_i3c_ownership(const Dbus_Handle* state, int token);
 int match_callback(sd_bus_message* m, void* userdata, sd_bus_error* error);
 
 #endif

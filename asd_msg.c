@@ -206,6 +206,8 @@ ASD_MSG* asd_msg_init(SendFunctionPtr send_function,
                 ASD_log(ASD_LogLevel_Error, ASD_LogStream_SDK,
                         ASD_LogOption_None, "Failed to create handlers");
                 asd_msg_free(state);
+                free(state);
+                state = NULL;
             }
             else
             {
@@ -736,7 +738,7 @@ void send_remote_log_message(ASD_LogLevel asd_level, ASD_LogStream asd_stream,
         config_byte.logging_stream =
             instance->asd_cfg->remote_logging.logging_stream;
         struct asd_message msg = {{0}};
-        size_t message_length = strlen(message);
+        size_t message_length = strnlen_s(message, MAX_DATA_SIZE);
 
         // minus 2 for the 2 prefixing bytes.
         if (message_length > (MAX_DATA_SIZE - 2))
@@ -1608,6 +1610,7 @@ STATUS determine_shift_end_state(ASD_MSG* state, ScanType scan_type,
 {
     unsigned char* next_cmd_ptr = NULL;
     unsigned char* next_cmd2_ptr = NULL;
+    unsigned int next_cmd2_counter = 0;
     STATUS status;
 
     if (!state || !packet || !end_state)
@@ -1623,33 +1626,77 @@ STATUS determine_shift_end_state(ASD_MSG* state, ScanType scan_type,
         next_cmd_ptr = get_packet_data(packet, 1);
         if (next_cmd_ptr != NULL)
         {
-            if (state->asd_cfg->jtag.mode == JTAG_DRIVER_MODE_HARDWARE)
-            {
-                // If in hardware mode, we must peek ahead 2
-                // bytes in order to determine the end state
-                next_cmd2_ptr = get_packet_data(packet, 1);
-            }
-
             if (*next_cmd_ptr >= TAP_STATE_MIN &&
                 *next_cmd_ptr <= TAP_STATE_MAX)
             {
-                if (next_cmd2_ptr &&
-                    ((*next_cmd2_ptr & TAP_STATE_MASK) == jtag_pau_dr ||
-                     (*next_cmd2_ptr & TAP_STATE_MASK) == jtag_pau_ir))
+                // Next command is a tap state command
+                *end_state = (enum jtag_states)(*next_cmd_ptr & TAP_STATE_MASK);
+
+                // In hardware mode, we must peek ahead for the next tap state
+                // to determine the end state
+                if (state->asd_cfg->jtag.mode == JTAG_DRIVER_MODE_HARDWARE)
                 {
-                    *end_state =
-                        (enum jtag_states)(*next_cmd2_ptr & TAP_STATE_MASK);
-#ifdef ENABLE_DEBUG_LOGGING
-                    ASD_log(ASD_LogLevel_Debug, ASD_LogStream_SDK,
-                            ASD_LogOption_None, "Staying in state: 0x%02x",
-                            *end_state);
-#endif
+                    next_cmd2_ptr = get_packet_data(packet, 1);
+                    next_cmd2_counter++;
+                    while (packet->used < packet->total)
+                    {
+                        if (next_cmd2_ptr == NULL)
+                            break;
+                        if (*next_cmd2_ptr >= TAP_STATE_MIN &&
+                            *next_cmd2_ptr <= TAP_STATE_MAX)
+                        {
+                            break;
+                        }
+                        else if (*next_cmd2_ptr == WRITE_EVENT_CONFIG ||
+                                 *next_cmd2_ptr == DR_PREFIX ||
+                                 *next_cmd2_ptr == DR_POSTFIX ||
+                                 *next_cmd2_ptr == WAIT_CYCLES_TCK_DISABLE ||
+                                 *next_cmd2_ptr == WAIT_CYCLES_TCK_ENABLE ||
+                                 *next_cmd2_ptr == JTAG_FREQ)
+                        {
+                            next_cmd2_ptr = get_packet_data(packet, 1);
+                            next_cmd2_counter++;
+                            continue;
+                        }
+                        else if (*next_cmd2_ptr == IR_PREFIX ||
+                                 *next_cmd2_ptr == IR_POSTFIX)
+                        {
+                            next_cmd2_ptr = get_packet_data(packet, 2);
+                            next_cmd2_counter = next_cmd2_counter + 2;
+                            continue;
+                        }
+                        else
+                        {
+                            ASD_log(ASD_LogLevel_Warning, ASD_LogStream_SDK,
+                                    ASD_LogOption_None,
+                                    "Not expected Next2 command 0x%x",
+                                    *next_cmd2_ptr);
+                            break;
+                        }
+                    }
                 }
-                else
+
+                if (next_cmd2_ptr)
                 {
-                    // Next command is a tap state command
-                    *end_state =
-                        (enum jtag_states)(*next_cmd_ptr & TAP_STATE_MASK);
+                    if (*next_cmd2_ptr >= TAP_STATE_MIN &&
+                        *next_cmd2_ptr <= TAP_STATE_MAX)
+                    {
+                        if ((*next_cmd2_ptr & TAP_STATE_MASK) == jtag_pau_dr ||
+                            (*next_cmd2_ptr & TAP_STATE_MASK) == jtag_pau_ir)
+                        {
+                            *end_state = (enum jtag_states)(*next_cmd2_ptr &
+                                                            TAP_STATE_MASK);
+#ifdef ENABLE_DEBUG_LOGGING
+                            ASD_log(ASD_LogLevel_Debug, ASD_LogStream_SDK,
+                                    ASD_LogOption_None,
+                                    "Staying in state: 0x%02x", *end_state);
+#endif
+                        }
+                        else if ((*next_cmd2_ptr & TAP_STATE_MASK) == jtag_rti)
+                        {
+                            *end_state = jtag_rti;
+                        }
+                    }
                 }
             }
             else if (scan_type == ScanType_Read &&
@@ -1687,8 +1734,8 @@ STATUS determine_shift_end_state(ASD_MSG* state, ScanType scan_type,
             packet->used--;
             if (next_cmd2_ptr)
             {
-                packet->next_data--; // Un-peek next_cmd2_ptr
-                packet->used--;
+                packet->next_data -= next_cmd2_counter; // Un-peek next_cmd2_ptr
+                packet->used -= next_cmd2_counter;
             }
         }
     }
@@ -2483,7 +2530,9 @@ STATUS process_i2c_messages(ASD_MSG* state, struct asd_message* in_msg)
                     cmd = *data_ptr;
                     if (cmd == I2C_WRITE_CFG_BUS_SELECT)
                     {
-                        status = do_bus_select_command(state, &packet);
+                        // On a failed bus select continue to be able to send
+                        // R/W response back.
+                        do_bus_select_command(state, &packet);
                     }
                     else if (cmd == I2C_WRITE_CFG_SCLK)
                     {

@@ -48,6 +48,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #define GPIO_DIRECTION_OUT_STRING "out"
 #define GPIO_DIRECTION_HIGH_STRING "high"
 #define GPIO_DIRECTION_LOW_STRING "low"
+#define GPIO_LABEL_MAX_SIZE 10
 #define BUFF_SIZE 48
 
 STATUS gpio_export(int gpio, int* gpio_fd)
@@ -60,14 +61,14 @@ STATUS gpio_export(int gpio, int* gpio_fd)
         return ST_ERR;
     ia[0] = gpio;
     sprintf_s(buf, sizeof(buf), "/sys/class/gpio/gpio%d/value", ia, 1);
-    *gpio_fd = open(buf, O_WRONLY);
+    *gpio_fd = open(buf, O_RDWR);
     if (*gpio_fd == -1)
     {
         fd = open("/sys/class/gpio/export", O_WRONLY);
         if (fd >= 0)
         {
             sprintf_s(buf, sizeof(buf), "%d", ia, 1);
-            if (write(fd, buf, strlen(buf)) < 0)
+            if (write(fd, buf, strnlen_s(buf, BUFF_SIZE)) < 0)
             {
                 result = ST_ERR;
             }
@@ -109,7 +110,7 @@ STATUS gpio_unexport(int gpio)
         if (fd >= 0)
         {
             sprintf_s(buf, sizeof(buf), "%d", ia, 1);
-            if (write(fd, buf, strlen(buf)) < 0)
+            if (write(fd, buf, strnlen_s(buf, BUFF_SIZE)) < 0)
             {
                 result = ST_ERR;
             }
@@ -167,14 +168,17 @@ STATUS gpio_set_edge(int gpio, GPIO_EDGE edge)
     if (fd >= 0)
     {
         if (edge == GPIO_EDGE_NONE)
-            write(fd, GPIO_EDGE_NONE_STRING, strlen(GPIO_EDGE_NONE_STRING));
+            write(fd, GPIO_EDGE_NONE_STRING,
+                  strnlen_s(GPIO_EDGE_NONE_STRING, GPIO_LABEL_MAX_SIZE));
         else if (edge == GPIO_EDGE_RISING)
-            write(fd, GPIO_EDGE_RISING_STRING, strlen(GPIO_EDGE_RISING_STRING));
+            write(fd, GPIO_EDGE_RISING_STRING,
+                  strnlen_s(GPIO_EDGE_RISING_STRING, GPIO_LABEL_MAX_SIZE));
         else if (edge == GPIO_EDGE_FALLING)
             write(fd, GPIO_EDGE_FALLING_STRING,
-                  strlen(GPIO_EDGE_FALLING_STRING));
+                  strnlen_s(GPIO_EDGE_FALLING_STRING, GPIO_LABEL_MAX_SIZE));
         else if (edge == GPIO_EDGE_BOTH)
-            write(fd, GPIO_EDGE_BOTH_STRING, strlen(GPIO_EDGE_BOTH_STRING));
+            write(fd, GPIO_EDGE_BOTH_STRING,
+                  strnlen_s(GPIO_EDGE_BOTH_STRING, GPIO_LABEL_MAX_SIZE));
         close(fd);
         result = ST_OK;
     }
@@ -194,16 +198,16 @@ STATUS gpio_set_direction(int gpio, GPIO_DIRECTION direction)
     {
         if (direction == GPIO_DIRECTION_IN)
             write(fd, GPIO_DIRECTION_IN_STRING,
-                  strlen(GPIO_DIRECTION_IN_STRING));
+                  strnlen_s(GPIO_DIRECTION_IN_STRING, GPIO_LABEL_MAX_SIZE));
         else if (direction == GPIO_DIRECTION_OUT)
             write(fd, GPIO_DIRECTION_OUT_STRING,
-                  strlen(GPIO_DIRECTION_OUT_STRING));
+                  strnlen_s(GPIO_DIRECTION_OUT_STRING, GPIO_LABEL_MAX_SIZE));
         else if (direction == GPIO_DIRECTION_HIGH)
             write(fd, GPIO_DIRECTION_HIGH_STRING,
-                  strlen(GPIO_DIRECTION_HIGH_STRING));
+                  strnlen_s(GPIO_DIRECTION_HIGH_STRING, GPIO_LABEL_MAX_SIZE));
         else if (direction == GPIO_DIRECTION_LOW)
             write(fd, GPIO_DIRECTION_LOW_STRING,
-                  strlen(GPIO_DIRECTION_LOW_STRING));
+                  strnlen_s(GPIO_DIRECTION_LOW_STRING, GPIO_LABEL_MAX_SIZE));
         close(fd);
         result = ST_OK;
     }

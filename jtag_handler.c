@@ -459,8 +459,8 @@ STATUS JTAG_shift_hw(JTAG_Handler* state, unsigned int number_of_bits,
     state->active_chain->tap_state = end_tap_state;
 
 #ifdef ENABLE_DEBUG_LOGGING
-    if (padding.pre_pad_number || padding.post_pad_number)
-        ASD_log(ASD_LogLevel_Debug, stream, option, "PadConfig = 0x%x",
+    if (padding.pre_pad_number)
+        ASD_log(ASD_LogLevel_Debug, stream, option, "PrePadConfig = 0x%x",
                 xfer.padding);
     if (input != NULL)
         ASD_log_shift(ASD_LogLevel_Debug, stream, option, number_of_bits,
@@ -472,6 +472,9 @@ STATUS JTAG_shift_hw(JTAG_Handler* state, unsigned int number_of_bits,
                       output_bytes, output,
                       (current_state == jtag_shf_dr) ? "Shift DR TDO"
                                                      : "Shift IR TDO");
+    if (padding.post_pad_number)
+        ASD_log(ASD_LogLevel_Debug, stream, option, "PostPadConfig = 0x%x",
+                xfer.padding);
 #endif
     return ST_OK;
 }
@@ -589,17 +592,18 @@ STATUS JTAG_wait_cycles(JTAG_Handler* state, unsigned int number_of_cycles)
     if (number_of_cycles > MAX_WAIT_CYCLES)
         return ST_ERR;
 
-    if (state->sw_mode)
-    {
-        bitbang.data = state->bitbang_data;
-        bitbang.length = number_of_cycles;
+    // Execute wait cycles in SW and HW mode
+    ASD_log(ASD_LogLevel_Debug, stream, option, "Wait %d cycles",
+            number_of_cycles);
 
-        if (ioctl(state->JTAG_driver_handle, JTAG_IOCBITBANG, &bitbang) < 0)
-        {
-            ASD_log(ASD_LogLevel_Error, stream, option,
-                    "ioctl JTAG_IOCBITBANG failed");
-            return ST_ERR;
-        }
+    bitbang.data = state->bitbang_data;
+    bitbang.length = number_of_cycles;
+
+    if (ioctl(state->JTAG_driver_handle, JTAG_IOCBITBANG, &bitbang) < 0)
+    {
+        ASD_log(ASD_LogLevel_Error, stream, option,
+                "ioctl JTAG_IOCBITBANG failed");
+        return ST_ERR;
     }
 #endif
     return ST_OK;

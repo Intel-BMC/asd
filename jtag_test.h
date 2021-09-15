@@ -58,6 +58,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #define IR_SIG_MASK 0x0FFFFFFF
 #define IR14_SIG1 0x0E7BB013
 #define IR16_SIG1 0x00044113
+#define IR16_SIG2 0x00111113
 
 typedef struct jtag_test_args
 {
@@ -68,6 +69,8 @@ typedef struct jtag_test_args
     unsigned int ir_value;
     unsigned int dr_shift_size;
     bool manual_mode;
+    bool count_mode;
+    bool random_mode;
     int mode;
     unsigned int tck;
     unsigned char tap_data_pattern[8]; // Used for tap data comparison
@@ -113,6 +116,6 @@ bool uncore_discovery(JTAG_Handler* jtag, uncore_info* uncore,
 bool jtag_test(JTAG_Handler* jtag, uncore_info* uncore, jtag_test_args* args);
 
 void print_test_results(uint64_t iterations, uint64_t micro_seconds,
-                        uint64_t total_bits);
+                        uint64_t total_bits, uint64_t failures);
 
 #endif // _JTAG_TEST_H_

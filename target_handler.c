@@ -47,7 +47,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #define JTAG_CLOCK_CYCLE_MILLISECONDS 1000
 #define GPIOD_CONSUMER_LABEL "ASD"
 #define GPIOD_DEV_ROOT_FOLDER "/dev/"
-#define GPIOD_DEV_ROOT_FOLDER_STRLEN strlen(GPIOD_DEV_ROOT_FOLDER)
+#define GPIOD_DEV_ROOT_FOLDER_STRLEN strnlen_s(GPIOD_DEV_ROOT_FOLDER, 6)
 
 static inline void read_pin_value(Target_Control_GPIO gpio, int* value,
                                   STATUS* result)
@@ -108,11 +108,15 @@ static inline void get_pin_events(Target_Control_GPIO gpio, short* events)
 static inline void string_to_enum(char* str, const char* (*enum_strings)[],
                                   int arr_size, int* val)
 {
+    int cmp = 0;
+
     if ((str != NULL) && (enum_strings != NULL) && (val != NULL))
     {
         for (int index = 0; index < arr_size; index++)
         {
-            if (strcmp(str, (*enum_strings)[index]) == 0)
+            strcmp_s(str, TARGET_JSON_MAX_LABEL_SIZE, (*enum_strings)[index],
+                     &cmp);
+            if (cmp == 0)
             {
                 *val = index;
                 return;
@@ -327,14 +331,14 @@ STATUS platform_override_gpio(const Dbus_Handle* dbus, char* interface,
                 case 's':
                     // Copy GPIO name
                     match = 0;
-                    strcmp_s(TARGET_JSON_MAP[i].fname_json, strlen("PinName"),
-                             "PinName", &match);
+                    strcmp_s(TARGET_JSON_MAP[i].fname_json,
+                             TARGET_JSON_MAX_LABEL_SIZE, "PinName", &match);
                     if (match == 0)
                     {
                         // Copy Pin Name from dbus object to
                         memcpy_s((char*)gpio + TARGET_JSON_MAP[i].offset,
                                  MAX_PLATFORM_PATH_SIZE, &rval.str,
-                                 strlen(rval.str));
+                                 strnlen_s(rval.str, MAX_PLATFORM_PATH_SIZE));
                         break;
                     }
                     // Convert strings to enum values and set values
@@ -380,7 +384,7 @@ STATUS platform_init(Target_Control_Handle* state)
                                              interfaces, NUM_GPIOS);
                 for (int i = 0; i < NUM_GPIOS; i++)
                 {
-                    if (strlen(interfaces[i]) != 0)
+                    if (strnlen_s(interfaces[i], MAX_PLATFORM_PATH_SIZE) != 0)
                     {
                         ASD_log(ASD_LogLevel_Info, stream, option,
                                 "interface[%d]: %s - %s", i,
@@ -407,6 +411,7 @@ STATUS platform_init(Target_Control_Handle* state)
 #endif
             result = ST_ERR;
         }
+        free(dbus);
     }
     return result;
 }
@@ -741,12 +746,11 @@ STATUS find_gpio_base(char* gpio_name, int* gpio_base)
     char ch;
 
     *gpio_base = 0;
-    if (memcpy_s(buf, sizeof(buf), AST2500_GPIO_BASE_FILE,
-                 strlen(AST2500_GPIO_BASE_FILE) + 1))
+    if (strcpy_s(buf, CHIP_FNAME_BUFF_SIZE, AST2500_GPIO_BASE_FILE))
     {
 #ifdef ENABLE_DEBUG_LOGGING
         ASD_log(ASD_LogLevel_Debug, stream, option,
-                "memcpy_s: gpio base filename failed");
+                "strcpy_s: gpio base filename failed");
 #endif
         return ST_ERR;
     }
@@ -780,29 +784,72 @@ STATUS find_gpio(char* gpio_name, int* gpio_number)
 {
     STATUS result = ST_OK;
     int gpio_base = 0;
+    int cmp = 0;
+
     result = find_gpio_base(gpio_name, &gpio_base);
     if (result != ST_OK)
         return result;
-    if (strcmp(gpio_name, "TCK_MUX_SEL") == 0)
+
+    strcmp_s(gpio_name, PIN_NAME_MAX_SIZE, "TCK_MUX_SEL", &cmp);
+    if (cmp == 0)
+    {
         *gpio_number = gpio_base + 213;
-    else if (strcmp(gpio_name, "PREQ_N") == 0)
+        return result;
+    }
+    strcmp_s(gpio_name, PIN_NAME_MAX_SIZE, "PREQ_N", &cmp);
+    if (cmp == 0)
+    {
         *gpio_number = gpio_base + 212;
-    else if (strcmp(gpio_name, "PRDY_N") == 0)
+        return result;
+    }
+    strcmp_s(gpio_name, PIN_NAME_MAX_SIZE, "PRDY_N", &cmp);
+    if (cmp == 0)
+    {
         *gpio_number = gpio_base + 47;
-    else if (strcmp(gpio_name, "RSMRST_N") == 0)
+        return result;
+    }
+    strcmp_s(gpio_name, PIN_NAME_MAX_SIZE, "RSMRST_N", &cmp);
+    if (cmp == 0)
+    {
         *gpio_number = gpio_base + 146;
-    else if (strcmp(gpio_name, "SIO_POWER_GOOD") == 0)
+        return result;
+    }
+    strcmp_s(gpio_name, PIN_NAME_MAX_SIZE, "SIO_POWER_GOOD", &cmp);
+    if (cmp == 0)
+    {
         *gpio_number = gpio_base + 201;
-    else if (strcmp(gpio_name, "PLTRST_N") == 0)
+        return result;
+    }
+    strcmp_s(gpio_name, PIN_NAME_MAX_SIZE, "PLTRST_N", &cmp);
+    if (cmp == 0)
+    {
         *gpio_number = gpio_base + 46;
-    else if (strcmp(gpio_name, "SYSPWROK") == 0)
+        return result;
+    }
+    strcmp_s(gpio_name, PIN_NAME_MAX_SIZE, "SYSPWROK", &cmp);
+    if (cmp == 0)
+    {
         *gpio_number = gpio_base + 145;
-    else if (strcmp(gpio_name, "PWR_DEBUG_N") == 0)
+        return result;
+    }
+    strcmp_s(gpio_name, PIN_NAME_MAX_SIZE, "PWR_DEBUG_N", &cmp);
+    if (cmp == 0)
+    {
         *gpio_number = gpio_base + 135;
-    else if (strcmp(gpio_name, "DEBUG_EN_N") == 0)
+        return result;
+    }
+    strcmp_s(gpio_name, PIN_NAME_MAX_SIZE, "DEBUG_EN_N", &cmp);
+    if (cmp == 0)
+    {
         *gpio_number = gpio_base + 37;
-    else if (strcmp(gpio_name, "XDP_PRST_N") == 0)
+        return result;
+    }
+    strcmp_s(gpio_name, PIN_NAME_MAX_SIZE, "XDP_PRST_N", &cmp);
+    if (cmp == 0)
+    {
         *gpio_number = gpio_base + 137;
+        return result;
+    }
     else
         result = ST_ERR;
 
@@ -829,7 +876,12 @@ STATUS target_deinitialize(Target_Control_Handle* state)
     }
 #endif
 
-    dbus_deinitialize(state->dbus);
+    if (state->dbus != NULL)
+    {
+        dbus_deinitialize(state->dbus);
+        free(state->dbus);
+        state->dbus = NULL;
+    }
 
     return deinitialize_gpios(state);
 }

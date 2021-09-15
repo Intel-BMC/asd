@@ -30,13 +30,18 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "config.h"
 
+#include "dbus_helper.h"
+
 #define UNINITIALIZED_I3C_DRIVER_HANDLE -1
-#define i3C_MAX_DEV_HANDLERS 8
+#define UNINITIALIZED_I3C_BUS_TOKEN -1
+#define i3C_MAX_DEV_HANDLERS 16
 
 typedef struct I3C_Handler
 {
     uint8_t i3c_bus;
     bus_config* config;
+    Dbus_Handle* dbus;
+    int bus_token;
     int i3c_driver_handlers[i3C_MAX_DEV_HANDLERS];
 } I3C_Handler;
 

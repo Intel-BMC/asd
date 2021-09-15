@@ -84,6 +84,13 @@ I3C_Handler* I3CHandler(bus_config* config)
         for (int i = 0; i < i3C_MAX_DEV_HANDLERS; i++)
             state->i3c_driver_handlers[i] = UNINITIALIZED_I3C_DRIVER_HANDLE;
         state->config = config;
+        state->bus_token = UNINITIALIZED_I3C_BUS_TOKEN;
+        state->dbus = dbus_helper();
+        if (state->dbus == NULL)
+        {
+            free(state);
+            state = NULL;
+        }
     }
 
     return state;
@@ -91,29 +98,77 @@ I3C_Handler* I3CHandler(bus_config* config)
 
 STATUS i3c_initialize(I3C_Handler* state)
 {
+    STATUS status = ST_ERR;
     if (state != NULL && i3c_enabled(state))
     {
+        status = dbus_initialize(state->dbus);
+        if (status == ST_OK)
+        {
+            state->dbus->fd = sd_bus_get_fd(state->dbus->bus);
+            if (state->dbus->fd < 0)
+            {
+                ASD_log(ASD_LogLevel_Error, stream, option,
+                        "sd_bus_get_fd failed");
+                status = ST_ERR;
+            }
+        }
+        else
+        {
+            ASD_log(ASD_LogLevel_Error, stream, option,
+                    "Failed to init i3c dbus handler");
+        }
         state->i3c_bus = I3C_BUS_ADDRESS_RESERVED;
-        return ST_OK;
     }
-    return ST_ERR;
+    return status;
 }
 
 STATUS i3c_deinitialize(I3C_Handler* state)
 {
+    STATUS status = ST_OK;
+
     if (state == NULL)
         return ST_ERR;
+
     i3c_close_device_drivers(state);
+
+    // Release I3C BMC ownership at ASD exit
+    if (state->bus_token != UNINITIALIZED_I3C_BUS_TOKEN)
+    {
+        status = dbus_rel_i3c_ownership(state->dbus, state->bus_token);
+        if (status == ST_OK)
+        {
+            ASD_log(ASD_LogLevel_Debug, ASD_LogStream_I2C, ASD_LogOption_None,
+                    "Release BMC i3c bus ownership succeed");
+
+            state->bus_token = UNINITIALIZED_I3C_BUS_TOKEN;
+        }
+        else
+        {
+            ASD_log(ASD_LogLevel_Error, ASD_LogStream_I2C, ASD_LogOption_None,
+                    "Release BMC i3c bus ownership failed");
+        }
+    }
+
+    if (state->dbus != NULL)
+    {
+        dbus_deinitialize(state->dbus);
+        free(state->dbus);
+        state->dbus = NULL;
+    }
     state = NULL;
-    return ST_OK;
+    return status;
 }
 
-STATUS i3c_bus_flock(I3C_Handler* state, uint8_t bus, int op)
+STATUS i3c_bus_flock_dev_handlers(I3C_Handler* state, uint8_t bus, int op)
 {
     STATUS status = ST_OK;
     ASD_log(ASD_LogLevel_Debug, ASD_LogStream_I2C, ASD_LogOption_None,
             "i3c - bus %d %s", bus, op == LOCK_EX ? "LOCK" : "UNLOCK");
-    if (state != NULL && state->i3c_bus == I3C_BUS_ADDRESS_RESERVED)
+
+    if (state == NULL)
+        return ST_ERR;
+
+    if (state->i3c_bus == I3C_BUS_ADDRESS_RESERVED)
     {
         status = i3c_bus_select(state, bus);
     }
@@ -121,16 +176,101 @@ STATUS i3c_bus_flock(I3C_Handler* state, uint8_t bus, int op)
     {
         for (int i = 0; i < i3C_MAX_DEV_HANDLERS; i++)
         {
+            if (state->i3c_driver_handlers[i] ==
+                UNINITIALIZED_I3C_DRIVER_HANDLE)
+                continue;
+
             if (flock(state->i3c_driver_handlers[i], op) != 0)
             {
                 ASD_log(ASD_LogLevel_Error, ASD_LogStream_I2C,
                         ASD_LogOption_None,
-                        "i3c flock for bus %d failed dev %d handler = 0x%x",
+                        "i3c flock for bus %d failed dev %x handler = 0x%x",
                         bus, i, state->i3c_driver_handlers[i]);
                 status = ST_ERR;
-                break;
             }
         }
+    }
+    return status;
+}
+
+STATUS i3c_bus_flock(I3C_Handler* state, uint8_t bus, int op)
+{
+    STATUS status = ST_OK;
+    I3c_Ownership owner = CPU_OWNER;
+
+    ASD_log(ASD_LogLevel_Debug, ASD_LogStream_I2C, ASD_LogOption_None,
+            "i3c - bus %d %s", bus, op == LOCK_EX ? "LOCK" : "UNLOCK");
+
+    if (state == NULL || state->dbus == NULL)
+        return ST_ERR;
+
+    // Request I3C BMC ownership on the first xfer attempt
+    if (state->bus_token == UNINITIALIZED_I3C_BUS_TOKEN)
+    {
+        ASD_log(ASD_LogLevel_Debug, ASD_LogStream_I2C, ASD_LogOption_None,
+                "Request i3c bus ownership");
+
+        status = dbus_req_i3c_ownership(state->dbus, &state->bus_token);
+        if (status == ST_OK)
+        {
+            ASD_log(ASD_LogLevel_Debug, ASD_LogStream_I2C, ASD_LogOption_None,
+                    "Request i3c bus ownership succeed token: %d",
+                    state->bus_token);
+            // Wait 1s for system to bind the driver and create dev handlers
+            usleep(1000000);
+            status = i3c_open_device_drivers(state, bus);
+            if (status != ST_OK)
+            {
+                ASD_log(ASD_LogLevel_Error, ASD_LogStream_I2C,
+                        ASD_LogOption_None, "Open i3c device drivers failed");
+                status = dbus_rel_i3c_ownership(state->dbus, state->bus_token);
+                if (status == ST_OK)
+                {
+                    ASD_log(ASD_LogLevel_Debug, ASD_LogStream_I2C,
+                            ASD_LogOption_None,
+                            "Release BMC i3c bus ownership succeed");
+                }
+                state->bus_token = UNINITIALIZED_I3C_BUS_TOKEN;
+                return ST_ERR;
+            }
+        }
+        else
+        {
+            ASD_log(ASD_LogLevel_Error, ASD_LogStream_I2C, ASD_LogOption_None,
+                    "Request i3c bus ownership failed");
+            return status;
+        }
+    }
+
+    // Read configuration from dbus
+    status = dbus_read_i3c_ownership(state->dbus, &owner);
+    if (status == ST_OK)
+    {
+        ASD_log(ASD_LogLevel_Debug, ASD_LogStream_I2C, ASD_LogOption_None,
+                "i3c ownership %s", owner == CPU_OWNER ? "CPU" : "BMC");
+        if (owner == BMC_OWNER)
+        {
+            status = i3c_bus_flock_dev_handlers(state, bus, op);
+            if (status != ST_OK)
+            {
+                // If lock fail, unlock all files
+                if (op == LOCK_EX)
+                {
+                    i3c_bus_flock_dev_handlers(state, bus, LOCK_UN);
+                }
+            }
+        }
+        else
+        {
+            ASD_log(ASD_LogLevel_Error, ASD_LogStream_I2C, ASD_LogOption_None,
+                    "BMC does not have i3c bus ownership");
+            return ST_ERR;
+        }
+    }
+    else
+    {
+        ASD_log(ASD_LogLevel_Error, ASD_LogStream_I2C, ASD_LogOption_None,
+                "Fail to read i3c bus ownership from dbus");
     }
     return status;
 }
@@ -169,36 +309,72 @@ STATUS i3c_set_sclk(I3C_Handler* state, uint16_t sclk)
 
 STATUS i3c_read_write(I3C_Handler* state, void* msg_set)
 {
+    STATUS status = ST_OK;
     if (state == NULL || msg_set == NULL || !i3c_enabled(state))
         return ST_ERR;
 
     // Convert i2c packet to i3c request format
     struct i2c_rdwr_ioctl_data* ioctl_data = msg_set;
     struct i3c_ioc_priv_xfer* xfers;
+    int handle = UNINITIALIZED_I3C_DRIVER_HANDLE;
+    int addr = UNINITIALIZED_I3C_DRIVER_HANDLE;
     xfers =
         (struct i3c_ioc_priv_xfer*)calloc(ioctl_data->nmsgs, sizeof(*xfers));
+
+    if (xfers == NULL)
+    {
+        ASD_log(ASD_LogLevel_Error, stream, option,
+                "I3C_RDWR memory allocation failed");
+        return ST_ERR;
+    }
 
     for (int i = 0; i < ioctl_data->nmsgs; i++)
     {
         xfers[i].len = ioctl_data->msgs[i].len;
         xfers[i].data = ioctl_data->msgs[i].buf;
         xfers[i].rnw = (ioctl_data->msgs[i].flags & I2C_M_RD) ? 1 : 0;
+        if (handle == UNINITIALIZED_I3C_DRIVER_HANDLE)
+        {
+            addr = ioctl_data->msgs[i].addr;
+            if (addr >= 0 && addr < i3C_MAX_DEV_HANDLERS)
+            {
+                handle = state->i3c_driver_handlers[addr];
+                ASD_log(ASD_LogLevel_Debug, stream, option,
+                        "I3C_RDWR ioctl addr 0x%x handle %d len %d rnw %d",
+                        addr, handle, xfers[i].len, xfers[i].rnw);
+                ASD_log_buffer(ASD_LogLevel_Debug, stream, option,
+                               xfers[i].data, xfers[i].len, "I3cBuf");
+            }
+            else
+            {
+                ASD_log(ASD_LogLevel_Error, stream, option,
+                        "I3C_RDWR wrong addr %d", addr);
+            }
+        }
     }
 
-    int ret = ioctl(state->i3c_driver_handlers[0],
-                    I3C_IOC_PRIV_XFER(ioctl_data->nmsgs), xfers);
-
-    if (ret < 0)
+    if (handle != UNINITIALIZED_I3C_DRIVER_HANDLE)
     {
-#ifdef ENABLE_DEBUG_LOGGING
-        ASD_log(ASD_LogLevel_Debug, stream, option,
-                "I3C_RDWR ioctl returned %d - %d - %s", ret, errno,
-                strerror(errno));
-#endif
-        return ST_ERR;
+        int ret = ioctl(handle, I3C_IOC_PRIV_XFER(ioctl_data->nmsgs), xfers);
+        if (ret < 0)
+        {
+            ASD_log(ASD_LogLevel_Error, stream, option,
+                    "I3C_RDWR ioctl returned %d - %d - %s", ret, errno,
+                    strerror(errno));
+            status = ST_ERR;
+        }
+    }
+    else
+    {
+        ASD_log(ASD_LogLevel_Error, stream, option,
+                "I3C_RDWR invalid handle for addr %x", addr);
+        status = ST_ERR;
     }
 
-    return ST_OK;
+    if (xfers)
+        free(xfers);
+
+    return status;
 }
 
 static bool i3c_enabled(I3C_Handler* state)
@@ -216,39 +392,47 @@ static STATUS i3c_open_device_drivers(I3C_Handler* state, uint8_t bus)
     if (status != ST_OK)
     {
         ASD_log(ASD_LogLevel_Error, stream, option,
-                "could not find i3c bus %d dev name", bus);
-        return ST_ERR;
+                "Could not find i3c bus %d dev name", bus);
+        return status;
     }
+
+    status = ST_ERR;
     for (int i = 0; i < i3C_MAX_DEV_HANDLERS; i++)
     {
-        snprintf(i3c_dev, sizeof(i3c_dev), "/dev/%s-3c00000000%d", i3c_dev_name,
+        snprintf(i3c_dev, sizeof(i3c_dev), "/dev/%s-3c00000000%x", i3c_dev_name,
                  i);
         state->i3c_driver_handlers[i] = open(i3c_dev, O_RDWR);
-        if (state->i3c_driver_handlers[i] == UNINITIALIZED_I3C_DRIVER_HANDLE)
+        if (state->i3c_driver_handlers[i] != UNINITIALIZED_I3C_DRIVER_HANDLE)
         {
-            ASD_log(ASD_LogLevel_Error, stream, option, "Can't open %s",
-                    i3c_dev);
-            i3c_close_device_drivers(state);
-            return ST_ERR;
+            ASD_log(ASD_LogLevel_Debug, stream, option,
+                    "open device driver %s for bus %d handle %d", i3c_dev, bus,
+                    state->i3c_driver_handlers[i]);
+            status = ST_OK;
         }
-        ASD_log(ASD_LogLevel_Debug, stream, option,
-                "open device driver %s for bus %d", i3c_dev, bus);
+        else
+        {
+            ASD_log(ASD_LogLevel_Debug, stream, option, "Can't open %s",
+                    i3c_dev);
+        }
+    }
+
+    if (status == ST_OK)
+    {
         state->i3c_bus = bus;
         state->config->default_bus = bus;
     }
-    return ST_OK;
+    return status;
 }
 
 static void i3c_close_device_drivers(I3C_Handler* state)
 {
-
     for (int i = 0; i < i3C_MAX_DEV_HANDLERS; i++)
     {
         if (state->i3c_driver_handlers[i] != UNINITIALIZED_I3C_DRIVER_HANDLE)
         {
             close(state->i3c_driver_handlers[i]);
             ASD_log(ASD_LogLevel_Debug, stream, option,
-                    "closing dev handler %d", i);
+                    "closing dev handler %x", i);
             state->i3c_driver_handlers[i] = UNINITIALIZED_I3C_DRIVER_HANDLE;
         }
     }
@@ -293,7 +477,8 @@ static STATUS i3c_get_dev_name(I3C_Handler* state, uint8_t bus, uint8_t* dev)
         }
         else
         {
-            ASD_log(ASD_LogLevel_Debug, stream, option, "Found dev %s", dev);
+            ASD_log(ASD_LogLevel_Debug, stream, option, "Found dev %s on %s",
+                    dev, i3c_bus_drv);
             close(dev_handle);
             status = ST_OK;
             break;

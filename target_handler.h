@@ -51,6 +51,9 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #define CHIP_FNAME_BUFF_SIZE 48
 #endif
 
+#define TARGET_JSON_MAX_LABEL_SIZE 50
+#define PIN_NAME_MAX_SIZE 40
+
 // Use this macro to override the i2c/i3c bus configuration described on the
 // entity manager ASD dbus object.
 //#define PLATFORM_IxC_LOCAL_CONFIG

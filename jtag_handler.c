@@ -517,6 +517,7 @@ STATUS perform_shift(JTAG_Handler* state, unsigned int number_of_bits,
         (current_tap_state == jtag_shf_ir) ? JTAG_SIR_XFER : JTAG_SDR_XFER;
     xfer.length = number_of_bits;
     xfer.direction = JTAG_READ_WRITE_XFER;
+    xfer.padding = 0;
 
     if (output != NULL)
     {

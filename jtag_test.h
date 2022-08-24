@@ -56,9 +56,6 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #define DEFAULT_LOG_STREAMS ASD_LogStream_Test
 
 #define IR_SIG_MASK 0x0FFFFFFF
-#define IR14_SIG1 0x0E7BB013
-#define IR16_SIG1 0x00044113
-#define IR16_SIG2 0x00111113
 
 typedef struct jtag_test_args
 {
@@ -83,6 +80,12 @@ typedef struct uncore_info
     unsigned int idcode[MAX_TAPS_SUPPORTED];
     unsigned int numUncores;
 } uncore_info;
+
+typedef struct ir_shift_size_map
+{
+    unsigned int signature;
+    unsigned int ir_shift_size;
+} ir_shift_size_map;
 
 extern bool continue_loop;
 

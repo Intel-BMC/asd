@@ -55,6 +55,7 @@ static const ASD_LogStream stream = ASD_LogStream_I2C;
 static const ASD_LogOption option = ASD_LogOption_None;
 
 static bool i3c_enabled(I3C_Handler* state);
+static bool i3c_device_drivers_opened(I3C_Handler* state);
 static STATUS i3c_open_device_drivers(I3C_Handler* state, uint8_t bus);
 static void i3c_close_device_drivers(I3C_Handler* state);
 static bool i3c_bus_allowed(I3C_Handler* state, uint8_t bus);
@@ -282,7 +283,16 @@ STATUS i3c_bus_select(I3C_Handler* state, uint8_t bus)
     {
         if (bus == state->i3c_bus)
         {
-            status = ST_OK;
+            if (i3c_device_drivers_opened(state))
+            {
+                status = ST_OK;
+            }
+            else
+            {
+                ASD_log(ASD_LogLevel_Error, stream, option, "Selecting Bus %d",
+                        bus);
+                status = i3c_open_device_drivers(state, bus);
+            }
         }
         else if (i3c_bus_allowed(state, bus))
         {
@@ -290,6 +300,10 @@ STATUS i3c_bus_select(I3C_Handler* state, uint8_t bus)
             ASD_log(ASD_LogLevel_Error, stream, option, "Selecting Bus %d",
                     bus);
             status = i3c_open_device_drivers(state, bus);
+            if (status == ST_OK)
+            {
+                state->config->default_bus = bus;
+            }
         }
         else
         {
@@ -382,6 +396,18 @@ static bool i3c_enabled(I3C_Handler* state)
     return state->config->enable_i3c;
 }
 
+static bool i3c_device_drivers_opened(I3C_Handler* state)
+{
+    for (int i = 0; i < i3C_MAX_DEV_HANDLERS; i++)
+    {
+        if (state->i3c_driver_handlers[i] != UNINITIALIZED_I3C_DRIVER_HANDLE)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
 static STATUS i3c_open_device_drivers(I3C_Handler* state, uint8_t bus)
 {
     STATUS status = ST_ERR;
@@ -416,11 +442,8 @@ static STATUS i3c_open_device_drivers(I3C_Handler* state, uint8_t bus)
         }
     }
 
-    if (status == ST_OK)
-    {
-        state->i3c_bus = bus;
-        state->config->default_bus = bus;
-    }
+    state->i3c_bus = bus;
+
     return status;
 }
 

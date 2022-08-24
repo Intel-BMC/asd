@@ -42,6 +42,7 @@ typedef struct I2C_Handler
 I2C_Handler* I2CHandler(bus_config* config);
 STATUS i2c_initialize(I2C_Handler* state);
 STATUS i2c_deinitialize(I2C_Handler* state);
+STATUS i2c_bus_flock(I2C_Handler* state, uint8_t bus, int op);
 STATUS i2c_bus_select(I2C_Handler* state, uint8_t bus);
 STATUS i2c_set_sclk(I2C_Handler* state, uint16_t sclk);
 STATUS i2c_read_write(I2C_Handler* state, void* msg_set);

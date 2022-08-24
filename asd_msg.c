@@ -579,20 +579,38 @@ STATUS asd_msg_on_msg_recv(ASD_MSG* state)
             case LOOPBACK_CMD:
                 ASD_log(ASD_LogLevel_Trace, ASD_LogStream_Network,
                         ASD_LogOption_None, "LOOPBACK MODE.");
-                uint16_t delay = (msg->buffer[0]) + (msg->buffer[0] << 8);
+                uint16_t delay = (msg->buffer[0]);
                 uint16_t size =
                     (msg->header.size_lsb) + (msg->header.size_msb << 8);
+                uint32_t crc_data_calc = 0;
+                uint32_t read_crc = 0;
                 if (size > MAX_DATA_SIZE)
                 {
                     size = MAX_DATA_SIZE;
                 }
+                ASD_log(ASD_LogLevel_Trace, ASD_LogStream_Network,
+                        ASD_LogOption_None, "size: %d, delay: %d.",
+                        size, delay);
                 msg_out->header = msg->header;
                 for (uint16_t index = 0; index < size; index++)
                 {
                     msg_out->buffer[index] = msg->buffer[index];
+                    if (index > 4)
+                    {
+                        crc_data_calc ^= (msg_out->buffer[index] & 0xff);
+                    }
                 }
-                // We convert from microseconds to milliseconds.
-                usleep((__useconds_t)(delay * 1000));
+                read_crc = ((msg_out->buffer[1] << 24) & 0xff) |
+                    ((msg_out->buffer[2] << 16) & 0xff) |
+                    ((msg_out->buffer[3] << 8) & 0xff) |
+                    ((msg_out->buffer[4]) & 0xff);
+                ASD_log(ASD_LogLevel_Trace, ASD_LogStream_Network,
+                        ASD_LogOption_None,
+                        "CRC in payload: 0x%x, CRC calulated: 0x%x.",
+                        crc_data_calc, read_crc);
+                //suspend execution for microsecond intervales
+                // valid delays will be from 1 to 255. (1ms to 255ms)
+                usleep(delay*1000);
                 break;
             default:
             {
@@ -2530,9 +2548,26 @@ STATUS process_i2c_messages(ASD_MSG* state, struct asd_message* in_msg)
                     cmd = *data_ptr;
                     if (cmd == I2C_WRITE_CFG_BUS_SELECT)
                     {
-                        // On a failed bus select continue to be able to send
-                        // R/W response back.
-                        do_bus_select_command(state, &packet);
+                        status = do_bus_select_command(state, &packet);
+                        if (status != ST_OK)
+                        {
+                            state->out_msg.header.size_lsb =
+                                (uint32_t)(response_cnt & 0xFF);
+                            state->out_msg.header.size_msb =
+                                (uint32_t)((response_cnt >> 8) & 0x1F);
+                            state->out_msg.header.cmd_stat =
+                                ASD_FAILURE_PROCESS_I2C_MSG;
+                            status = send_response(state, &state->out_msg);
+                            if (status != ST_OK)
+                            {
+                                ASD_log(ASD_LogLevel_Error |
+                                            ASD_LogOption_No_Remote,
+                                        ASD_LogStream_I2C, ASD_LogOption_None,
+                                        "Failed to send error message back on "
+                                        "the socket - process_i2c_message");
+                            }
+                            continue;
+                        }
                     }
                     else if (cmd == I2C_WRITE_CFG_SCLK)
                     {

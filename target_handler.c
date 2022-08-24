@@ -49,47 +49,6 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #define GPIOD_DEV_ROOT_FOLDER "/dev/"
 #define GPIOD_DEV_ROOT_FOLDER_STRLEN strnlen_s(GPIOD_DEV_ROOT_FOLDER, 6)
 
-static inline void read_pin_value(Target_Control_GPIO gpio, int* value,
-                                  STATUS* result)
-{
-#ifdef GPIO_SYSFS_SUPPORT_DEPRECATED
-    if (gpio.type == PIN_GPIO)
-    {
-        *result = gpio_get_value(gpio.fd, value);
-    }
-    else
-#endif
-        if (gpio.type == PIN_GPIOD)
-    {
-        *value = gpiod_line_get_value(gpio.line);
-        if (*value == -1)
-            *result = ST_ERR;
-        else
-            *result = ST_OK;
-    }
-}
-
-static inline void write_pin_value(Target_Control_GPIO gpio, int value,
-                                   STATUS* result)
-{
-    int rv = 0;
-#ifdef GPIO_SYSFS_SUPPORT_DEPRECATED
-    if (gpio.type == PIN_GPIO)
-    {
-        *result = gpio_set_value(gpio.fd, value);
-    }
-    else
-#endif
-        if (gpio.type == PIN_GPIOD)
-    {
-        rv = gpiod_line_set_value(gpio.line, value);
-        if (rv == 0)
-            *result = ST_OK;
-        else
-            *result = ST_ERR;
-    }
-}
-
 static inline void get_pin_events(Target_Control_GPIO gpio, short* events)
 {
 #ifdef GPIO_SYSFS_SUPPORT_DEPRECATED
@@ -142,6 +101,159 @@ STATUS platform_init(Target_Control_Handle* state);
 static const ASD_LogStream stream = ASD_LogStream_Pins;
 static const ASD_LogOption option = ASD_LogOption_None;
 
+#ifdef GPIO_SYSFS_SUPPORT_DEPRECATED
+static STATUS read_gpio_pin(struct Target_Control_Handle * state, int gpio_index, int* value)
+{
+    STATUS result = ST_ERR;
+    if (state != NULL && value != NULL)
+    {
+        Target_Control_GPIO gpio = state->gpios[gpio_index];
+        if (gpio.type == PIN_GPIO)
+        {
+            result = gpio_get_value(gpio.fd, value);
+        }
+        ASD_log(ASD_LogLevel_Debug, stream, option, "read_gpio_pin %d", *value);
+    }
+    return result;
+}
+#endif
+
+static STATUS read_gpiod_pin(struct Target_Control_Handle * state, int gpio_index, int* value)
+{
+    STATUS result = ST_ERR;
+    if (state != NULL && value != NULL)
+    {
+        Target_Control_GPIO gpio = state->gpios[gpio_index];
+        if (gpio.type == PIN_GPIOD)
+        {
+            *value = gpiod_line_get_value(gpio.line);
+            if (*value == -1)
+                result = ST_ERR;
+            else
+                result = ST_OK;
+        }
+        ASD_log(ASD_LogLevel_Debug, stream, option, "read_gpiod_pin %d", *value);
+    }
+    return result;
+}
+
+static STATUS read_pin_none(struct Target_Control_Handle * state, int gpio_index, int* value)
+{
+    STATUS result = ST_ERR;
+    if (value != NULL)
+    {
+        *value = 0;
+        ASD_log(ASD_LogLevel_Debug, stream, option, "read_pin_none %d", *value);
+    }
+    return ST_OK;
+}
+
+static STATUS read_dbus_pwrgood_pin(struct Target_Control_Handle * state, int gpio_index, int* value)
+{
+    STATUS result = ST_ERR;
+    if (state != NULL && value != NULL)
+    {
+        result = dbus_get_powerstate(state->dbus, value);
+        if (result != ST_OK)
+        {
+            ASD_log(ASD_LogLevel_Error, stream, option, "failed to read powerstate from dbus");
+            // If asd cannot read power status from dbus assume it is on
+            *value = 1;
+            result = ST_OK;
+        }
+        ASD_log(ASD_LogLevel_Debug, stream, option, "read_dbus_pwrgood_pin %d", *value);
+    }
+    return result;
+}
+
+#ifdef GPIO_SYSFS_SUPPORT_DEPRECATED
+static STATUS write_gpio_pin(struct Target_Control_Handle * state, int gpio_index, int value)
+{
+    STATUS result = ST_ERR;
+    if (state != NULL)
+    {
+        Target_Control_GPIO gpio = state->gpios[gpio_index];
+        if (gpio.type == PIN_GPIO)
+        {
+            result = gpio_set_value(gpio.fd, value);
+        }
+        ASD_log(ASD_LogLevel_Debug, stream, option, "write_gpio_pin %d %s",
+                value, result == ST_OK ? "ST_OK" : "ST_ERR");
+    }
+    return result;
+}
+#endif
+
+static STATUS write_gpiod_pin(struct Target_Control_Handle * state, int gpio_index, int value)
+{
+    STATUS result = ST_ERR;
+    int rv = 0;
+    if (state != NULL)
+    {
+        Target_Control_GPIO gpio = state->gpios[gpio_index];
+        if (gpio.type == PIN_GPIOD)
+        {
+            rv = gpiod_line_set_value(gpio.line, value);
+            if (rv == 0)
+                result = ST_OK;
+            else
+                result = ST_ERR;
+        }
+        ASD_log(ASD_LogLevel_Debug, stream, option, "write_gpiod_pin %d %s",
+                value, result == ST_OK ? "ST_OK" : "ST_ERR");
+    }
+    return result;
+}
+
+static STATUS write_pin_none(struct Target_Control_Handle * state, int gpio_index, int value)
+{
+    ASD_log(ASD_LogLevel_Debug, stream, option, "write_pin_none");
+    return ST_OK;
+}
+
+static STATUS write_dbus_power_button(struct Target_Control_Handle * state, int gpio_index, int value)
+{
+    STATUS result = ST_OK;
+    ASD_log(ASD_LogLevel_Debug, stream, option, "write_dbus_power_button %d", value);
+    if (state != NULL)
+    {
+        if (value)
+        {
+            int powerstate = 0;
+            Target_Control_GPIO gpio_pwrgood = state->gpios[BMC_CPU_PWRGD];
+            result = gpio_pwrgood.read(state, BMC_CPU_PWRGD, &powerstate);
+            if (powerstate)
+            {
+                result = dbus_power_off(state->dbus);
+                ASD_log(ASD_LogLevel_Info, stream, option, "dbus_power_off");
+            }
+            else
+            {
+                result = dbus_power_on(state->dbus);
+                ASD_log(ASD_LogLevel_Info, stream, option, "dbus_power_on");
+            }
+        }
+    }
+    return result;
+}
+
+static STATUS write_dbus_reset(struct Target_Control_Handle * state, int gpio_index, int value)
+{
+    STATUS result = ST_ERR;
+    ASD_log(ASD_LogLevel_Debug, stream, option, "write_dbus_reset %d", value);
+    if (state != NULL)
+    {
+        if (value)
+        {
+            ASD_log(ASD_LogLevel_Info, stream, option, "dbus_power_reset");
+            result = dbus_power_reset(state->dbus);
+        }
+        else
+            result = ST_OK;
+    }
+    return result;
+}
+
 Target_Control_Handle* TargetHandler()
 {
     Target_Control_Handle* state =
@@ -153,8 +265,8 @@ Target_Control_Handle* TargetHandler()
     state->dbus = dbus_helper();
     if (state->dbus == NULL)
     {
-        free(state);
-        return NULL;
+        // Continue with target handler creation even without dbus
+        ASD_log(ASD_LogLevel_Error, stream, option, "dbus cannot be allocated");
     }
 
     state->initialized = false;
@@ -167,6 +279,8 @@ Target_Control_Handle* TargetHandler()
         state->gpios[i].fd = -1;
         state->gpios[i].line = NULL;
         state->gpios[i].chip = NULL;
+        state->gpios[i].read = NULL;
+        state->gpios[i].write = NULL;
         state->gpios[i].handler = NULL;
         state->gpios[i].active_low = false;
         state->gpios[i].type = PIN_GPIOD;
@@ -193,6 +307,7 @@ Target_Control_Handle* TargetHandler()
     state->gpios[BMC_PRDY_N].direction = GPIO_DIRECTION_IN;
     state->gpios[BMC_PRDY_N].edge = GPIO_EDGE_FALLING;
     state->gpios[BMC_PRDY_N].active_low = true;
+    state->gpios[BMC_PRDY_N].handler = on_prdy_event;
 
     strcpy_s(state->gpios[BMC_RSMRST_B].name,
              sizeof(state->gpios[BMC_RSMRST_B].name), "RSMRST_N");
@@ -204,12 +319,15 @@ Target_Control_Handle* TargetHandler()
     state->gpios[BMC_CPU_PWRGD].direction = GPIO_DIRECTION_IN;
     state->gpios[BMC_CPU_PWRGD].edge = GPIO_EDGE_BOTH;
     state->gpios[BMC_CPU_PWRGD].type = PIN_DBUS;
+    state->gpios[BMC_CPU_PWRGD].read = read_dbus_pwrgood_pin;
+    state->gpios[BMC_CPU_PWRGD].handler = on_power_event;
 
     strcpy_s(state->gpios[BMC_PLTRST_B].name,
              sizeof(state->gpios[BMC_PLTRST_B].name), "PLTRST_N");
     state->gpios[BMC_PLTRST_B].direction = GPIO_DIRECTION_IN;
     state->gpios[BMC_PLTRST_B].edge = GPIO_EDGE_BOTH;
     state->gpios[BMC_PLTRST_B].active_low = true;
+    state->gpios[BMC_PLTRST_B].handler = on_platform_reset_event;
 
     strcpy_s(state->gpios[BMC_SYSPWROK].name,
              sizeof(state->gpios[BMC_SYSPWROK].name), "SYSPWROK");
@@ -234,8 +352,67 @@ Target_Control_Handle* TargetHandler()
     state->gpios[BMC_XDP_PRST_IN].direction = GPIO_DIRECTION_IN;
     state->gpios[BMC_XDP_PRST_IN].active_low = true;
     state->gpios[BMC_XDP_PRST_IN].edge = GPIO_EDGE_BOTH;
+    state->gpios[BMC_XDP_PRST_IN].handler = on_xdp_present_event;
+
+    strcpy_s(state->gpios[POWER_BTN].name,
+             sizeof(state->gpios[POWER_BTN].name), "POWER_BTN");
+    state->gpios[POWER_BTN].direction = GPIO_DIRECTION_HIGH;
+    state->gpios[POWER_BTN].edge = GPIO_EDGE_NONE;
+    state->gpios[POWER_BTN].active_low = true;
+    state->gpios[POWER_BTN].type = PIN_DBUS;
+    state->gpios[POWER_BTN].write = write_dbus_power_button;
+
+    strcpy_s(state->gpios[RESET_BTN].name,
+             sizeof(state->gpios[RESET_BTN].name), "RESET_BTN");
+    state->gpios[RESET_BTN].direction = GPIO_DIRECTION_HIGH;
+    state->gpios[RESET_BTN].edge = GPIO_EDGE_NONE;
+    state->gpios[RESET_BTN].active_low = true;
+    state->gpios[RESET_BTN].type = PIN_DBUS;
+    state->gpios[RESET_BTN].write = write_dbus_reset;
+
+    strcpy_s(state->gpios[BMC_PWRGD2].name,
+             sizeof(state->gpios[BMC_PWRGD2].name), "BMC_PWRGD2");
+    state->gpios[BMC_PWRGD2].direction = GPIO_DIRECTION_IN;
+    state->gpios[BMC_PWRGD2].edge = GPIO_EDGE_BOTH;
+    state->gpios[BMC_PWRGD2].handler = on_power2_event;
+
+    strcpy_s(state->gpios[BMC_PWRGD3].name,
+             sizeof(state->gpios[BMC_PWRGD3].name), "BMC_PWRGD3");
+    state->gpios[BMC_PWRGD3].direction = GPIO_DIRECTION_IN;
+    state->gpios[BMC_PWRGD3].edge = GPIO_EDGE_BOTH;
+    state->gpios[BMC_PWRGD3].handler = on_power3_event;
 
     platform_init(state);
+
+    /*******************************************************************************
+        Initialize Read and Write handlers based on pin type
+    *******************************************************************************/
+
+    for (int i = 0; i < NUM_GPIOS; i++)
+    {
+        switch(state->gpios[i].type)
+        {
+#ifdef GPIO_SYSFS_SUPPORT_DEPRECATED
+            case PIN_GPIO:
+                if (state->gpios[i].read == NULL)
+                    state->gpios[i].read = (TargetReadFunctionPtr) read_gpio_pin;
+                if (state->gpios[i].write == NULL)
+                    state->gpios[i].write = (TargetWriteFunctionPtr) write_gpio_pin;
+                break;
+#endif
+            case PIN_GPIOD:
+                if (state->gpios[i].read == NULL)
+                    state->gpios[i].read = (TargetReadFunctionPtr) read_gpiod_pin;
+                if (state->gpios[i].write == NULL)
+                    state->gpios[i].write = (TargetWriteFunctionPtr) write_gpiod_pin;
+
+             default:
+                if (state->gpios[i].read == NULL)
+                    state->gpios[i].read = (TargetReadFunctionPtr) read_pin_none;
+                if (state->gpios[i].write == NULL)
+                    state->gpios[i].write = (TargetWriteFunctionPtr) write_pin_none;
+        }
+    }
 
     state->event_cfg.break_all = false;
     state->event_cfg.report_MBP = false;
@@ -244,39 +421,12 @@ Target_Control_Handle* TargetHandler()
     state->event_cfg.reset_break = false;
     state->xdp_present = false;
 
-    initialize_powergood_pin_handler(state);
-    state->gpios[BMC_PLTRST_B].handler =
-        (TargetHandlerEventFunctionPtr)on_platform_reset_event;
-    state->gpios[BMC_PRDY_N].handler =
-        (TargetHandlerEventFunctionPtr)on_prdy_event;
-    state->gpios[BMC_XDP_PRST_IN].handler =
-        (TargetHandlerEventFunctionPtr)on_xdp_present_event;
-
     // Change is_master_probe accordingly on your BMC implementations.
     // <MODIFY>
     state->is_master_probe = false;
     // </MODIFY>
 
     return state;
-}
-
-STATUS initialize_powergood_pin_handler(Target_Control_Handle* state)
-{
-    int result = ST_OK;
-#ifdef GPIO_SYSFS_SUPPORT_DEPRECATED
-    if (state->gpios[BMC_CPU_PWRGD].type == PIN_GPIO)
-    {
-        state->gpios[BMC_CPU_PWRGD].handler =
-            (TargetHandlerEventFunctionPtr)on_power_event;
-    }
-    else
-#endif
-        if (state->gpios[BMC_CPU_PWRGD].type == PIN_GPIOD)
-    {
-        state->gpios[BMC_CPU_PWRGD].handler =
-            (TargetHandlerEventFunctionPtr)on_power_event;
-    }
-    return result;
 }
 
 STATUS platform_override_gpio(const Dbus_Handle* dbus, char* interface,
@@ -427,7 +577,8 @@ STATUS target_initialize(Target_Control_Handle* state, bool xdp_fail_enable)
 
     if (result == ST_OK)
     {
-        read_pin_value(state->gpios[BMC_XDP_PRST_IN], &value, &result);
+        Target_Control_GPIO xdp_gpio = state->gpios[BMC_XDP_PRST_IN];
+        result = xdp_gpio.read(state, BMC_XDP_PRST_IN, &value);
         if (result != ST_OK)
         {
             ASD_log(ASD_LogLevel_Error, stream, option,
@@ -450,7 +601,8 @@ STATUS target_initialize(Target_Control_Handle* state, bool xdp_fail_enable)
     // specifically drive debug enable to assert
     if (result == ST_OK)
     {
-        write_pin_value(state->gpios[BMC_DEBUG_EN_N], 1, &result);
+        Target_Control_GPIO dbg_en_gpio = state->gpios[BMC_DEBUG_EN_N];
+        result = dbg_en_gpio.write(state, BMC_DEBUG_EN_N, 1);
         if (result != ST_OK)
         {
             ASD_log(ASD_LogLevel_Error, stream, option,
@@ -474,6 +626,7 @@ STATUS target_initialize(Target_Control_Handle* state, bool xdp_fail_enable)
 STATUS initialize_gpios(Target_Control_Handle* state)
 {
     STATUS result = ST_OK;
+    STATUS status = ST_ERR;
     int i;
 
     for (i = 0; i < NUM_GPIOS; i++)
@@ -483,12 +636,16 @@ STATUS initialize_gpios(Target_Control_Handle* state)
         {
             result = initialize_gpio(&state->gpios[i]);
             if (result != ST_OK)
-                break;
+            {
+                state->gpios[i].type = PIN_NONE;
+                continue;
+            }
             // do a read to clear any bogus events on startup
             int dummy;
             result = gpio_get_value(state->gpios[i].fd, &dummy);
             if (result != ST_OK)
-                break;
+                continue;
+            status = ST_OK;
         }
         else
 #endif
@@ -496,17 +653,22 @@ STATUS initialize_gpios(Target_Control_Handle* state)
         {
             result = initialize_gpiod(&state->gpios[i]);
             if (result != ST_OK)
-                break;
+            {
+                state->gpios[i].type = PIN_NONE;
+                continue;
+            }
+            status = ST_OK;
         }
     }
 
-    if (result == ST_OK)
+    // If at least one PIN has been successfully configured
+    if (status == ST_OK)
         ASD_log(ASD_LogLevel_Info, stream, option,
                 "GPIOs initialized successfully");
     else
         ASD_log(ASD_LogLevel_Error, stream, option,
                 "GPIOs initialization failed");
-    return result;
+    return status;
 }
 
 #ifdef GPIO_SYSFS_SUPPORT_DEPRECATED
@@ -1024,7 +1186,8 @@ STATUS on_power_event(Target_Control_Handle* state, ASD_EVENT* event)
     STATUS result;
     int value;
 
-    read_pin_value(state->gpios[BMC_CPU_PWRGD], &value, &result);
+    Target_Control_GPIO gpio = state->gpios[BMC_CPU_PWRGD];
+    result = gpio.read(state, BMC_CPU_PWRGD, &value);
     if (result != ST_OK)
     {
         ASD_log(ASD_LogLevel_Error, stream, option,
@@ -1051,8 +1214,10 @@ STATUS on_platform_reset_event(Target_Control_Handle* state, ASD_EVENT* event)
 {
     STATUS result;
     int value;
+    Target_Control_GPIO pltrst_gpio = state->gpios[BMC_PLTRST_B];
+    Target_Control_GPIO preq_gpio = state->gpios[BMC_PREQ_N];
 
-    read_pin_value(state->gpios[BMC_PLTRST_B], &value, &result);
+    result = pltrst_gpio.read(state, BMC_PLTRST_B, &value);
     if (result != ST_OK)
     {
         ASD_log(ASD_LogLevel_Error, stream, option,
@@ -1072,7 +1237,7 @@ STATUS on_platform_reset_event(Target_Control_Handle* state, ASD_EVENT* event)
                     "ResetBreak detected PLT_RESET "
                     "assert, asserting PREQ");
 #endif
-            write_pin_value(state->gpios[BMC_PREQ_N], 1, &result);
+            result = preq_gpio.write(state, BMC_PREQ_N, 1);
             if (result != ST_OK)
             {
                 ASD_log(ASD_LogLevel_Error, stream, option,
@@ -1102,11 +1267,12 @@ STATUS on_prdy_event(Target_Control_Handle* state, ASD_EVENT* event)
     *event = ASD_EVENT_PRDY_EVENT;
     if (state->event_cfg.break_all)
     {
+    Target_Control_GPIO gpio = state->gpios[BMC_PREQ_N];
 #ifdef ENABLE_DEBUG_LOGGING
         ASD_log(ASD_LogLevel_Debug, stream, option,
                 "BreakAll detected PRDY, asserting PREQ");
 #endif
-        write_pin_value(state->gpios[BMC_PREQ_N], 1, &result);
+        result = gpio.write(state, BMC_PREQ_N, 1);
         if (result != ST_OK)
         {
             ASD_log(ASD_LogLevel_Error, stream, option,
@@ -1119,7 +1285,7 @@ STATUS on_prdy_event(Target_Control_Handle* state, ASD_EVENT* event)
             ASD_log(ASD_LogLevel_Debug, stream, option,
                     "CPU_PRDY, de-asserting PREQ");
 #endif
-            write_pin_value(state->gpios[BMC_PREQ_N], 0, &result);
+            result = gpio.write(state, BMC_PREQ_N, 0);
             if (result != ST_OK)
             {
                 ASD_log(ASD_LogLevel_Error, stream, option,
@@ -1145,6 +1311,64 @@ STATUS on_xdp_present_event(Target_Control_Handle* state, ASD_EVENT* event)
     return result;
 }
 
+STATUS on_power2_event(Target_Control_Handle* state, ASD_EVENT* event)
+{
+    STATUS result;
+    int value;
+
+    Target_Control_GPIO gpio = state->gpios[BMC_PWRGD2];
+    result = gpio.read(state, BMC_PWRGD2, &value);
+    if (result != ST_OK)
+    {
+        ASD_log(ASD_LogLevel_Error, stream, option,
+                "Failed to get gpio data for BMC_PWRGD2: %d", result);
+    }
+    else if (value == 1)
+    {
+#ifdef ENABLE_DEBUG_LOGGING
+        ASD_log(ASD_LogLevel_Debug, stream, option, "Power2 restored");
+#endif
+        *event = ASD_EVENT_PWRRESTORE2;
+    }
+    else
+    {
+#ifdef ENABLE_DEBUG_LOGGING
+        ASD_log(ASD_LogLevel_Debug, stream, option, "Power2 Power fail");
+#endif
+        *event = ASD_EVENT_PWRFAIL2;
+    }
+    return result;
+}
+
+STATUS on_power3_event(Target_Control_Handle* state, ASD_EVENT* event)
+{
+    STATUS result;
+    int value;
+
+    Target_Control_GPIO gpio = state->gpios[BMC_PWRGD3];
+    result = gpio.read(state, BMC_PWRGD3, &value);
+    if (result != ST_OK)
+    {
+        ASD_log(ASD_LogLevel_Error, stream, option,
+                "Failed to get gpio data for BMC_PWRGD3: %d", result);
+    }
+    else if (value == 1)
+    {
+#ifdef ENABLE_DEBUG_LOGGING
+        ASD_log(ASD_LogLevel_Debug, stream, option, "Power3 restored");
+#endif
+        *event = ASD_EVENT_PWRRESTORE3;
+    }
+    else
+    {
+#ifdef ENABLE_DEBUG_LOGGING
+        ASD_log(ASD_LogLevel_Debug, stream, option, "Power3 fail");
+#endif
+        *event = ASD_EVENT_PWRFAIL3;
+    }
+    return result;
+}
+
 STATUS target_write(Target_Control_Handle* state, const Pin pin,
                     const bool assert)
 {
@@ -1161,54 +1385,7 @@ STATUS target_write(Target_Control_Handle* state, const Pin pin,
     switch (pin)
     {
         case PIN_RESET_BUTTON:
-            ASD_log(ASD_LogLevel_Info, stream, option,
-                    "Pin Write: %s reset button",
-                    assert ? "assert" : "deassert");
-            if (result == ST_OK && assert == true)
-            {
-                ASD_log(ASD_LogLevel_Info, stream, option, "dbus_power_reset");
-                result = dbus_power_reset(state->dbus);
-            }
-            break;
         case PIN_POWER_BUTTON:
-            ASD_log(ASD_LogLevel_Info, stream, option,
-                    "Pin Write: %s power button",
-                    assert ? "assert" : "deassert");
-            if (assert)
-            {
-                if (result == ST_OK)
-                {
-                    gpio = state->gpios[BMC_CPU_PWRGD];
-                    read_pin_value(state->gpios[BMC_CPU_PWRGD], &value,
-                                   &result);
-                    if (state->gpios[BMC_CPU_PWRGD].type == PIN_DBUS)
-                        result = dbus_get_powerstate(state->dbus, &value);
-                    if (result != ST_OK)
-                    {
-#ifdef ENABLE_DEBUG_LOGGING
-                        ASD_log(ASD_LogLevel_Debug, stream, option,
-                                "Failed to read gpio %s %d", gpio.name,
-                                gpio.number);
-#endif
-                    }
-                    else
-                    {
-                        if (value)
-                        {
-                            result = dbus_power_off(state->dbus);
-                            ASD_log(ASD_LogLevel_Info, stream, option,
-                                    "dbus_power_off");
-                        }
-                        else
-                        {
-                            result = dbus_power_on(state->dbus);
-                            ASD_log(ASD_LogLevel_Info, stream, option,
-                                    "dbus_power_on");
-                        }
-                    }
-                }
-            }
-            break;
         case PIN_PREQ:
         case PIN_TCK_MUX_SELECT:
         case PIN_SYS_PWR_OK:
@@ -1216,7 +1393,7 @@ STATUS target_write(Target_Control_Handle* state, const Pin pin,
             gpio = state->gpios[ASD_PIN_TO_GPIO[pin]];
             ASD_log(ASD_LogLevel_Info, stream, option, "Pin Write: %s %s %d",
                     assert ? "assert" : "deassert", gpio.name, gpio.number);
-            write_pin_value(gpio, (uint8_t)(assert ? 1 : 0), &result);
+            result = gpio.write(state, ASD_PIN_TO_GPIO[pin], (uint8_t)(assert ? 1 : 0));
             if (result != ST_OK)
             {
                 ASD_log(ASD_LogLevel_Error, stream, option,
@@ -1252,35 +1429,12 @@ STATUS target_read(Target_Control_Handle* state, Pin pin, bool* asserted)
     switch (pin)
     {
         case PIN_PWRGOOD:
-            gpio = state->gpios[ASD_PIN_TO_GPIO[pin]];
-            read_pin_value(state->gpios[BMC_CPU_PWRGD], &value, &result);
-            if (state->gpios[BMC_CPU_PWRGD].type == PIN_DBUS)
-            {
-                result = dbus_get_powerstate(state->dbus, &value);
-            }
-            if (result != ST_OK)
-            {
-#ifdef ENABLE_DEBUG_LOGGING
-                ASD_log(ASD_LogLevel_Debug, stream, option,
-                        "Failed to read PIN %s %d", gpio.name, gpio.number);
-#endif
-            }
-            else
-            {
-                *asserted = (value != 0);
-#ifdef ENABLE_DEBUG_LOGGING
-                ASD_log(ASD_LogLevel_Info, stream, option,
-                        "Pin read: %s powergood",
-                        *asserted ? "asserted" : "deasserted");
-#endif
-            }
-            break;
         case PIN_PRDY:
         case PIN_PREQ:
         case PIN_SYS_PWR_OK:
         case PIN_EARLY_BOOT_STALL:
             gpio = state->gpios[ASD_PIN_TO_GPIO[pin]];
-            read_pin_value(gpio, &value, &result);
+            result = gpio.read(state, ASD_PIN_TO_GPIO[pin], &value);
             if (result != ST_OK)
             {
                 ASD_log(ASD_LogLevel_Error, stream, option,
@@ -1355,7 +1509,8 @@ STATUS target_write_event_config(Target_Control_Handle* state,
             // wait for prdy is enabled.
             int dummy = 0;
             STATUS retval = ST_ERR;
-            read_pin_value(state->gpios[BMC_PRDY_N], &dummy, &retval);
+            Target_Control_GPIO gpio = state->gpios[BMC_PRDY_N];
+            retval = gpio.read(state, BMC_PRDY_N, &dummy);
             state->event_cfg.report_PRDY = enable;
             break;
         }

@@ -25,24 +25,16 @@ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
-#include "i2c_handler.h"
+// This file implements all i2c_handler functions required by ASD in stub
+// mode. A template for all interface functions is included but read / write
+// operation will always return an error.
 
-// Disabling clang-format to avoid include alphabetical re-order that leads
-// into a conflict for i2c-dev.h that requires std headers to be added before.
-
-// clang-format off
-#include <errno.h>
 #include <fcntl.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
-#include <sys/ioctl.h>
-#include <unistd.h>
-#include <linux/i2c-dev.h>
-#include <linux/i2c.h>
-// clang-format on
 
+#include "i2c_handler.h"
 #include "logging.h"
 
 #define I2C_DEV_FILE_NAME "/dev/i2c"
@@ -61,7 +53,7 @@ I2C_Handler* I2CHandler(bus_config* config)
     if (config == NULL)
     {
         ASD_log(ASD_LogLevel_Error, stream, option,
-                "Invalid config parameter.");
+                "I2C_Handler stub invalid config parameter.");
         return NULL;
     }
 
@@ -69,7 +61,7 @@ I2C_Handler* I2CHandler(bus_config* config)
     if (state == NULL)
     {
         ASD_log(ASD_LogLevel_Error, stream, option,
-                "Failed to malloc I2C_Handler.");
+                "Failed to malloc I2C_Handler stub.");
     }
     else
     {
@@ -101,25 +93,9 @@ STATUS i2c_deinitialize(I2C_Handler* state)
 
 STATUS i2c_bus_flock(I2C_Handler* state, uint8_t bus, int op)
 {
-    STATUS status = ST_OK;
     ASD_log(ASD_LogLevel_Debug, ASD_LogStream_I2C, ASD_LogOption_None,
-            "i2c - bus %d %s", bus, op == LOCK_EX ? "LOCK" : "UNLOCK");
-    if (bus != state->i2c_bus)
-    {
-        i2c_close_driver(state);
-        status = i2c_open_driver(state, bus);
-    }
-    if (status == ST_OK)
-    {
-        if (flock(state->i2c_driver_handle, op) != 0)
-        {
-            ASD_log(ASD_LogLevel_Debug, ASD_LogStream_I2C, ASD_LogOption_None,
-                    "i2c flock for bus %d failed", bus);
-            status = ST_ERR;
-        }
-    }
-
-    return status;
+            "i2c stub - bus %d %s", bus, op == LOCK_EX ? "LOCK" : "UNLOCK");
+    return ST_OK;
 }
 
 STATUS i2c_bus_select(I2C_Handler* state, uint8_t bus)
@@ -134,7 +110,7 @@ STATUS i2c_bus_select(I2C_Handler* state, uint8_t bus)
         else if (i2c_bus_allowed(state, bus))
         {
             i2c_close_driver(state);
-            ASD_log(ASD_LogLevel_Error, stream, option, "Selecting Bus %d",
+            ASD_log(ASD_LogLevel_Error, stream, option, "Selecting Stub Bus %d",
                     bus);
             status = i2c_open_driver(state, bus);
             if (status == ST_OK)
@@ -160,23 +136,9 @@ STATUS i2c_set_sclk(I2C_Handler* state, uint16_t sclk)
 
 STATUS i2c_read_write(I2C_Handler* state, void* msg_set)
 {
-    if (state == NULL || msg_set == NULL || !i2c_enabled(state))
-        return ST_ERR;
-    struct i2c_rdwr_ioctl_data* ioctl_data = msg_set;
-
-    int ret = ioctl(state->i2c_driver_handle, I2C_RDWR, ioctl_data);
-
-    if (ret != ioctl_data->nmsgs)
-    {
-#ifdef ENABLE_DEBUG_LOGGING
-        ASD_log(ASD_LogLevel_Debug, stream, option,
-                "I2C_RDWR ioctl returned %d - %d - %s", ret, errno,
-                strerror(errno));
-#endif
-        return ST_ERR;
-    }
-
-    return ST_OK;
+    ASD_log(ASD_LogLevel_Error, stream, option,
+            "i2c_read_write stub function, R/W not implemented");
+    return ST_ERR;
 }
 
 static bool i2c_enabled(I2C_Handler* state)
@@ -184,22 +146,18 @@ static bool i2c_enabled(I2C_Handler* state)
     return state->config->enable_i2c;
 }
 
-static STATUS i2c_open_driver(I2C_Handler* state, uint8_t bus)
+STATUS i2c_open_driver(I2C_Handler* state, uint8_t bus)
 {
     char i2c_dev[MAX_I2C_DEV_FILENAME];
     state->i2c_bus = bus;
     snprintf(i2c_dev, sizeof(i2c_dev), "%s-%d", I2C_DEV_FILE_NAME, bus);
-    state->i2c_driver_handle = open(i2c_dev, O_RDWR);
-    if (state->i2c_driver_handle == -1)
-    {
-        ASD_log(ASD_LogLevel_Error, stream, option,
-                "Can't open %s, please install driver", i2c_dev);
-        return ST_ERR;
-    }
+    state->i2c_driver_handle = UNINITIALIZED_I2C_DRIVER_HANDLE;
+    ASD_log(ASD_LogLevel_Debug, stream, option,
+            "Can't open %s, ASD is running i2c stub mode", i2c_dev);
     return ST_OK;
 }
 
-static void i2c_close_driver(I2C_Handler* state)
+void i2c_close_driver(I2C_Handler* state)
 {
     if (state->i2c_driver_handle != UNINITIALIZED_I2C_DRIVER_HANDLE)
     {

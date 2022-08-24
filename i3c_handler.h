@@ -48,6 +48,7 @@ typedef struct I3C_Handler
 I3C_Handler* I3CHandler(bus_config* config);
 STATUS i3c_initialize(I3C_Handler* state);
 STATUS i3c_deinitialize(I3C_Handler* state);
+STATUS i3c_bus_flock(I3C_Handler* state, uint8_t bus, int op);
 STATUS i3c_bus_select(I3C_Handler* state, uint8_t bus);
 STATUS i3c_set_sclk(I3C_Handler* state, uint16_t sclk);
 STATUS i3c_read_write(I3C_Handler* state, void* msg_set);

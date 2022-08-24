@@ -99,9 +99,11 @@ typedef struct event_configuration
     FUNC(BMC_DEBUG_EN_N)                                                       \
     FUNC(BMC_XDP_PRST_IN)                                                      \
     FUNC(POWER_BTN)                                                            \
-    FUNC(RESET_BTN)
+    FUNC(RESET_BTN)                                                            \
+    FUNC(BMC_PWRGD2)                                                           \
+    FUNC(BMC_PWRGD3)
 
-#define NUM_GPIOS 10
+#define NUM_GPIOS 14
 
 typedef enum
 {
@@ -126,7 +128,12 @@ static const Target_Control_GPIOS ASD_PIN_TO_GPIO[] = {
 #define NUM_DBUS_FDS 1
 typedef struct pollfd target_fdarr_t[NUM_GPIOS + NUM_DBUS_FDS];
 
-typedef STATUS (*TargetHandlerEventFunctionPtr)(void*, ASD_EVENT*);
+typedef STATUS (*TargetReadFunctionPtr)(struct Target_Control_Handle * state,
+                                        int pin, int * value);
+typedef STATUS (*TargetWriteFunctionPtr)(struct Target_Control_Handle * state,
+                                         int pin, int value);
+typedef STATUS (*TargetEventFunctionPtr)(struct Target_Control_Handle * state,
+                                         ASD_EVENT*);
 
 #define ALL_PIN_TYPES(FUNC)                                                    \
     FUNC(PIN_NONE)                                                             \
@@ -145,7 +152,9 @@ typedef struct Target_Control_GPIO
 {
     char name[30];
     int number;
-    TargetHandlerEventFunctionPtr handler;
+    TargetReadFunctionPtr read;
+    TargetWriteFunctionPtr write;
+    TargetEventFunctionPtr handler;
     int fd;
     GPIO_DIRECTION direction;
     GPIO_EDGE edge;
@@ -189,6 +198,8 @@ STATUS target_event(Target_Control_Handle* state, struct pollfd poll_fd,
 STATUS target_wait_sync(Target_Control_Handle* state, uint16_t timeout,
                         uint16_t delay);
 STATUS on_power_event(Target_Control_Handle* state, ASD_EVENT* event);
+STATUS on_power2_event(Target_Control_Handle* state, ASD_EVENT* event);
+STATUS on_power3_event(Target_Control_Handle* state, ASD_EVENT* event);
 STATUS initialize_powergood_pin_handler(Target_Control_Handle* state);
 STATUS target_get_i2c_i3c_config(bus_options* busopt);
 #endif // _TARGET_CONTROL_HANDLER_H_

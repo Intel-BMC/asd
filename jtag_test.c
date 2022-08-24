@@ -60,6 +60,9 @@ bool continue_loop = true;
 const ASD_LogStream stream = ASD_LogStream_Test;
 const ASD_LogOption option = ASD_LogOption_None;
 uint64_t failures = 0;
+const ir_shift_size_map ir_map[] = {{0x0E7BB013, IR14_SHIFT_SIZE},
+                                    {0x00044113, IR16_SHIFT_SIZE},
+                                    {0x00111113, IR16_SHIFT_SIZE}};
 
 #ifndef UNIT_TEST_MAIN
 int main(int argc, char** argv)
@@ -98,17 +101,20 @@ int jtag_test_main(int argc, char** argv)
 
     if (result)
     {
-        if ((uncore.idcode[0] & IR_SIG_MASK) == IR14_SIG1)
+        if (args.ir_shift_size == 0)
         {
-            args.ir_shift_size = IR14_SHIFT_SIZE;
+            args.ir_shift_size = DEFAULT_IR_SHIFT_SIZE;
+            // Use lookup table to get the right ir_shift_size from idcode
+            int n = sizeof(ir_map)/sizeof(ir_shift_size_map);
+            for (int i = 0; i < n; i++)
+            {
+                if ((uncore.idcode[0] & IR_SIG_MASK) == ir_map[i].signature)
+                {
+                    args.ir_shift_size = ir_map[i].ir_shift_size;
+                    break;
+                }
+            }
             ASD_log(ASD_LogLevel_Debug, stream, option,
-                    "Using 0x%x for ir_shift_size", args.ir_shift_size);
-        }
-        else if ((uncore.idcode[0] & IR_SIG_MASK) == IR16_SIG1 ||
-                 (uncore.idcode[0] & IR_SIG_MASK) == IR16_SIG2)
-        {
-            args.ir_shift_size = IR16_SHIFT_SIZE;
-            ASD_log(ASD_LogLevel_Error, stream, option,
                     "Using 0x%x for ir_shift_size", args.ir_shift_size);
         }
         result = reset_jtag_to_RTI(jtag);
@@ -149,7 +155,7 @@ bool parse_arguments(int argc, char** argv, jtag_test_args* args)
 
     // Set Default argument values.
     args->human_readable = DEFAULT_TAP_DATA_PATTERN;
-    args->ir_shift_size = DEFAULT_IR_SHIFT_SIZE;
+    args->ir_shift_size = 0;
     args->loop_forever = false;
     args->numIterations = DEFAULT_NUMBER_TEST_ITERATIONS;
     args->ir_value = DEFAULT_IR_VALUE;           // overridden in manual mode
@@ -223,6 +229,16 @@ bool parse_arguments(int argc, char** argv, jtag_test_args* args)
                     showUsage(argv);
                     return false;
                 }
+                if (args->ir_shift_size != DEFAULT_IR_SHIFT_SIZE &&
+                    args->ir_shift_size != IR14_SHIFT_SIZE &&
+                    args->ir_shift_size != IR16_SHIFT_SIZE)
+                {
+                    ASD_log(ASD_LogLevel_Warning, stream, option,
+                            "IR shift size should be 0xb for 14nm-family, 0xe"
+                            " for 10nm-family and 0x10 for Intel 7 family."
+                            " IR shift size given value = %d.",
+                            args->ir_shift_size);
+                }
                 break;
 
             case ARG_DR_SIZE:
@@ -274,14 +290,6 @@ bool parse_arguments(int argc, char** argv, jtag_test_args* args)
                 "DR shift size cannot be larger than %d", MAX_TDO_SIZE * 8);
         showUsage(argv);
         return false;
-    }
-
-    if (args->ir_shift_size != 0xb && args->ir_shift_size != 0xe)
-    {
-        ASD_log(ASD_LogLevel_Warning, stream, option,
-                "IR shift size should be 0xb for 14nm-family, 0xe"
-                " for 10nm-family, IR shift size value given = %d.",
-                args->ir_shift_size);
     }
 
     if (args->manual_mode)

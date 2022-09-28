@@ -41,6 +41,7 @@ typedef struct jtag_config
     // use HW or SW jtag driver.
     JTAG_DRIVER_MODE mode;
     JTAG_CHAIN_SELECT_MODE chain_mode;
+    bool xdp_fail_enable;
 } jtag_config;
 
 typedef struct bus_config
@@ -56,6 +57,7 @@ typedef struct config
 {
     jtag_config jtag;
     remote_logging_config remote_logging;
+    IPC_LogType ipc_asd_log_map[6];
     bus_config buscfg;
 } config;
 

@@ -42,7 +42,14 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <systemd/sd-journal.h>
 #include <unistd.h>
 
-#include "target_handler.h"
+#include "asd_target_interface.h"
+asd_state main_state = {};
+extnet_conn_t* p_extconn = NULL;
+bool b_data_pending = false;
+
+static void send_remote_log_message(ASD_LogLevel asd_level,
+                                    ASD_LogStream asd_stream,
+                                    const char* message);
 
 #ifndef UNIT_TEST_MAIN
 int main(int argc, char** argv)
@@ -54,24 +61,23 @@ int main(int argc, char** argv)
 int asd_main(int argc, char** argv)
 {
     STATUS result = ST_ERR;
-    asd_state state = {};
 
     ASD_initialize_log_settings(DEFAULT_LOG_LEVEL, DEFAULT_LOG_STREAMS, false,
                                 NULL, NULL);
 
-    if (process_command_line(argc, argv, &state.args))
+    if (process_command_line(argc, argv, &main_state.args))
     {
-        result = init_asd_state(&state);
+        result = init_asd_state();
 
         if (result == ST_OK)
         {
-            result = request_processing_loop(&state);
+            result = request_processing_loop(&main_state);
             ASD_log(ASD_LogLevel_Warning, ASD_LogStream_Daemon,
                     ASD_LogOption_None, "ASD server closing.");
         }
-        deinit_asd_state(&state);
-        free(state.extnet);
-        free(state.session);
+        deinit_asd_state(&main_state);
+        free(main_state.extnet);
+        free(main_state.session);
     }
     return result == ST_OK ? 0 : 1;
 }
@@ -96,6 +102,7 @@ bool process_command_line(int argc, char** argv, asd_args* args)
     args->session.e_extnet_type = EXTNET_HDLR_TLS;
     args->session.e_auth_type = AUTH_HDLR_PAM;
     args->xdp_fail_enable = DEFAULT_XDP_FAIL_ENABLE;
+    main_state.config.jtag.xdp_fail_enable = DEFAULT_XDP_FAIL_ENABLE;
 
     enum
     {
@@ -224,6 +231,7 @@ bool process_command_line(int argc, char** argv, asd_args* args)
             case ARG_XDP:
             {
                 args->xdp_fail_enable = false;
+                main_state.config.jtag.xdp_fail_enable = false;
                 fprintf(stderr, "Ignore XDP presence\n");
                 break;
             }
@@ -328,21 +336,46 @@ void showUsage(char** argv)
         streamtostring(ASD_LogStream_SDK));
 }
 
-STATUS init_asd_state(asd_state* state)
+// This function maps the open ipc log levels to the levels
+// we have already defined in this codebase.
+void init_logging_map(void)
+{
+    main_state.config.ipc_asd_log_map[ASD_LogLevel_Off] = IPC_LogType_Off;
+    main_state.config.ipc_asd_log_map[ASD_LogLevel_Debug] = IPC_LogType_Debug;
+    main_state.config.ipc_asd_log_map[ASD_LogLevel_Info] = IPC_LogType_Info;
+    main_state.config.ipc_asd_log_map[ASD_LogLevel_Warning] = IPC_LogType_Warning;
+    main_state.config.ipc_asd_log_map[ASD_LogLevel_Error] = IPC_LogType_Error;
+    main_state.config.ipc_asd_log_map[ASD_LogLevel_Trace] = IPC_LogType_Trace;
+}
+
+bool main_should_remote_log(ASD_LogLevel asd_level, ASD_LogStream asd_stream)
+{
+    (void)asd_stream;
+    bool result = false;
+    if (main_state.config.remote_logging.logging_level != IPC_LogType_Off)
+    {
+        if (main_state.config.remote_logging.logging_level <=
+            main_state.config.ipc_asd_log_map[asd_level])
+            result = true;
+    }
+    return result;
+}
+
+STATUS init_asd_state(void)
 {
 
-    STATUS result = set_config_defaults(&state->config, &state->args.busopt);
+    STATUS result = set_config_defaults(&main_state.config, &main_state.args.busopt);
 
     if (result == ST_OK)
     {
-        ASD_initialize_log_settings(state->args.log_level,
-                                    state->args.log_streams,
-                                    state->args.use_syslog, NULL, NULL);
+        ASD_initialize_log_settings(main_state.args.log_level,
+                                    main_state.args.log_streams,
+                                    main_state.args.use_syslog, NULL, NULL);
 
-        state->extnet =
-            extnet_init(state->args.session.e_extnet_type,
-                        state->args.session.cp_certkeyfile, MAX_SESSIONS);
-        if (!state->extnet)
+        main_state.extnet =
+            extnet_init(main_state.args.session.e_extnet_type,
+                        main_state.args.session.cp_certkeyfile, MAX_SESSIONS);
+        if (!main_state.extnet)
         {
             result = ST_ERR;
         }
@@ -350,18 +383,18 @@ STATUS init_asd_state(asd_state* state)
 
     if (result == ST_OK)
     {
-        result = auth_init(state->args.session.e_auth_type, NULL);
+        result = auth_init(main_state.args.session.e_auth_type, NULL);
     }
 
     if (result == ST_OK)
     {
-        state->session = session_init(state->extnet);
-        if (!state->session)
+        main_state.session = session_init(main_state.extnet);
+        if (!main_state.session)
             result = ST_ERR;
         else
         {
-            state->event_fd = eventfd(0, O_NONBLOCK);
-            if (state->event_fd == -1)
+            main_state.event_fd = eventfd(0, O_NONBLOCK);
+            if (main_state.event_fd == -1)
             {
                 ASD_log(ASD_LogLevel_Error, ASD_LogStream_Daemon,
                         ASD_LogOption_None,
@@ -371,8 +404,8 @@ STATUS init_asd_state(asd_state* state)
             else
             {
                 result = extnet_open_external_socket(
-                    state->extnet, state->args.session.cp_net_bind_device,
-                    state->args.session.n_port_number, &state->host_fd);
+                    main_state.extnet, main_state.args.session.cp_net_bind_device,
+                    main_state.args.session.n_port_number, &main_state.host_fd);
                 if (result != ST_OK)
                     ASD_log(ASD_LogLevel_Error, ASD_LogStream_Daemon,
                             ASD_LogOption_None,
@@ -389,29 +422,25 @@ void deinit_asd_state(asd_state* state)
     session_close_all(state->session);
     if (state->host_fd != 0)
         close(state->host_fd);
-    if (state->asd_msg)
+
+    if (asd_api_target_deinit() != ST_OK)
     {
-        if (asd_msg_free(state->asd_msg) != ST_OK)
-        {
-            ASD_log(ASD_LogLevel_Error, ASD_LogStream_Daemon,
-                    ASD_LogOption_None, "Failed to de-initialize the asd_msg");
-        }
-        free(state->asd_msg);
-        state->asd_msg = NULL;
+        ASD_log(ASD_LogLevel_Error, ASD_LogStream_Daemon,
+                ASD_LogOption_None, "Failed to de-initialize the asd_msg");
     }
 }
 
-STATUS send_out_msg_on_socket(void* state, unsigned char* buffer, size_t length)
+STATUS send_out_msg_on_socket(unsigned char* buffer, size_t length)
 {
     extnet_conn_t authd_conn;
 
     int cnt = 0;
     STATUS result = ST_ERR;
 
-    if (state && buffer)
+    if (buffer)
     {
         result = ST_OK;
-        if (session_get_authenticated_conn(((asd_state*)state)->session,
+        if (session_get_authenticated_conn(main_state.session,
                                            &authd_conn) != ST_OK)
         {
             result = ST_ERR;
@@ -419,7 +448,7 @@ STATUS send_out_msg_on_socket(void* state, unsigned char* buffer, size_t length)
 
         if (result == ST_OK)
         {
-            cnt = extnet_send(((asd_state*)state)->extnet, &authd_conn, buffer,
+            cnt = extnet_send(main_state.extnet, &authd_conn, buffer,
                               length);
             if (cnt != length)
             {
@@ -444,19 +473,19 @@ STATUS request_processing_loop(asd_state* state)
     while (1)
     {
         session_fdarr_t session_fds = {-1};
-        target_fdarr_t target_fds = {-1};
         int n_clients = 0, i;
         int n_gpios = 0;
         int n_timeout = -1;
         int client_fd_index = 0;
-        if (state->asd_msg)
+        asd_target_interface_events target_events;
+
+        if (asd_api_target_ioctl(NULL, &target_events,
+                                 IOCTL_TARGET_GET_PIN_FDS) == ST_OK)
         {
-            if (asd_msg_get_fds(state->asd_msg, &target_fds, &n_gpios) == ST_OK)
+            n_gpios = target_events.num_fds;
+            for (i = 0; i < n_gpios; i++)
             {
-                for (i = 0; i < n_gpios; i++)
-                {
-                    poll_fds[GPIO_FD_INDEX + i] = target_fds[i];
-                }
+                poll_fds[GPIO_FD_INDEX + i] = target_events.fds[i];
             }
         }
         if (result == ST_OK)
@@ -491,11 +520,15 @@ STATUS request_processing_loop(asd_state* state)
             if (poll_fds[HOST_FD_INDEX].revents & POLLIN)
                 process_new_client(state, poll_fds, MAX_FDS, &n_clients,
                                    client_fd_index);
-            if (state->asd_msg && n_gpios > 0)
+            if (n_gpios > 0)
             {
-                if (process_all_gpio_events(
-                        state, (const struct pollfd*)(&poll_fds[GPIO_FD_INDEX]),
-                        (size_t)n_gpios) != ST_OK)
+                poll_asd_target_interface_events poll_target_fds;
+                poll_target_fds.poll_fds = &poll_fds[GPIO_FD_INDEX];
+                poll_target_fds.num_fds = n_gpios;
+
+                if (asd_api_target_ioctl(
+                        &poll_target_fds, NULL,
+                        IOCTL_TARGET_PROCESS_ALL_PIN_EVENTS) != ST_OK)
                 {
                     close_connection(state);
                     continue;
@@ -585,20 +618,6 @@ STATUS process_new_client(asd_state* state, struct pollfd* poll_fds,
     return result;
 }
 
-STATUS process_all_gpio_events(asd_state* state, const struct pollfd* poll_fds,
-                               size_t num_fds)
-{
-    STATUS result = ST_OK;
-
-    for (int i = 0; i < num_fds; i++)
-    {
-        result = asd_msg_event(state->asd_msg, poll_fds[i]);
-        if (result != ST_OK)
-            break;
-    }
-    return result;
-}
-
 STATUS process_all_client_messages(asd_state* state,
                                    const struct pollfd* poll_fds,
                                    size_t num_fds)
@@ -629,11 +648,15 @@ STATUS process_all_client_messages(asd_state* state,
     return result;
 }
 
+bool is_data_pending(void)
+{
+    return b_data_pending;
+}
+
 STATUS process_client_message(asd_state* state, const struct pollfd poll_fd)
 {
     STATUS result = ST_OK;
-    bool b_data_pending = false;
-    extnet_conn_t* p_extconn = NULL;
+    b_data_pending = false;
 
     if (!state)
         result = ST_ERR;
@@ -668,8 +691,7 @@ STATUS process_client_message(asd_state* state, const struct pollfd poll_fd)
 
         if (result == ST_OK)
         {
-            state->asd_msg->xdp_fail_enable = state->args.xdp_fail_enable;
-            result = asd_msg_read(state->asd_msg, p_extconn, &b_data_pending);
+            result = asd_api_target_ioctl(NULL, NULL, IOCTL_TARGET_PROCESS_MSG);
             if (result != ST_OK)
             {
                 on_client_disconnect(state);
@@ -685,15 +707,14 @@ STATUS process_client_message(asd_state* state, const struct pollfd poll_fd)
     return result;
 }
 
-STATUS read_data(asd_state* state, extnet_conn_t* p_extconn, void* buffer,
-                 size_t* num_to_read, bool* b_data_pending)
+size_t read_data(void* buffer, size_t length)
 {
-    STATUS result = ST_ERR;
-    if (state && p_extconn && buffer && num_to_read && b_data_pending)
+    size_t size = 0;
+    if (p_extconn && buffer)
     {
 
-        int cnt = extnet_recv(state->extnet, p_extconn, buffer, *num_to_read,
-                              b_data_pending);
+        int cnt = extnet_recv(main_state.extnet, p_extconn, buffer, length,
+                              &b_data_pending);
 
         if (cnt < 1)
         {
@@ -707,11 +728,22 @@ STATUS read_data(asd_state* state, extnet_conn_t* p_extconn, void* buffer,
         }
         else
         {
-            (*num_to_read) -= cnt;
-            result = ST_OK;
+            size = (size_t) cnt;
         }
     }
-    return result;
+    return size;
+}
+
+static void send_remote_log_message(ASD_LogLevel asd_level,
+                                    ASD_LogStream asd_stream,
+                                    const char* message)
+{
+    asd_target_interface_remote_log remote_log = {
+        asd_level,
+        asd_stream,
+        message
+    };
+    asd_api_target_ioctl(&remote_log, NULL, IOCTL_TARGET_SEND_REMOTE_LOG_MSG);
 }
 
 STATUS ensure_client_authenticated(asd_state* state, extnet_conn_t* p_extconn)
@@ -776,7 +808,8 @@ STATUS on_client_connect(asd_state* state, extnet_conn_t* p_extcon)
 
         log_client_address(p_extcon);
 
-        result = target_get_i2c_i3c_config(&target_bus_options);
+        result = asd_api_target_ioctl(NULL, &target_bus_options,
+                                      IOCTL_TARGET_GET_I2C_I3C_BUS_CONFIG);
 
 #ifdef ENABLE_DEBUG_LOGGING
         if (result != ST_OK)
@@ -813,23 +846,21 @@ STATUS on_client_connect(asd_state* state, extnet_conn_t* p_extcon)
 
     if (result == ST_OK)
     {
-        state->asd_msg =
-            asd_msg_init(&send_out_msg_on_socket, (ReadFunctionPtr)&read_data,
-                         (void*)state, &state->config);
-        if (!state->asd_msg)
+        result = asd_api_target_init(&state->config);
+        if (result != ST_OK)
         {
             ASD_log(ASD_LogLevel_Error, ASD_LogStream_Daemon,
-                    ASD_LogOption_None, "Failed to create asd_msg.");
-            result = ST_ERR;
+                    ASD_LogOption_None, "Failed to init asd_msg.");
         }
     }
 
     if (result == ST_OK)
     {
+        init_logging_map();
         ASD_initialize_log_settings(
             state->args.log_level, state->args.log_streams,
-            state->args.use_syslog, state->asd_msg->should_remote_log,
-            state->asd_msg->send_remote_logging_message);
+            state->args.use_syslog, main_should_remote_log,
+            send_remote_log_message);
     }
 
     return result;
@@ -901,17 +932,12 @@ STATUS on_client_disconnect(asd_state* state)
                                     state->args.log_streams,
                                     state->args.use_syslog, NULL, NULL);
 
-        if (state->asd_msg)
+        if (asd_api_target_deinit() != ST_OK)
         {
-            if (asd_msg_free(state->asd_msg) != ST_OK)
-            {
-                ASD_log(ASD_LogLevel_Error, ASD_LogStream_Daemon,
-                        ASD_LogOption_None,
-                        "Failed to de-initialize the asd_msg");
-                result = ST_ERR;
-            }
-            free(state->asd_msg);
-            state->asd_msg = NULL;
+            ASD_log(ASD_LogLevel_Error, ASD_LogStream_Daemon,
+                    ASD_LogOption_None,
+                    "Failed to de-initialize the asd_msg");
+            result = ST_ERR;
         }
     }
 

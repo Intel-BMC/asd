@@ -36,32 +36,33 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <sys/file.h>
 #include <unistd.h>
 
-#include "i2c_handler.h"
-#include "i2c_msg_builder.h"
+#include "asd_server_interface.h"
+
+ASD_MSG msg_state;
 
 static void get_scan_length(unsigned char cmd, uint8_t* num_of_bits,
                             uint8_t* num_of_bytes);
-STATUS process_jtag_message(ASD_MSG* state, struct asd_message* s_message);
-void process_message(ASD_MSG* state);
+STATUS process_jtag_message(struct asd_message* s_message);
+void process_message(void);
 void send_remote_log_message(ASD_LogLevel, ASD_LogStream, const char* message);
 bool should_remote_log(ASD_LogLevel, ASD_LogStream);
-STATUS write_cfg(ASD_MSG* state, writeCfg cmd, struct packet_data* packet);
-STATUS asd_write_set_active_chain_event(ASD_MSG* state, uint8_t scan_chain);
-bus_config_type bus_type(ASD_MSG* state, uint8_t bus);
-STATUS do_bus_select_command(ASD_MSG* state, struct packet_data* packet);
-STATUS do_set_sclk_command(ASD_MSG* state, struct packet_data* packet);
-STATUS do_read_write(ASD_MSG* state, void* msg_set);
+STATUS write_cfg(writeCfg cmd, struct packet_data* packet);
+STATUS asd_write_set_active_chain_event(uint8_t scan_chain);
+bus_config_type bus_type(uint8_t bus);
+STATUS do_bus_select_command(struct packet_data* packet);
+STATUS do_set_sclk_command(struct packet_data* packet);
+STATUS do_read_write(void* msg_set);
 static ASD_MSG* instance = NULL;
 
-STATUS read_openbmc_version(ASD_MSG* state)
+STATUS read_openbmc_version()
 {
     STATUS result = ST_ERR;
     FILE* fp;
     char* line = NULL;
     size_t len = 0;
     ssize_t read;
-    explicit_bzero(&state->bmc_version, sizeof(state->bmc_version));
-    state->bmc_version_size = 0;
+    explicit_bzero(&msg_state.bmc_version, sizeof(msg_state.bmc_version));
+    msg_state.bmc_version_size = 0;
     fp = fopen("/etc/os-release", "r");
     if (fp == NULL)
     {
@@ -76,9 +77,9 @@ STATUS read_openbmc_version(ASD_MSG* state)
             if (ptr != NULL)
             {
                 line = line + sizeof(OPENBMC_V);
-                state->bmc_version_size = read - sizeof(OPENBMC_V) - 1;
-                if (memcpy_s(state->bmc_version, sizeof(state->bmc_version),
-                             line, state->bmc_version_size) == 1)
+                msg_state.bmc_version_size = read - sizeof(OPENBMC_V) - 1;
+                if (memcpy_s(msg_state.bmc_version, sizeof(msg_state.bmc_version),
+                             line, msg_state.bmc_version_size) == 1)
                 {
                     ASD_log(ASD_LogLevel_Debug, ASD_LogStream_SDK,
                             ASD_LogOption_None, "memcpy_s failed");
@@ -86,9 +87,9 @@ STATUS read_openbmc_version(ASD_MSG* state)
                 }
                 else
                 {
-                    char* p = state->bmc_version;
+                    char* p = msg_state.bmc_version;
                     bool first_occurrance = true;
-                    for (int n = 0; n < state->bmc_version_size; n++)
+                    for (int n = 0; n < msg_state.bmc_version_size; n++)
                     {
                         if (p[n] == ASCII_DOUBLE_QUOTES &&
                             first_occurrance == true)
@@ -112,50 +113,38 @@ STATUS read_openbmc_version(ASD_MSG* state)
     return result;
 }
 
-// This function maps the open ipc log levels to the levels
-// we have already defined in this codebase.
-void init_logging_map(ASD_MSG* state)
-{
-    state->ipc_asd_log_map[ASD_LogLevel_Off] = IPC_LogType_Off;
-    state->ipc_asd_log_map[ASD_LogLevel_Debug] = IPC_LogType_Debug;
-    state->ipc_asd_log_map[ASD_LogLevel_Info] = IPC_LogType_Info;
-    state->ipc_asd_log_map[ASD_LogLevel_Warning] = IPC_LogType_Warning;
-    state->ipc_asd_log_map[ASD_LogLevel_Error] = IPC_LogType_Error;
-    state->ipc_asd_log_map[ASD_LogLevel_Trace] = IPC_LogType_Trace;
-}
-
-STATUS dev_flock(ASD_MSG* state, uint8_t bus, int op)
+STATUS dev_flock(uint8_t bus, int op)
 {
     STATUS status = ST_OK;
 
-    if (state == NULL || state->buscfg == NULL)
+    if (msg_state.buscfg == NULL)
     {
         ASD_log(ASD_LogLevel_Error, ASD_LogStream_I2C, ASD_LogOption_None,
                 "Failed to read data for flock");
         return ST_ERR;
     }
 
-    switch (bus_type(state, bus))
+    switch (bus_type(bus))
     {
         case BUS_CONFIG_I2C:
-            if (state->i2c_handler == NULL)
+            if (msg_state.i2c_handler == NULL)
             {
                 ASD_log(ASD_LogLevel_Debug, ASD_LogStream_I2C,
                         ASD_LogOption_None, "Null i2c handler in flock");
                 status = ST_ERR;
                 break;
             }
-            status = i2c_bus_flock(state->i2c_handler, bus, op);
+            status = i2c_bus_flock(msg_state.i2c_handler, bus, op);
             break;
         case BUS_CONFIG_I3C:
-            if (state->i3c_handler == NULL)
+            if (msg_state.i3c_handler == NULL)
             {
                 ASD_log(ASD_LogLevel_Debug, ASD_LogStream_I2C,
                         ASD_LogOption_None, "Null i3c handler in flock");
                 status = ST_ERR;
                 break;
             }
-            status = i3c_bus_flock(state->i3c_handler, bus, op);
+            status = i3c_bus_flock(msg_state.i3c_handler, bus, op);
             break;
         case BUS_CONFIG_NOT_ALLOWED:
         default:
@@ -172,66 +161,50 @@ STATUS dev_flock(ASD_MSG* state, uint8_t bus, int op)
     return status;
 }
 
-ASD_MSG* asd_msg_init(SendFunctionPtr send_function,
-                      ReadFunctionPtr read_function, void* callback_state,
-                      config* asd_cfg)
+STATUS asd_msg_init(config* asd_cfg)
 {
-    ASD_MSG* state = NULL;
-    if (send_function == NULL || read_function == NULL ||
-        callback_state == NULL || asd_cfg == NULL)
+    if (asd_cfg == NULL)
     {
-        return NULL;
+        return ST_ERR;
     }
     else if (instance)
     {
         // only one instance allowed
-        return NULL;
+        return ST_ERR;
     }
     else
     {
-        state = (ASD_MSG*)malloc(sizeof(ASD_MSG));
-
-        if (state != NULL)
+        msg_state.jtag_handler = JTAGHandler();
+        msg_state.target_handler = TargetHandler();
+        msg_state.buscfg = &asd_cfg->buscfg;
+        msg_state.i2c_handler = I2CHandler(msg_state.buscfg);
+        msg_state.i3c_handler = I3CHandler(msg_state.buscfg);
+        msg_state.vprobe_handler = vProbeHandler();
+        if (!msg_state.jtag_handler || !msg_state.target_handler ||
+            !msg_state.i2c_handler || !msg_state.i3c_handler ||
+            !msg_state.vprobe_handler)
         {
-            state->jtag_handler = JTAGHandler();
-            state->target_handler = TargetHandler();
-            state->buscfg = &asd_cfg->buscfg;
-            state->i2c_handler = I2CHandler(state->buscfg);
-            state->i3c_handler = I3CHandler(state->buscfg);
-            state->vprobe_handler = vProbeHandler();
-            if (!state->jtag_handler || !state->target_handler ||
-                !state->i2c_handler || !state->i3c_handler ||
-                !state->vprobe_handler)
-            {
-                ASD_log(ASD_LogLevel_Error, ASD_LogStream_SDK,
-                        ASD_LogOption_None, "Failed to create handlers");
-                asd_msg_free(state);
-                free(state);
-                state = NULL;
-            }
-            else
-            {
-                state->send_function = send_function;
-                state->read_function = read_function;
-                state->asd_cfg = asd_cfg;
-                state->handlers_initialized = false;
-                state->should_remote_log = &should_remote_log;
-                state->send_remote_logging_message = &send_remote_log_message;
-                state->callback_state = callback_state;
-                state->in_msg.read_state = READ_STATE_INITIAL;
-                state->in_msg.read_index = 0;
-                state->prdy_timeout = 0;
-                state->jtag_chain_mode = JTAG_CHAIN_SELECT_MODE_SINGLE;
-                init_logging_map(state);
-                instance = state;
-                read_openbmc_version(state);
-            }
+            ASD_log(ASD_LogLevel_Error, ASD_LogStream_SDK,
+                    ASD_LogOption_None, "Failed to create handlers");
+            asd_msg_free();
+        }
+        else
+        {
+            msg_state.asd_cfg = asd_cfg;
+            msg_state.handlers_initialized = false;
+            msg_state.send_remote_logging_message = &send_remote_log_message;
+            msg_state.in_msg.read_state = READ_STATE_INITIAL;
+            msg_state.in_msg.read_index = 0;
+            msg_state.prdy_timeout = 0;
+            msg_state.jtag_chain_mode = JTAG_CHAIN_SELECT_MODE_SINGLE;
+            instance = &msg_state;
+            read_openbmc_version();
         }
     }
-    return state;
+    return ST_OK;
 }
 
-STATUS asd_msg_free(ASD_MSG* state)
+STATUS asd_msg_free(void)
 {
     STATUS jtag_result = ST_OK;
     STATUS i2c_result = ST_OK;
@@ -239,71 +212,71 @@ STATUS asd_msg_free(ASD_MSG* state)
     STATUS target_result = ST_OK;
     STATUS vprobe_result = ST_OK;
 
-    if (state)
+    if (instance)
     {
-        if (state->jtag_handler)
+        if (msg_state.jtag_handler)
         {
-            jtag_result = JTAG_deinitialize(state->jtag_handler);
+            jtag_result = JTAG_deinitialize(msg_state.jtag_handler);
             if (jtag_result != ST_OK)
             {
                 ASD_log(ASD_LogLevel_Error, ASD_LogStream_SDK,
                         ASD_LogOption_None,
                         "Failed to de-initialize the JTAG handler");
             }
-            free(state->jtag_handler);
-            state->jtag_handler = NULL;
+            free(msg_state.jtag_handler);
+            msg_state.jtag_handler = NULL;
         }
 
-        if (state->i2c_handler)
+        if (msg_state.i2c_handler)
         {
-            i2c_result = i2c_deinitialize(state->i2c_handler);
+            i2c_result = i2c_deinitialize(msg_state.i2c_handler);
             if (i2c_result != ST_OK)
             {
                 ASD_log(ASD_LogLevel_Error, ASD_LogStream_SDK,
                         ASD_LogOption_None,
                         "Failed to de-initialize the i2c handler");
             }
-            free(state->i2c_handler);
-            state->i2c_handler = NULL;
+            free(msg_state.i2c_handler);
+            msg_state.i2c_handler = NULL;
         }
 
-        if (state->i3c_handler)
+        if (msg_state.i3c_handler)
         {
-            i3c_result = i3c_deinitialize(state->i3c_handler);
+            i3c_result = i3c_deinitialize(msg_state.i3c_handler);
             if (i3c_result != ST_OK)
             {
                 ASD_log(ASD_LogLevel_Error, ASD_LogStream_SDK,
                         ASD_LogOption_None,
                         "Failed to de-initialize the i3c handler");
             }
-            free(state->i3c_handler);
-            state->i3c_handler = NULL;
+            free(msg_state.i3c_handler);
+            msg_state.i3c_handler = NULL;
         }
 
-        if (state->target_handler)
+        if (msg_state.target_handler)
         {
-            target_result = target_deinitialize(state->target_handler);
+            target_result = target_deinitialize(msg_state.target_handler);
             if (target_result != ST_OK)
             {
                 ASD_log(ASD_LogLevel_Error, ASD_LogStream_SDK,
                         ASD_LogOption_None,
                         "Failed to de-initialize the Target handler");
             }
-            free(state->target_handler);
-            state->target_handler = NULL;
+            free(msg_state.target_handler);
+            msg_state.target_handler = NULL;
         }
 
-        if (state->vprobe_handler)
+        if (msg_state.vprobe_handler)
         {
-            vprobe_result = vProbe_deinitialize(state->vprobe_handler);
+            vprobe_result = vProbe_deinitialize(msg_state.vprobe_handler);
             if (vprobe_result != ST_OK)
             {
                 ASD_log(ASD_LogLevel_Error, ASD_LogStream_SDK,
                         ASD_LogOption_None,
                         "Failed to de-initialize the vProbe handler");
             }
-            free(state->vprobe_handler);
-            state->vprobe_handler = NULL;
+            free(msg_state.vprobe_handler);
+            msg_state.vprobe_handler = NULL;
         }
         instance = NULL;
     }
@@ -321,17 +294,12 @@ STATUS asd_msg_free(ASD_MSG* state)
     return ST_OK;
 }
 
-STATUS asd_msg_on_msg_recv(ASD_MSG* state)
+STATUS asd_msg_on_msg_recv(void)
 {
     STATUS result = ST_OK;
-    if (!state)
-    {
-        result = ST_ERR;
-        return result;
-    }
 
-    struct asd_message* msg = &state->in_msg.msg;
-    struct asd_message* msg_out = &state->out_msg;
+    struct asd_message* msg = &msg_state.in_msg.msg;
+    struct asd_message* msg_out = &msg_state.out_msg;
 
     int data_size = get_message_size(msg);
     if (msg->header.enc_bit)
@@ -339,12 +307,12 @@ STATUS asd_msg_on_msg_recv(ASD_MSG* state)
         result = ST_ERR;
         ASD_log(ASD_LogLevel_Error, ASD_LogStream_SDK, ASD_LogOption_None,
                 "ASD message encryption not supported.");
-        send_error_message(state, msg, ASD_MSG_CRYPY_NOT_SUPPORTED);
+        send_error_message(msg, ASD_MSG_CRYPY_NOT_SUPPORTED);
         return result;
     }
     if (msg->header.type == AGENT_CONTROL_TYPE)
     {
-        if (memcpy_s(&state->out_msg.header, sizeof(struct message_header),
+        if (memcpy_s(&msg_state.out_msg.header, sizeof(struct message_header),
                      &msg->header, sizeof(struct message_header)))
         {
             ASD_log(ASD_LogLevel_Error, ASD_LogStream_JTAG, ASD_LogOption_None,
@@ -355,86 +323,86 @@ STATUS asd_msg_on_msg_recv(ASD_MSG* state)
         // The plugin stores the command in the cmd_stat parameter.
         // For the response, the plugin expects the same value in the
         // first byte of the buffer.
-        state->out_msg.buffer[0] = (unsigned char)msg->header.cmd_stat;
-        state->out_msg.header.size_lsb = 1;
-        state->out_msg.header.size_msb = 0;
-        state->out_msg.header.cmd_stat = ASD_SUCCESS;
+        msg_state.out_msg.buffer[0] = (unsigned char)msg->header.cmd_stat;
+        msg_state.out_msg.header.size_lsb = 1;
+        msg_state.out_msg.header.size_msb = 0;
+        msg_state.out_msg.header.cmd_stat = ASD_SUCCESS;
 
         switch (msg->header.cmd_stat)
         {
             case NUM_IN_FLIGHT_MESSAGES_SUPPORTED_CMD:
-                state->out_msg.buffer[1] = NUM_IN_FLIGHT_BUFFERS_TO_USE;
-                state->out_msg.header.size_lsb += 1;
+                msg_state.out_msg.buffer[1] = NUM_IN_FLIGHT_BUFFERS_TO_USE;
+                msg_state.out_msg.header.size_lsb += 1;
                 break;
             case MAX_DATA_SIZE_CMD:
-                state->out_msg.buffer[1] = (MAX_DATA_SIZE)&0xFF;
-                state->out_msg.buffer[2] = (MAX_DATA_SIZE >> 8) & 0xFF;
-                state->out_msg.header.size_lsb = 3;
-                state->out_msg.header.size_msb = 0;
-                state->out_msg.header.cmd_stat = ASD_SUCCESS;
+                msg_state.out_msg.buffer[1] = (MAX_DATA_SIZE)&0xFF;
+                msg_state.out_msg.buffer[2] = (MAX_DATA_SIZE >> 8) & 0xFF;
+                msg_state.out_msg.header.size_lsb = 3;
+                msg_state.out_msg.header.size_msb = 0;
+                msg_state.out_msg.header.cmd_stat = ASD_SUCCESS;
                 break;
             case SUPPORTED_JTAG_CHAINS_CMD:
-                state->out_msg.buffer[1] = SUPPORTED_JTAG_CHAINS;
-                state->out_msg.header.size_lsb = 2;
-                state->out_msg.header.size_msb = 0;
+                msg_state.out_msg.buffer[1] = SUPPORTED_JTAG_CHAINS;
+                msg_state.out_msg.header.size_lsb = 2;
+                msg_state.out_msg.header.size_msb = 0;
                 break;
             case SUPPORTED_I2C_BUSES_CMD:
             {
                 unsigned char supported_buses = 0;
-                if (state->buscfg->enable_i2c || state->buscfg->enable_i3c)
+                if (msg_state.buscfg->enable_i2c || msg_state.buscfg->enable_i3c)
                 {
                     for (int i = 0; i < MAX_IxC_BUSES; i++)
                     {
-                        switch (state->buscfg->bus_config_type[i])
+                        switch (msg_state.buscfg->bus_config_type[i])
                         {
                             case BUS_CONFIG_I2C:
                             case BUS_CONFIG_I3C:
-                                state->out_msg.buffer[2 + supported_buses++] =
-                                    state->buscfg->bus_config_map[i];
+                                msg_state.out_msg.buffer[2 + supported_buses++] =
+                                    msg_state.buscfg->bus_config_map[i];
                                 break;
                             case BUS_CONFIG_NOT_ALLOWED:
                             default:
                                 break;
                         }
                     }
-                    state->out_msg.buffer[1] = supported_buses;
-                    state->out_msg.header.size_lsb = supported_buses + 2;
-                    state->out_msg.header.size_msb = 0;
+                    msg_state.out_msg.buffer[1] = supported_buses;
+                    msg_state.out_msg.header.size_lsb = supported_buses + 2;
+                    msg_state.out_msg.header.size_msb = 0;
                 }
                 else
                 {
-                    state->out_msg.buffer[1] = 0;
-                    state->out_msg.header.size_lsb = 2;
-                    state->out_msg.header.size_msb = 0;
+                    msg_state.out_msg.buffer[1] = 0;
+                    msg_state.out_msg.header.size_lsb = 2;
+                    msg_state.out_msg.header.size_msb = 0;
                 }
                 break;
             }
             case SUPPORTED_REMOTE_PROBES_CMD:
-                if (!state->vprobe_handler->initialized)
+                if (!msg_state.vprobe_handler->initialized)
                 {
-                    if (vProbe_initialize(state->vprobe_handler) != ST_OK)
+                    if (vProbe_initialize(msg_state.vprobe_handler) != ST_OK)
                     {
                         result = ST_ERR;
                         ASD_log(ASD_LogLevel_Error, ASD_LogStream_SDK,
                                 ASD_LogOption_None,
                                 "Failed to initialize the vprobe handler");
-                        send_error_message(state, msg,
+                        send_error_message(msg,
                                            ASD_FAILURE_INIT_VPROBE_HANDLER);
                         return result;
                     }
                 }
-                state->out_msg.buffer[1] = state->vprobe_handler->remoteProbes;
-                state->out_msg.header.size_lsb = 2;
-                state->out_msg.header.size_msb = 0;
+                msg_state.out_msg.buffer[1] = msg_state.vprobe_handler->remoteProbes;
+                msg_state.out_msg.header.size_lsb = 2;
+                msg_state.out_msg.header.size_msb = 0;
                 break;
             case REMOTE_PROBES_CONFIG_CMD:
-                if (state->vprobe_handler->remoteConfigs > 0)
+                if (msg_state.vprobe_handler->remoteConfigs > 0)
                 {
                     uint16_t config_size = 0;
 
-                    if (strcpy_s(&state->out_msg.buffer[1],
-                                 sizeof(state->out_msg.buffer) - 1,
-                                 state->vprobe_handler->probesConfig))
+                    if (strcpy_s(&msg_state.out_msg.buffer[1],
+                                 sizeof(msg_state.out_msg.buffer) - 1,
+                                 msg_state.vprobe_handler->probesConfig))
                     {
                         ASD_log(ASD_LogLevel_Error, ASD_LogStream_JTAG,
                                 ASD_LogOption_None,
@@ -443,19 +411,19 @@ STATUS asd_msg_on_msg_recv(ASD_MSG* state)
                         result = ST_ERR;
                     }
                     config_size = (uint16_t)(
-                        strnlen(state->vprobe_handler->probesConfig,
-                                sizeof(state->vprobe_handler->probesConfig)) +
+                        strnlen(msg_state.vprobe_handler->probesConfig,
+                                sizeof(msg_state.vprobe_handler->probesConfig)) +
                         1);
-                    state->out_msg.header.size_lsb =
+                    msg_state.out_msg.header.size_lsb =
                         (uint8_t)(config_size & 0xFF);
-                    state->out_msg.header.size_msb =
+                    msg_state.out_msg.header.size_msb =
                         (uint8_t)(config_size >> 8);
                 }
                 break;
             case OBTAIN_DOWNSTREAM_VERSION_CMD:
                 // The +/-1 references below are to account for the
                 // write of cmd_stat to buffer position 0 above
-                if (memcpy_s(&state->out_msg.buffer[1], sizeof(asd_version),
+                if (memcpy_s(&msg_state.out_msg.buffer[1], sizeof(asd_version),
                              asd_version, sizeof(asd_version)))
                 {
                     ASD_log(ASD_LogLevel_Error, ASD_LogStream_JTAG,
@@ -464,8 +432,8 @@ STATUS asd_msg_on_msg_recv(ASD_MSG* state)
                             "failed.");
                     result = ST_ERR;
                 }
-                state->out_msg.header.size_lsb += sizeof(asd_version);
-                if (memcpy_s(&state->out_msg.buffer[sizeof(asd_version)], 1,
+                msg_state.out_msg.header.size_lsb += sizeof(asd_version);
+                if (memcpy_s(&msg_state.out_msg.buffer[sizeof(asd_version)], 1,
                              "_", 1))
                 {
                     ASD_log(ASD_LogLevel_Error, ASD_LogStream_JTAG,
@@ -474,9 +442,9 @@ STATUS asd_msg_on_msg_recv(ASD_MSG* state)
                             "failed.");
                     result = ST_ERR;
                 }
-                if (memcpy_s(&state->out_msg.buffer[sizeof(asd_version) + 1],
-                             state->bmc_version_size, state->bmc_version,
-                             state->bmc_version_size))
+                if (memcpy_s(&msg_state.out_msg.buffer[sizeof(asd_version) + 1],
+                             msg_state.bmc_version_size, msg_state.bmc_version,
+                             msg_state.bmc_version_size))
                 {
                     ASD_log(ASD_LogLevel_Error, ASD_LogStream_JTAG,
                             ASD_LogOption_None,
@@ -484,10 +452,10 @@ STATUS asd_msg_on_msg_recv(ASD_MSG* state)
                             "failed.");
                     result = ST_ERR;
                 }
-                state->out_msg.header.size_lsb += state->bmc_version_size;
+                msg_state.out_msg.header.size_lsb += msg_state.bmc_version_size;
                 if (memcpy_s(
-                        &state->out_msg.buffer[sizeof(asd_version) +
-                                               state->bmc_version_size + 1],
+                        &msg_state.out_msg.buffer[sizeof(asd_version) +
+                                               msg_state.bmc_version_size + 1],
                         1, "\0", 1))
                 {
                     ASD_log(ASD_LogLevel_Error, ASD_LogStream_JTAG,
@@ -522,14 +490,14 @@ STATUS asd_msg_on_msg_recv(ASD_MSG* state)
                     u_int8_t* logging = get_packet_data(&packet, 1);
                     if (!logging)
                         break;
-                    state->asd_cfg->remote_logging.value = *logging;
+                    msg_state.asd_cfg->remote_logging.value = *logging;
 #ifdef ENABLE_DEBUG_LOGGING
                     ASD_log(
                         ASD_LogLevel_Debug, ASD_LogStream_SDK,
                         ASD_LogOption_No_Remote,
                         "Remote logging command received. Stream: %d Level: %d",
-                        state->asd_cfg->remote_logging.logging_stream,
-                        state->asd_cfg->remote_logging.logging_level);
+                        msg_state.asd_cfg->remote_logging.logging_stream,
+                        msg_state.asd_cfg->remote_logging.logging_level);
 #endif
                 }
                 else if (*config_type == AGENT_CONFIG_TYPE_GPIO)
@@ -552,24 +520,24 @@ STATUS asd_msg_on_msg_recv(ASD_MSG* state)
                         break;
                     if ((*mode & JTAG_DRIVER_MODE_MASK) ==
                         JTAG_DRIVER_MODE_HARDWARE)
-                        state->asd_cfg->jtag.mode = JTAG_DRIVER_MODE_HARDWARE;
+                        msg_state.asd_cfg->jtag.mode = JTAG_DRIVER_MODE_HARDWARE;
                     else
-                        state->asd_cfg->jtag.mode = JTAG_DRIVER_MODE_SOFTWARE;
+                        msg_state.asd_cfg->jtag.mode = JTAG_DRIVER_MODE_SOFTWARE;
                     if ((*mode & JTAG_CHAIN_SELECT_MODE_MASK) ==
                         JTAG_CHAIN_SELECT_MODE_MULTI)
-                        state->jtag_chain_mode = JTAG_CHAIN_SELECT_MODE_MULTI;
+                        msg_state.jtag_chain_mode = JTAG_CHAIN_SELECT_MODE_MULTI;
                     else
-                        state->jtag_chain_mode = JTAG_CHAIN_SELECT_MODE_SINGLE;
+                        msg_state.jtag_chain_mode = JTAG_CHAIN_SELECT_MODE_SINGLE;
 #ifdef ENABLE_DEBUG_LOGGING
                     ASD_log(
                         ASD_LogLevel_Debug, ASD_LogStream_SDK,
                         ASD_LogOption_No_Remote,
                         "Remote config command received. JTAG Driver Mode: %s"
                         "and Jtag Chain Select Mode: %s",
-                        state->asd_cfg->jtag.mode == JTAG_DRIVER_MODE_SOFTWARE
+                        msg_state.asd_cfg->jtag.mode == JTAG_DRIVER_MODE_SOFTWARE
                             ? "Software"
                             : "Hardware",
-                        state->jtag_chain_mode == JTAG_CHAIN_SELECT_MODE_SINGLE
+                        msg_state.jtag_chain_mode == JTAG_CHAIN_SELECT_MODE_SINGLE
                             ? "Single"
                             : "Multi");
 #endif
@@ -622,7 +590,7 @@ STATUS asd_msg_on_msg_recv(ASD_MSG* state)
 #endif
             }
         }
-        if (send_response(state, &state->out_msg) != ST_OK)
+        if (send_response(&msg_state.out_msg) != ST_OK)
         {
             ASD_log(ASD_LogLevel_Error, ASD_LogStream_SDK,
                     ASD_LogOption_No_Remote,
@@ -631,55 +599,55 @@ STATUS asd_msg_on_msg_recv(ASD_MSG* state)
     }
     else
     {
-        if (!state->handlers_initialized)
+        if (!msg_state.handlers_initialized)
         {
-            if (JTAG_initialize(state->jtag_handler,
-                                state->asd_cfg->jtag.mode ==
+            if (JTAG_initialize(msg_state.jtag_handler,
+                                msg_state.asd_cfg->jtag.mode ==
                                     JTAG_DRIVER_MODE_SOFTWARE) != ST_OK)
             {
                 result = ST_ERR;
                 ASD_log(ASD_LogLevel_Error, ASD_LogStream_SDK,
                         ASD_LogOption_None,
                         "Failed to initialize the jtag handler");
-                send_error_message(state, msg, ASD_FAILURE_INIT_JTAG_HANDLER);
+                send_error_message(msg, ASD_FAILURE_INIT_JTAG_HANDLER);
                 return result;
             }
 
-            if (state->buscfg->enable_i2c)
+            if (msg_state.buscfg->enable_i2c)
             {
-                if (i2c_initialize(state->i2c_handler) != ST_OK)
+                if (i2c_initialize(msg_state.i2c_handler) != ST_OK)
                 {
                     result = ST_ERR;
                     ASD_log(ASD_LogLevel_Error, ASD_LogStream_SDK,
                             ASD_LogOption_None,
                             "Failed to initialize the i2c handler");
-                    send_error_message(state, msg,
+                    send_error_message(msg,
                                        ASD_FAILURE_INIT_I2C_HANDLER);
                     return result;
                 }
             }
 
-            if (state->buscfg->enable_i3c)
+            if (msg_state.buscfg->enable_i3c)
             {
-                if (i3c_initialize(state->i3c_handler) != ST_OK)
+                if (i3c_initialize(msg_state.i3c_handler) != ST_OK)
                 {
                     result = ST_ERR;
                     ASD_log(ASD_LogLevel_Error, ASD_LogStream_SDK,
                             ASD_LogOption_None,
                             "Failed to initialize the i3c handler");
-                    send_error_message(state, msg,
+                    send_error_message(msg,
                                        ASD_FAILURE_INIT_I2C_HANDLER);
                     return result;
                 }
             }
 
-            if (target_initialize(state->target_handler,
-                                  state->xdp_fail_enable) == ST_OK)
+            if (target_initialize(msg_state.target_handler,
+                                  msg_state.asd_cfg->jtag.xdp_fail_enable) == ST_OK)
             {
-                state->handlers_initialized = true;
-                if (state->target_handler->xdp_present == true)
+                msg_state.handlers_initialized = true;
+                if (msg_state.target_handler->xdp_present == true)
                 {
-                    send_error_message(state, msg, ASD_FAILURE_XDP_PRESENT);
+                    send_error_message(msg, ASD_FAILURE_XDP_PRESENT);
                 }
             }
             else
@@ -688,25 +656,25 @@ STATUS asd_msg_on_msg_recv(ASD_MSG* state)
                 ASD_log(ASD_LogLevel_Error, ASD_LogStream_SDK,
                         ASD_LogOption_None,
                         "Failed to initialize the target handler");
-                if (JTAG_deinitialize(state->jtag_handler) != ST_OK)
+                if (JTAG_deinitialize(msg_state.jtag_handler) != ST_OK)
                 {
                     ASD_log(ASD_LogLevel_Error, ASD_LogStream_SDK,
                             ASD_LogOption_None,
                             "Failed to de-initialize the JTAG handler");
                 }
-                send_error_message(state, msg, ASD_FAILURE_XDP_PRESENT);
+                send_error_message( msg, ASD_FAILURE_XDP_PRESENT);
                 return result;
             }
         }
-        process_message(state);
+        process_message();
     }
     return result;
 }
 
-void send_error_message(ASD_MSG* state, struct asd_message* input_message,
+void send_error_message(struct asd_message* input_message,
                         ASDError cmd_stat)
 {
-    if (!state || !input_message)
+    if (!input_message)
         return;
     struct asd_message error_message = {{0}}; // initialize the struct
     if (memcpy_s(&error_message.header, sizeof(struct message_header),
@@ -719,7 +687,7 @@ void send_error_message(ASD_MSG* state, struct asd_message* input_message,
     error_message.header.size_lsb = 0;
     error_message.header.size_msb = 0;
     error_message.header.cmd_stat = cmd_stat;
-    if (send_response(state, &error_message) != ST_OK)
+    if (send_response(&error_message) != ST_OK)
     {
         ASD_log(ASD_LogLevel_Error, ASD_LogStream_SDK, ASD_LogOption_No_Remote,
                 "Failed to send an error message to client");
@@ -736,7 +704,7 @@ bool should_remote_log(ASD_LogLevel asd_level, ASD_LogStream asd_stream)
         if (asd_cfg->remote_logging.logging_level != IPC_LogType_Off)
         {
             if (asd_cfg->remote_logging.logging_level <=
-                instance->ipc_asd_log_map[asd_level])
+                asd_cfg->ipc_asd_log_map[asd_level])
                 result = true;
         }
     }
@@ -752,7 +720,7 @@ void send_remote_log_message(ASD_LogLevel asd_level, ASD_LogStream asd_stream,
     if (should_remote_log(asd_level, asd_stream))
     {
         remote_logging_config config_byte = {{0}};
-        config_byte.logging_level = instance->ipc_asd_log_map[asd_level];
+        config_byte.logging_level = instance->asd_cfg->ipc_asd_log_map[asd_level];
         config_byte.logging_stream =
             instance->asd_cfg->remote_logging.logging_stream;
         struct asd_message msg = {{0}};
@@ -782,13 +750,13 @@ void send_remote_log_message(ASD_LogLevel asd_level, ASD_LogStream asd_stream,
         msg.header.size_lsb = lsb_from_msg_size(buffer_length);
         msg.header.size_msb = msb_from_msg_size(buffer_length);
         msg.header.cmd_stat = ASD_SUCCESS;
-        send_response(instance, &msg);
+        send_response(&msg);
     }
 }
 
-void process_message(ASD_MSG* state)
+void process_message()
 {
-    struct asd_message* msg = &state->in_msg.msg;
+    struct asd_message* msg = &msg_state.in_msg.msg;
     if (((msg->header.type != JTAG_TYPE) && (msg->header.type != I2C_TYPE)) ||
         (msg->header.cmd_stat != 0 && msg->header.cmd_stat != 0x80 &&
          msg->header.cmd_stat != 1))
@@ -799,42 +767,42 @@ void process_message(ASD_MSG* state)
                 "Type = 1 or 6 & cmd_stat=0 or 1 or 0x80\n"
                 "I got Type=%x, cmd_stat=%x",
                 msg->header.type, msg->header.cmd_stat);
-        send_error_message(state, msg, ASD_MSG_NOT_SUPPORTED);
+        send_error_message(msg, ASD_MSG_NOT_SUPPORTED);
         return;
     }
 
     if (msg->header.type == JTAG_TYPE)
     {
-        if (process_jtag_message(state, msg) != ST_OK)
+        if (process_jtag_message(msg) != ST_OK)
         {
             ASD_log(ASD_LogLevel_Error, ASD_LogStream_SDK, ASD_LogOption_None,
                     "Failed to process JTAG message");
-            send_error_message(state, msg, ASD_FAILURE_PROCESS_JTAG_MSG);
+            send_error_message( msg, ASD_FAILURE_PROCESS_JTAG_MSG);
             return;
         }
     }
     else if (msg->header.type == I2C_TYPE)
     {
-        if (state->buscfg->enable_i2c || state->buscfg->enable_i3c)
+        if (msg_state.buscfg->enable_i2c || msg_state.buscfg->enable_i3c)
         {
-            if (dev_flock(state, state->buscfg->default_bus, LOCK_EX) != ST_OK)
+            if (dev_flock(msg_state.buscfg->default_bus, LOCK_EX) != ST_OK)
             {
                 ASD_log(ASD_LogLevel_Error, ASD_LogStream_SDK,
                         ASD_LogOption_None, "Failed to lock device");
-                send_error_message(state, msg, ASD_FAILURE_PROCESS_I2C_LOCK);
+                send_error_message( msg, ASD_FAILURE_PROCESS_I2C_LOCK);
                 return;
             }
-            if (process_i2c_messages(state, msg) != ST_OK)
+            if (process_i2c_messages(msg) != ST_OK)
             {
                 ASD_log(ASD_LogLevel_Error, ASD_LogStream_SDK,
                         ASD_LogOption_None, "Failed to process I2C message");
-                send_error_message(state, msg, ASD_FAILURE_PROCESS_I2C_MSG);
+                send_error_message( msg, ASD_FAILURE_PROCESS_I2C_MSG);
             }
-            if (dev_flock(state, state->buscfg->default_bus, LOCK_UN) != ST_OK)
+            if (dev_flock(msg_state.buscfg->default_bus, LOCK_UN) != ST_OK)
             {
                 ASD_log(ASD_LogLevel_Error, ASD_LogStream_SDK,
                         ASD_LogOption_None, "Failed to lock device");
-                send_error_message(state, msg, ASD_FAILURE_REMOVE_I2C_LOCK);
+                send_error_message( msg, ASD_FAILURE_REMOVE_I2C_LOCK);
             }
             return;
         }
@@ -843,13 +811,13 @@ void process_message(ASD_MSG* state)
             ASD_log(ASD_LogLevel_Error, ASD_LogStream_SDK, ASD_LogOption_None,
                     "Received I2C message that is not supported "
                     "by this platform");
-            send_error_message(state, msg, ASD_I2C_MSG_NOT_SUPPORTED);
+            send_error_message( msg, ASD_I2C_MSG_NOT_SUPPORTED);
             return;
         }
     }
 }
 
-STATUS write_event_config(ASD_MSG* state, const uint8_t data_byte)
+STATUS write_event_config(const uint8_t data_byte)
 {
     STATUS status = ST_OK;
     // If bit 7 is set, then we will be enabling an event, otherwise
@@ -862,7 +830,7 @@ STATUS write_event_config(ASD_MSG* state, const uint8_t data_byte)
     {
         WriteConfig event_cfg = (WriteConfig)event_cfg_raw;
         status =
-            target_write_event_config(state->target_handler, event_cfg, enable);
+            target_write_event_config(msg_state.target_handler, event_cfg, enable);
     }
     else
     {
@@ -875,13 +843,13 @@ STATUS write_event_config(ASD_MSG* state, const uint8_t data_byte)
     return status;
 }
 
-STATUS read_status(ASD_MSG* state, const ReadType index, uint8_t pin,
+STATUS read_status(const ReadType index, uint8_t pin,
                    unsigned char* return_buffer, int* bytes_written)
 {
     *bytes_written = 0;
     bool pinAsserted = false;
 
-    STATUS status = target_read(state->target_handler, (Pin)pin, &pinAsserted);
+    STATUS status = target_read(msg_state.target_handler, (Pin)pin, &pinAsserted);
 
     if (status == ST_OK)
     {
@@ -905,7 +873,7 @@ STATUS read_status(ASD_MSG* state, const ReadType index, uint8_t pin,
     return status;
 }
 
-STATUS process_jtag_message(ASD_MSG* state, struct asd_message* s_message)
+STATUS process_jtag_message(struct asd_message* s_message)
 {
     u_int32_t response_cnt = 0;
     enum jtag_states end_state;
@@ -923,8 +891,8 @@ STATUS process_jtag_message(ASD_MSG* state, struct asd_message* s_message)
         return ST_ERR;
     }
 
-    explicit_bzero(&state->out_msg.header, sizeof(struct message_header));
-    explicit_bzero(&state->out_msg.buffer, MAX_DATA_SIZE);
+    explicit_bzero(&msg_state.out_msg.header, sizeof(struct message_header));
+    explicit_bzero(&msg_state.out_msg.buffer, MAX_DATA_SIZE);
 
 #ifdef ENABLE_DEBUG_LOGGING
     ASD_log(ASD_LogLevel_Debug, ASD_LogStream_Network, ASD_LogOption_No_Remote,
@@ -965,7 +933,7 @@ STATUS process_jtag_message(ASD_MSG* state, struct asd_message* s_message)
                 break;
             }
 
-            status = write_event_config(state, *data_ptr);
+            status = write_event_config(*data_ptr);
             if (status != ST_OK)
             {
                 ASD_log(ASD_LogLevel_Error, ASD_LogStream_SDK,
@@ -976,7 +944,7 @@ STATUS process_jtag_message(ASD_MSG* state, struct asd_message* s_message)
         }
         else if (cmd >= WRITE_CFG_MIN && cmd <= WRITE_CFG_MAX)
         {
-            status = write_cfg(state, (writeCfg)cmd, &packet);
+            status = write_cfg((writeCfg)cmd, &packet);
             if (status != ST_OK)
             {
                 ASD_log(ASD_LogLevel_Error, ASD_LogStream_SDK,
@@ -1003,7 +971,7 @@ STATUS process_jtag_message(ASD_MSG* state, struct asd_message* s_message)
             if (index < PIN_MAX)
             {
                 Pin pin = (Pin)index;
-                status = target_write(state->target_handler, pin, assert);
+                status = target_write(msg_state.target_handler, pin, assert);
                 if (status != ST_OK)
                 {
                     ASD_log(ASD_LogLevel_Error, ASD_LogStream_SDK,
@@ -1040,7 +1008,7 @@ STATUS process_jtag_message(ASD_MSG* state, struct asd_message* s_message)
             }
             else if ((index & SCAN_CHAIN_SELECT) == SCAN_CHAIN_SELECT)
             {
-                if (state->jtag_chain_mode == JTAG_CHAIN_SELECT_MODE_SINGLE)
+                if (msg_state.jtag_chain_mode == JTAG_CHAIN_SELECT_MODE_SINGLE)
                 {
                     uint8_t scan_chain = (index & SCAN_CHAIN_SELECT_MASK);
                     if (scan_chain >= MAX_SCAN_CHAINS)
@@ -1052,7 +1020,7 @@ STATUS process_jtag_message(ASD_MSG* state, struct asd_message* s_message)
                         break;
                     }
                     status =
-                        asd_write_set_active_chain_event(state, scan_chain);
+                        asd_write_set_active_chain_event(scan_chain);
                     if (status != ST_OK)
                     {
                         ASD_log(ASD_LogLevel_Error, ASD_LogStream_SDK,
@@ -1152,8 +1120,8 @@ STATUS process_jtag_message(ASD_MSG* state, struct asd_message* s_message)
             }
 
             uint8_t pin = (*data_ptr & READ_STATUS_PIN_MASK);
-            status = read_status(state, readStatusTypeIndex, pin,
-                                 &(state->out_msg.buffer[response_cnt]),
+            status = read_status(readStatusTypeIndex, pin,
+                                 &(msg_state.out_msg.buffer[response_cnt]),
                                  &bytes_written);
             if (status != ST_OK)
             {
@@ -1180,7 +1148,7 @@ STATUS process_jtag_message(ASD_MSG* state, struct asd_message* s_message)
             unsigned int number_of_cycles = *data_ptr;
             if (number_of_cycles == 0)
                 number_of_cycles = 256;
-            status = JTAG_wait_cycles(state->jtag_handler, number_of_cycles);
+            status = JTAG_wait_cycles(msg_state.jtag_handler, number_of_cycles);
             if (status != ST_OK)
             {
                 ASD_log(ASD_LogLevel_Error, ASD_LogStream_SDK,
@@ -1192,7 +1160,7 @@ STATUS process_jtag_message(ASD_MSG* state, struct asd_message* s_message)
         else if (cmd == WAIT_PRDY)
         {
             status =
-                target_wait_PRDY(state->target_handler, state->prdy_timeout);
+                target_wait_PRDY(msg_state.target_handler, msg_state.prdy_timeout);
             if (status != ST_OK)
             {
                 ASD_log(ASD_LogLevel_Error, ASD_LogStream_SDK,
@@ -1210,7 +1178,7 @@ STATUS process_jtag_message(ASD_MSG* state, struct asd_message* s_message)
         }
         else if (cmd == TAP_RESET)
         {
-            status = JTAG_tap_reset(state->jtag_handler);
+            status = JTAG_tap_reset(msg_state.jtag_handler);
             if (status != ST_OK)
             {
                 ASD_log(ASD_LogLevel_Error, ASD_LogStream_SDK,
@@ -1236,7 +1204,7 @@ STATUS process_jtag_message(ASD_MSG* state, struct asd_message* s_message)
             // read timout and delay. 2 bytes each, LSB first
             timeout = data_ptr[0] + (data_ptr[1] << 8);
             delay = data_ptr[2] + (data_ptr[3] << 8);
-            status = target_wait_sync(state->target_handler, timeout, delay);
+            status = target_wait_sync(msg_state.target_handler, timeout, delay);
             if (status == ST_TIMEOUT)
             {
                 ASD_log(ASD_LogLevel_Warning, ASD_LogStream_SDK,
@@ -1254,7 +1222,7 @@ STATUS process_jtag_message(ASD_MSG* state, struct asd_message* s_message)
         else if (cmd >= TAP_STATE_MIN && cmd <= TAP_STATE_MAX)
         {
             status = JTAG_set_tap_state(
-                state->jtag_handler,
+                msg_state.jtag_handler,
                 (enum jtag_states)(cmd & (uint8_t)TAP_STATE_MASK));
             if (status != ST_OK)
             {
@@ -1280,7 +1248,7 @@ STATUS process_jtag_message(ASD_MSG* state, struct asd_message* s_message)
                 break;
             }
 
-            status = determine_shift_end_state(state, ScanType_Write, &packet,
+            status = determine_shift_end_state(ScanType_Write, &packet,
                                                &end_state);
             if (status != ST_OK)
             {
@@ -1289,7 +1257,7 @@ STATUS process_jtag_message(ASD_MSG* state, struct asd_message* s_message)
                         "determine_shift_end_state failed, %d", status);
                 break;
             }
-            status = JTAG_shift(state->jtag_handler, num_of_bits, num_of_bytes,
+            status = JTAG_shift(msg_state.jtag_handler, num_of_bits, num_of_bytes,
                                 data_ptr, 0, NULL, end_state);
             if (status != ST_OK)
             {
@@ -1313,8 +1281,8 @@ STATUS process_jtag_message(ASD_MSG* state, struct asd_message* s_message)
                 status = ST_ERR;
                 break;
             }
-            state->out_msg.buffer[response_cnt++] = cmd;
-            status = determine_shift_end_state(state, ScanType_Read, &packet,
+            msg_state.out_msg.buffer[response_cnt++] = cmd;
+            status = determine_shift_end_state(ScanType_Read, &packet,
                                                &end_state);
             if (status != ST_OK)
             {
@@ -1324,8 +1292,8 @@ STATUS process_jtag_message(ASD_MSG* state, struct asd_message* s_message)
                 break;
             }
             status = JTAG_shift(
-                state->jtag_handler, num_of_bits, 0, NULL, num_of_bytes,
-                &(state->out_msg.buffer[response_cnt]), end_state);
+                msg_state.jtag_handler, num_of_bits, 0, NULL, num_of_bytes,
+                &(msg_state.out_msg.buffer[response_cnt]), end_state);
             if (status != ST_OK)
             {
                 ASD_log(ASD_LogLevel_Error, ASD_LogStream_SDK,
@@ -1348,7 +1316,7 @@ STATUS process_jtag_message(ASD_MSG* state, struct asd_message* s_message)
                 status = ST_ERR;
                 break;
             }
-            state->out_msg.buffer[response_cnt++] = cmd;
+            msg_state.out_msg.buffer[response_cnt++] = cmd;
             data_ptr = get_packet_data(&packet, num_of_bytes);
             if (data_ptr == NULL)
             {
@@ -1358,7 +1326,7 @@ STATUS process_jtag_message(ASD_MSG* state, struct asd_message* s_message)
                 status = ST_ERR;
                 break;
             }
-            status = determine_shift_end_state(state, ScanType_ReadWrite,
+            status = determine_shift_end_state(ScanType_ReadWrite,
                                                &packet, &end_state);
             if (status != ST_OK)
             {
@@ -1368,9 +1336,9 @@ STATUS process_jtag_message(ASD_MSG* state, struct asd_message* s_message)
                 break;
             }
             status =
-                JTAG_shift(state->jtag_handler, num_of_bits, num_of_bytes,
+                JTAG_shift(msg_state.jtag_handler, num_of_bits, num_of_bytes,
                            data_ptr, num_of_bytes,
-                           &(state->out_msg.buffer[response_cnt]), end_state);
+                           &(msg_state.out_msg.buffer[response_cnt]), end_state);
             if (status != ST_OK)
             {
                 ASD_log(ASD_LogLevel_Error, ASD_LogStream_SDK,
@@ -1391,7 +1359,7 @@ STATUS process_jtag_message(ASD_MSG* state, struct asd_message* s_message)
 
     if (status == ST_OK)
     {
-        if (memcpy_s(&state->out_msg.header, sizeof(struct message_header),
+        if (memcpy_s(&msg_state.out_msg.header, sizeof(struct message_header),
                      &s_message->header, sizeof(struct message_header)))
         {
             ASD_log(ASD_LogLevel_Error, ASD_LogStream_JTAG, ASD_LogOption_None,
@@ -1399,11 +1367,11 @@ STATUS process_jtag_message(ASD_MSG* state, struct asd_message* s_message)
             status = ST_ERR;
         }
 
-        state->out_msg.header.size_lsb = lsb_from_msg_size(response_cnt);
-        state->out_msg.header.size_msb = msb_from_msg_size(response_cnt);
-        state->out_msg.header.cmd_stat = ASD_SUCCESS;
+        msg_state.out_msg.header.size_lsb = lsb_from_msg_size(response_cnt);
+        msg_state.out_msg.header.size_msb = msb_from_msg_size(response_cnt);
+        msg_state.out_msg.header.cmd_stat = ASD_SUCCESS;
 
-        status = send_response(state, &state->out_msg);
+        status = send_response(&msg_state.out_msg);
         if (status != ST_OK)
         {
             ASD_log(ASD_LogLevel_Error, ASD_LogStream_SDK,
@@ -1414,7 +1382,7 @@ STATUS process_jtag_message(ASD_MSG* state, struct asd_message* s_message)
     return status;
 }
 
-STATUS write_cfg(ASD_MSG* state, const writeCfg cmd, struct packet_data* packet)
+STATUS write_cfg(const writeCfg cmd, struct packet_data* packet)
 {
     STATUS status;
     unsigned char* data;
@@ -1422,8 +1390,8 @@ STATUS write_cfg(ASD_MSG* state, const writeCfg cmd, struct packet_data* packet)
     if (cmd == JTAG_FREQ)
     {
         // JTAG_FREQ (Index 1, Size: 1 Byte)
-        //  Bit 7:6 â€“ Prescale Value (b'00 â€“ 1, b'01 â€“ 2, b'10 â€“ 4, b'11
-        //  â€“ 8) Bit 5:0 â€“ Divisor (1-64, 64 is expressed as value 0)
+        //  Bit 7:6 – Prescale Value (b'00 – 1, b'01 – 2, b'10 – 4, b'11
+        //  – 8) Bit 5:0 – Divisor (1-64, 64 is expressed as value 0)
         //  The TAP clock frequency is determined by dividing the system
         //  clock of the TAP Master first through the prescale value
         //  (1,2,4,8) and then through the divisor (1-64).
@@ -1474,7 +1442,7 @@ STATUS write_cfg(ASD_MSG* state, const writeCfg cmd, struct packet_data* packet)
                     divisorVal, tCLK);
 #endif
 
-            status = JTAG_set_jtag_tck(state->jtag_handler, tCLK);
+            status = JTAG_set_jtag_tck(msg_state.jtag_handler, tCLK);
             if (status != ST_OK)
                 ASD_log(ASD_LogLevel_Error, ASD_LogStream_SDK,
                         ASD_LogOption_None, "Unable to set the JTAG TAP TCK!");
@@ -1498,7 +1466,7 @@ STATUS write_cfg(ASD_MSG* state, const writeCfg cmd, struct packet_data* packet)
             ASD_log(ASD_LogLevel_Debug, ASD_LogStream_SDK, ASD_LogOption_None,
                     "Setting DRPost padding to %d", data[0]);
 #endif
-            status = JTAG_set_padding(state->jtag_handler,
+            status = JTAG_set_padding(msg_state.jtag_handler,
                                       JTAGPaddingTypes_DRPost, data[0]);
             if (status != ST_OK)
                 ASD_log(ASD_LogLevel_Error, ASD_LogStream_SDK,
@@ -1523,7 +1491,7 @@ STATUS write_cfg(ASD_MSG* state, const writeCfg cmd, struct packet_data* packet)
             ASD_log(ASD_LogLevel_Debug, ASD_LogStream_SDK, ASD_LogOption_None,
                     "Setting DRPre padding to %d", data[0]);
 #endif
-            status = JTAG_set_padding(state->jtag_handler,
+            status = JTAG_set_padding(msg_state.jtag_handler,
                                       JTAGPaddingTypes_DRPre, data[0]);
             if (status != ST_OK)
                 ASD_log(ASD_LogLevel_Error, ASD_LogStream_SDK,
@@ -1549,7 +1517,7 @@ STATUS write_cfg(ASD_MSG* state, const writeCfg cmd, struct packet_data* packet)
                     "Setting IRPost padding to %d", (data[1] << 8) | data[0]);
 #endif
             status =
-                JTAG_set_padding(state->jtag_handler, JTAGPaddingTypes_IRPost,
+                JTAG_set_padding(msg_state.jtag_handler, JTAGPaddingTypes_IRPost,
                                  (data[1] << 8) | data[0]);
             if (status != ST_OK)
                 ASD_log(ASD_LogLevel_Error, ASD_LogStream_SDK,
@@ -1575,7 +1543,7 @@ STATUS write_cfg(ASD_MSG* state, const writeCfg cmd, struct packet_data* packet)
                     "Setting IRPre padding to %d", (data[1] << 8) | data[0]);
 #endif
             status =
-                JTAG_set_padding(state->jtag_handler, JTAGPaddingTypes_IRPre,
+                JTAG_set_padding(msg_state.jtag_handler, JTAGPaddingTypes_IRPre,
                                  (data[1] << 8) | data[0]);
             if (status != ST_OK)
                 ASD_log(ASD_LogLevel_Error, ASD_LogStream_SDK,
@@ -1600,7 +1568,7 @@ STATUS write_cfg(ASD_MSG* state, const writeCfg cmd, struct packet_data* packet)
             ASD_log(ASD_LogLevel_Debug, ASD_LogStream_SDK, ASD_LogOption_None,
                     "PRDY Timeout config set to %d", data[0]);
 #endif
-            state->prdy_timeout = data[0];
+            msg_state.prdy_timeout = data[0];
             status = ST_OK;
         }
     }
@@ -1622,7 +1590,7 @@ static void get_scan_length(const unsigned char cmd, uint8_t* num_of_bits,
     }
 }
 
-STATUS determine_shift_end_state(ASD_MSG* state, ScanType scan_type,
+STATUS determine_shift_end_state(ScanType scan_type,
                                  struct packet_data* packet,
                                  enum jtag_states* end_state)
 {
@@ -1631,12 +1599,12 @@ STATUS determine_shift_end_state(ASD_MSG* state, ScanType scan_type,
     unsigned int next_cmd2_counter = 0;
     STATUS status;
 
-    if (!state || !packet || !end_state)
+    if (!packet || !end_state)
         return ST_ERR;
 
     // First we will get the default end_state, to use if there are
     // no more bytes to read from the packet.
-    status = JTAG_get_tap_state(state->jtag_handler, end_state);
+    status = JTAG_get_tap_state(msg_state.jtag_handler, end_state);
 
     if (status == ST_OK)
     {
@@ -1652,7 +1620,7 @@ STATUS determine_shift_end_state(ASD_MSG* state, ScanType scan_type,
 
                 // In hardware mode, we must peek ahead for the next tap state
                 // to determine the end state
-                if (state->asd_cfg->jtag.mode == JTAG_DRIVER_MODE_HARDWARE)
+                if (msg_state.asd_cfg->jtag.mode == JTAG_DRIVER_MODE_HARDWARE)
                 {
                     next_cmd2_ptr = get_packet_data(packet, 1);
                     next_cmd2_counter++;
@@ -1760,132 +1728,136 @@ STATUS determine_shift_end_state(ASD_MSG* state, ScanType scan_type,
     return status;
 }
 
-STATUS asd_msg_read(ASD_MSG* state, void* conn, bool* data_pending)
+STATUS asd_msg_read(void)
 {
     STATUS result = ST_ERR;
+    STATUS status = ST_ERR;
+    bool b_data_pending = false;
 
-    if (state && conn && data_pending)
+    struct asd_message* msg = &msg_state.in_msg.msg;
+    switch (msg_state.in_msg.read_state)
     {
-        struct asd_message* msg = &state->in_msg.msg;
-        switch (state->in_msg.read_state)
+        case READ_STATE_INITIAL:
         {
-            case READ_STATE_INITIAL:
-            {
-                explicit_bzero(&msg->header, sizeof(struct message_header));
-                explicit_bzero(&msg->buffer, MAX_DATA_SIZE);
-                state->in_msg.read_state = READ_STATE_HEADER;
-                state->in_msg.read_index = 0;
-                state->in_msg.data_size = 0;
-                // do not 'break' here, continue on and read the header
-            }
-            case READ_STATE_HEADER:
-            {
-                void* buffer =
-                    (void*)(&(msg->header) + state->in_msg.read_index);
-                size_t num_to_read =
-                    sizeof(msg->header) - state->in_msg.read_index;
+            explicit_bzero(&msg->header, sizeof(struct message_header));
+            explicit_bzero(&msg->buffer, MAX_DATA_SIZE);
+            msg_state.in_msg.read_state = READ_STATE_HEADER;
+            msg_state.in_msg.read_index = 0;
+            msg_state.in_msg.data_size = 0;
+            // do not 'break' here, continue on and read the header
+        }
+        case READ_STATE_HEADER:
+        {
+            void* buffer =
+                (void*)(&(msg->header) + msg_state.in_msg.read_index);
+            size_t num_to_read =
+                sizeof(msg->header) - msg_state.in_msg.read_index;
 
-                result =
-                    state->read_function(state->callback_state, conn, buffer,
-                                         &num_to_read, data_pending);
+            size_t size = asd_api_server_read(buffer, num_to_read, NULL);
 
-                if (result == ST_OK)
+            if (size > 0)
+            {
+                result = ST_OK;
+                num_to_read -= size;
+                if (num_to_read == 0)
                 {
-                    if (num_to_read == 0)
+                    int data_size = get_message_size(msg);
+                    if (data_size == -1)
                     {
-                        int data_size = get_message_size(msg);
-                        if (data_size == -1)
-                        {
-                            ASD_log(ASD_LogLevel_Error, ASD_LogStream_Daemon,
-                                    ASD_LogOption_None,
-                                    "Failed to read header size.");
-                            send_error_message(state, msg,
-                                               ASD_FAILURE_HEADER_SIZE);
-                            state->in_msg.read_state = READ_STATE_INITIAL;
-                            state->in_msg.read_index = 0;
-                            result = ST_ERR;
-                        }
-                        else if (data_size > 0)
-                        {
-                            state->in_msg.read_state = READ_STATE_BUFFER;
-                            state->in_msg.read_index = 0;
-                            state->in_msg.data_size = data_size;
-                        }
-                        else
-                        {
-                            // we have finished
-                            // reading a message and
-                            // there is no buffer to
-                            // read. Set back to
-                            // initial state for
-                            // next packet and
-                            // process message.
-                            state->in_msg.read_state = READ_STATE_INITIAL;
-                            result = asd_msg_on_msg_recv(state);
-                            if (result == ST_ERR)
-                                break;
-                        }
+                        ASD_log(ASD_LogLevel_Error, ASD_LogStream_Daemon,
+                                ASD_LogOption_None,
+                                "Failed to read header size.");
+                        send_error_message( msg,
+                                           ASD_FAILURE_HEADER_SIZE);
+                        msg_state.in_msg.read_state = READ_STATE_INITIAL;
+                        msg_state.in_msg.read_index = 0;
+                        result = ST_ERR;
+                    }
+                    else if (data_size > 0)
+                    {
+                        msg_state.in_msg.read_state = READ_STATE_BUFFER;
+                        msg_state.in_msg.read_index = 0;
+                        msg_state.in_msg.data_size = data_size;
                     }
                     else
                     {
-                        state->in_msg.read_index =
-                            sizeof(msg->header) - num_to_read;
-#ifdef ENABLE_DEBUG_LOGGING
-                        ASD_log(ASD_LogLevel_Debug, ASD_LogStream_Daemon,
-                                ASD_LogOption_None,
-                                "Socket buffer read not complete (%d of %d)",
-                                state->in_msg.read_index, sizeof(msg->header));
-#endif
-                    }
-                }
-                // we can skip the break is the buffer is ready to read
-                if (state->in_msg.read_state != READ_STATE_BUFFER ||
-                    !*data_pending)
-                    break;
-            }
-            case READ_STATE_BUFFER:
-            {
-                void* buffer = (void*)(msg->buffer + state->in_msg.read_index);
-                size_t num_to_read = (size_t)(state->in_msg.data_size -
-                                              state->in_msg.read_index);
-
-                result =
-                    state->read_function(state->callback_state, conn, buffer,
-                                         &num_to_read, data_pending);
-
-                if (result == ST_OK)
-                {
-                    if (num_to_read == 0)
-                    {
-                        // we have finished reading a
-                        // packet. Set back to initial
-                        // state for next packet.
-                        state->in_msg.read_state = READ_STATE_INITIAL;
-                        result = asd_msg_on_msg_recv(state);
+                        // we have finished
+                        // reading a message and
+                        // there is no buffer to
+                        // read. Set back to
+                        // initial state for
+                        // next packet and
+                        // process message.
+                        msg_state.in_msg.read_state = READ_STATE_INITIAL;
+                        result = asd_msg_on_msg_recv();
                         if (result == ST_ERR)
                             break;
                     }
-                    else
-                    {
-                        state->in_msg.read_index =
-                            state->in_msg.data_size - num_to_read;
-#ifdef ENABLE_DEBUG_LOGGING
-                        ASD_log(ASD_LogLevel_Debug, ASD_LogStream_Daemon,
-                                ASD_LogOption_None,
-                                "Socket buffer read not complete (%d of %d)",
-                                state->in_msg.read_index,
-                                state->in_msg.data_size);
-#endif
-                    }
                 }
+                else
+                {
+                    msg_state.in_msg.read_index =
+                        sizeof(msg->header) - num_to_read;
+#ifdef ENABLE_DEBUG_LOGGING
+                    ASD_log(ASD_LogLevel_Debug, ASD_LogStream_Daemon,
+                            ASD_LogOption_None,
+                            "Socket buffer read not complete (%d of %d)",
+                            msg_state.in_msg.read_index, sizeof(msg->header));
+#endif
+                }
+            }
+
+            status = asd_api_server_ioctl(NULL, &b_data_pending,
+                                          IOCTL_SERVER_IS_DATA_PENDING);
+            if (status == ST_ERR)
                 break;
-            }
-            default:
+            // we can skip the break if the buffer is ready to read
+            if (msg_state.in_msg.read_state != READ_STATE_BUFFER ||
+                b_data_pending == false)
+                break;
+        }
+        case READ_STATE_BUFFER:
+        {
+            void* buffer = (void*)(msg->buffer + msg_state.in_msg.read_index);
+            size_t num_to_read = (size_t)(msg_state.in_msg.data_size -
+                                     msg_state.in_msg.read_index);
+
+            size_t size = asd_api_server_read(buffer, num_to_read, NULL);
+
+            if (size > 0)
             {
-                ASD_log(ASD_LogLevel_Error, ASD_LogStream_Daemon,
-                        ASD_LogOption_None, "Invalid socket read state: %d",
-                        state->in_msg.read_state);
+                result = ST_OK;
+                num_to_read -= size;
+                if (num_to_read == 0)
+                {
+                    // we have finished reading a
+                    // packet. Set back to initial
+                    // state for next packet.
+                    msg_state.in_msg.read_state = READ_STATE_INITIAL;
+                    result = asd_msg_on_msg_recv();
+                    if (result == ST_ERR)
+                        break;
+                }
+                else
+                {
+                    msg_state.in_msg.read_index =
+                        msg_state.in_msg.data_size - num_to_read;
+#ifdef ENABLE_DEBUG_LOGGING
+                    ASD_log(ASD_LogLevel_Debug, ASD_LogStream_Daemon,
+                            ASD_LogOption_None,
+                            "Socket buffer read not complete (%d of %d)",
+                            msg_state.in_msg.read_index,
+                            msg_state.in_msg.data_size);
+#endif
+                }
             }
+            break;
+        }
+        default:
+        {
+            ASD_log(ASD_LogLevel_Error, ASD_LogStream_Daemon,
+                    ASD_LogOption_None, "Invalid socket read state: %d",
+                    msg_state.in_msg.read_state);
         }
     }
     return result;
@@ -1925,12 +1897,12 @@ int get_message_size(struct asd_message* s_message)
     return result;
 }
 
-STATUS send_response(ASD_MSG* state, struct asd_message* message)
+STATUS send_response(struct asd_message* message)
 {
     unsigned char send_buffer[MAX_PACKET_SIZE];
     size_t send_buffer_size = 0;
 
-    if (!state || !message)
+    if (!message)
         return ST_ERR;
 
     int size = get_message_size(message);
@@ -1976,32 +1948,36 @@ STATUS send_response(ASD_MSG* state, struct asd_message* message)
                 "memcpy_s: message buffer to send buffer offset copy failed.");
     }
 
-    return state->send_function(state->callback_state, send_buffer,
-                                send_buffer_size);
+    size = asd_api_server_write(send_buffer, send_buffer_size, NULL);
+
+    if (size != send_buffer_size)
+        return ST_ERR;
+
+    return ST_OK;
 }
 
-STATUS asd_msg_get_fds(ASD_MSG* state, target_fdarr_t* fds, int* num_fds)
+STATUS asd_msg_get_fds(target_fdarr_t* fds, int* num_fds)
 {
     STATUS result = ST_ERR;
 
-    if (state == NULL || fds == NULL || num_fds == NULL)
+    if (fds == NULL || num_fds == NULL)
     {
         ASD_log(ASD_LogLevel_Error, ASD_LogStream_Daemon, ASD_LogOption_None,
                 "asd_msg_get_fds, invalid param(s)");
     }
     else
     {
-        struct asd_message* msg = &state->in_msg.msg;
+        struct asd_message* msg = &msg_state.in_msg.msg;
         // skip target_get_fds call for AGENT_CONTROL_TYPE commands
         if (msg->header.type != AGENT_CONTROL_TYPE)
         {
-            result = target_get_fds(state->target_handler, fds, num_fds);
+            result = target_get_fds(msg_state.target_handler, fds, num_fds);
         }
     }
     return result;
 }
 
-static STATUS send_pin_event(ASD_MSG* state, ASD_EVENT value)
+static STATUS send_pin_event(ASD_EVENT value)
 {
     STATUS result;
     struct asd_message message = {{0}};
@@ -2013,7 +1989,7 @@ static STATUS send_pin_event(ASD_MSG* state, ASD_EVENT value)
     message.header.origin_id = BROADCAST_MESSAGE_ORIGIN_ID;
     message.buffer[0] = (value & 0xFF);
 
-    result = send_response(state, &message);
+    result = send_response(&message);
     if (result != ST_OK)
     {
         ASD_log(ASD_LogLevel_Error, ASD_LogStream_SDK, ASD_LogOption_No_Remote,
@@ -2022,48 +1998,39 @@ static STATUS send_pin_event(ASD_MSG* state, ASD_EVENT value)
     return result;
 }
 
-STATUS asd_msg_event(ASD_MSG* state, struct pollfd poll_fd)
+STATUS asd_msg_event(struct pollfd poll_fd)
 {
     STATUS result;
     ASD_EVENT event;
-    struct asd_message* msg = &state->in_msg.msg;
+    struct asd_message* msg = &msg_state.in_msg.msg;
 
-    if (state == NULL)
-    {
-        ASD_log(ASD_LogLevel_Error, ASD_LogStream_Daemon, ASD_LogOption_None,
-                "asd_msg_event invalid state");
-        result = ST_ERR;
-    }
-    else
-    {
-        result = target_event(state->target_handler, poll_fd, &event);
+    result = target_event(msg_state.target_handler, poll_fd, &event);
 
-        if (result == ST_OK)
+    if (result == ST_OK)
+    {
+        if (event == ASD_EVENT_XDP_PRESENT)
         {
-            if (event == ASD_EVENT_XDP_PRESENT)
+            // return an error so that everything
+            // can be shut down if condition to ignore
+            // XDP is not set.
+            send_error_message( msg, ASD_FAILURE_XDP_PRESENT);
+            if (msg_state.asd_cfg->jtag.xdp_fail_enable == true)
             {
-                // return an error so that everything
-                // can be shut down if condition to ignore
-                // XDP is not set.
-                send_error_message(state, msg, ASD_FAILURE_XDP_PRESENT);
-                if (state->xdp_fail_enable == true)
-                {
-                    result = ST_ERR;
-                }
+                result = ST_ERR;
             }
-            else if (event != ASD_EVENT_NONE)
-            {
-                result = send_pin_event(state, event);
-            }
+        }
+        else if (event != ASD_EVENT_NONE)
+        {
+            result = send_pin_event(event);
         }
     }
     return result;
 }
 
-STATUS asd_write_set_active_chain_event(ASD_MSG* state, uint8_t scan_chain)
+STATUS asd_write_set_active_chain_event(uint8_t scan_chain)
 {
     STATUS result;
-    result = target_write(state->target_handler, PIN_TCK_MUX_SELECT,
+    result = target_write(msg_state.target_handler, PIN_TCK_MUX_SELECT,
                           scan_chain == SCAN_CHAIN_1);
     if (result != ST_OK)
     {
@@ -2071,7 +2038,7 @@ STATUS asd_write_set_active_chain_event(ASD_MSG* state, uint8_t scan_chain)
                 "target_jtag_chain_select failed, %d", result);
         return result;
     }
-    result = JTAG_set_active_chain(state->jtag_handler, (scanChain)scan_chain);
+    result = JTAG_set_active_chain(msg_state.jtag_handler, (scanChain)scan_chain);
     if (result != ST_OK)
     {
         ASD_log(ASD_LogLevel_Error, ASD_LogStream_SDK, ASD_LogOption_None,
@@ -2080,22 +2047,22 @@ STATUS asd_write_set_active_chain_event(ASD_MSG* state, uint8_t scan_chain)
     return result;
 }
 
-bus_config_type bus_type(ASD_MSG* state, uint8_t bus)
+bus_config_type bus_type(uint8_t bus)
 {
     for (int i = 0; i < MAX_IxC_BUSES; i++)
     {
-        if (state->buscfg->bus_config_map[i] == bus)
-            return state->buscfg->bus_config_type[i];
+        if (msg_state.buscfg->bus_config_map[i] == bus)
+            return msg_state.buscfg->bus_config_type[i];
     }
     return BUS_CONFIG_NOT_ALLOWED;
 }
 
-STATUS do_bus_select_command(ASD_MSG* state, struct packet_data* packet)
+STATUS do_bus_select_command(struct packet_data* packet)
 {
     STATUS status = ST_OK;
     uint8_t* data_ptr = get_packet_data(packet, 1);
 
-    if (data_ptr == NULL || state == NULL)
+    if (data_ptr == NULL)
     {
         ASD_log(ASD_LogLevel_Error, ASD_LogStream_I2C, ASD_LogOption_None,
                 "Failed to read data for I2C_WRITE_CFG_BUS_SELECT, "
@@ -2104,54 +2071,54 @@ STATUS do_bus_select_command(ASD_MSG* state, struct packet_data* packet)
     }
 
     uint8_t bus = (uint8_t)*data_ptr;
-    if (state->buscfg == NULL)
+    if (msg_state.buscfg == NULL)
     {
         ASD_log(ASD_LogLevel_Error, ASD_LogStream_I2C, ASD_LogOption_None,
-                "state->buscfg == NULL");
+                "msg_state.buscfg == NULL");
         return ST_ERR;
     }
 
     // Release lock on previous bus and lock selected bus if required.
-    if (state->buscfg->default_bus != bus)
+    if (msg_state.buscfg->default_bus != bus)
     {
-        status = dev_flock(state, state->buscfg->default_bus, LOCK_UN);
+        status = dev_flock(msg_state.buscfg->default_bus, LOCK_UN);
         if (status != ST_OK)
         {
             ASD_log(ASD_LogLevel_Error, ASD_LogStream_SDK, ASD_LogOption_None,
                     "Failed to remove dev lock ");
-            send_error_message(state, &packet, ASD_FAILURE_REMOVE_I2C_LOCK);
+            send_error_message( &packet, ASD_FAILURE_REMOVE_I2C_LOCK);
         }
-        status = dev_flock(state, bus, LOCK_EX);
+        status = dev_flock(bus, LOCK_EX);
         if (status != ST_OK)
         {
             ASD_log(ASD_LogLevel_Error, ASD_LogStream_SDK, ASD_LogOption_None,
                     "Failed to remove dev lock");
-            send_error_message(state, &packet, ASD_FAILURE_PROCESS_I2C_LOCK);
+            send_error_message( &packet, ASD_FAILURE_PROCESS_I2C_LOCK);
             return ST_ERR;
         }
     }
 
-    switch (bus_type(state, bus))
+    switch (bus_type(bus))
     {
         case BUS_CONFIG_I2C:
-            if (state->i2c_handler == NULL)
+            if (msg_state.i2c_handler == NULL)
             {
                 ASD_log(ASD_LogLevel_Debug, ASD_LogStream_I2C,
                         ASD_LogOption_None, "Null i2c handler on bus select");
                 status = ST_ERR;
                 break;
             }
-            status = i2c_bus_select(state->i2c_handler, bus);
+            status = i2c_bus_select(msg_state.i2c_handler, bus);
             break;
         case BUS_CONFIG_I3C:
-            if (state->i3c_handler == NULL)
+            if (msg_state.i3c_handler == NULL)
             {
                 ASD_log(ASD_LogLevel_Debug, ASD_LogStream_I2C,
                         ASD_LogOption_None, "Null i3c handler on bus select");
                 status = ST_ERR;
                 break;
             }
-            status = i3c_bus_select(state->i3c_handler, bus);
+            status = i3c_bus_select(msg_state.i3c_handler, bus);
             break;
         case BUS_CONFIG_NOT_ALLOWED:
         default:
@@ -2169,25 +2136,25 @@ STATUS do_bus_select_command(ASD_MSG* state, struct packet_data* packet)
     return status;
 }
 
-STATUS do_set_sclk_command(ASD_MSG* state, struct packet_data* packet)
+STATUS do_set_sclk_command(struct packet_data* packet)
 {
     STATUS status = ST_OK;
     uint8_t* data_ptr = get_packet_data(packet, 2);
 
-    if (data_ptr == NULL || state == NULL)
+    if (data_ptr == NULL)
     {
         ASD_log(ASD_LogLevel_Error, ASD_LogStream_I2C, ASD_LogOption_None,
                 "Failed to read data for I2C_WRITE_CFG_SCLK, short packet");
         return ST_ERR;
     }
 
-    uint8_t bus = state->buscfg->default_bus;
+    uint8_t bus = msg_state.buscfg->default_bus;
     uint8_t lsb = *data_ptr;
     uint8_t msb = *(data_ptr + 1);
-    switch (bus_type(state, bus))
+    switch (bus_type(bus))
     {
         case BUS_CONFIG_I2C:
-            if (state->i2c_handler == NULL)
+            if (msg_state.i2c_handler == NULL)
             {
                 ASD_log(ASD_LogLevel_Debug, ASD_LogStream_I2C,
                         ASD_LogOption_None, "Null i2c handler on set sclk");
@@ -2195,10 +2162,10 @@ STATUS do_set_sclk_command(ASD_MSG* state, struct packet_data* packet)
                 break;
             }
             status =
-                i2c_set_sclk(state->i2c_handler, (uint16_t)((msb << 8) + lsb));
+                i2c_set_sclk(msg_state.i2c_handler, (uint16_t)((msb << 8) + lsb));
             break;
         case BUS_CONFIG_I3C:
-            if (state->i3c_handler == NULL)
+            if (msg_state.i3c_handler == NULL)
             {
                 ASD_log(ASD_LogLevel_Debug, ASD_LogStream_I2C,
                         ASD_LogOption_None, "Null i3c handler on set sclk");
@@ -2206,7 +2173,7 @@ STATUS do_set_sclk_command(ASD_MSG* state, struct packet_data* packet)
                 break;
             }
             status =
-                i3c_set_sclk(state->i3c_handler, (uint16_t)((msb << 8) + lsb));
+                i3c_set_sclk(msg_state.i3c_handler, (uint16_t)((msb << 8) + lsb));
             break;
         case BUS_CONFIG_NOT_ALLOWED:
         default:
@@ -2342,40 +2309,40 @@ STATUS do_write_command(uint8_t cmd, I2C_Msg_Builder* builder,
     return status;
 }
 
-STATUS do_read_write(ASD_MSG* state, void* msg_set)
+STATUS do_read_write(void* msg_set)
 {
     STATUS status;
     uint8_t bus;
 
-    if (state == NULL || msg_set == NULL)
+    if (msg_set == NULL)
     {
         ASD_log(ASD_LogLevel_Error, ASD_LogStream_I2C, ASD_LogOption_None,
                 "Failed to read data for do_read_write operation");
         return ST_ERR;
     }
 
-    bus = state->buscfg->default_bus;
-    switch (bus_type(state, bus))
+    bus = msg_state.buscfg->default_bus;
+    switch (bus_type(bus))
     {
         case BUS_CONFIG_I2C:
-            if (state->i2c_handler == NULL)
+            if (msg_state.i2c_handler == NULL)
             {
                 ASD_log(ASD_LogLevel_Debug, ASD_LogStream_I2C,
                         ASD_LogOption_None, "Null i2c handler on read/write");
                 status = ST_ERR;
                 break;
             }
-            status = i2c_read_write(state->i2c_handler, msg_set);
+            status = i2c_read_write(msg_state.i2c_handler, msg_set);
             break;
         case BUS_CONFIG_I3C:
-            if (state->i3c_handler == NULL)
+            if (msg_state.i3c_handler == NULL)
             {
                 ASD_log(ASD_LogLevel_Debug, ASD_LogStream_I2C,
                         ASD_LogOption_None, "Null i3c handler on read/write");
                 status = ST_ERR;
                 break;
             }
-            status = i3c_read_write(state->i3c_handler, msg_set);
+            status = i3c_read_write(msg_state.i3c_handler, msg_set);
             break;
         case BUS_CONFIG_NOT_ALLOWED:
         default:
@@ -2392,14 +2359,14 @@ STATUS do_read_write(ASD_MSG* state, void* msg_set)
     return status;
 }
 
-STATUS build_responses(ASD_MSG* state, int* response_cnt,
+STATUS build_responses(int* response_cnt,
                        I2C_Msg_Builder* builder, bool ack)
 {
     STATUS status;
     asd_i2c_msg msg;
     u_int32_t num_i2c_messages = 0;
 
-    if (!state || !response_cnt || !builder)
+    if (!response_cnt || !builder)
     {
         ASD_log(ASD_LogLevel_Error, ASD_LogStream_I2C, ASD_LogOption_None,
                 "Invalid build_respones");
@@ -2424,13 +2391,13 @@ STATUS build_responses(ASD_MSG* state, int* response_cnt,
                     // buffer is too full for this next
                     // packet send response on socket with
                     // packet continuation bit set.
-                    state->out_msg.header.size_lsb =
+                    msg_state.out_msg.header.size_lsb =
                         (uint32_t)((*response_cnt) & 0xFF);
-                    state->out_msg.header.size_msb =
+                    msg_state.out_msg.header.size_msb =
                         (uint32_t)(((*response_cnt) >> 8) & 0x1F);
-                    state->out_msg.header.cmd_stat =
+                    msg_state.out_msg.header.cmd_stat =
                         ASD_SUCCESS | ASD_PACKET_CONTINUATION;
-                    status = send_response(state, &state->out_msg);
+                    status = send_response(&msg_state.out_msg);
                     if (status != ST_OK)
                     {
                         ASD_log(ASD_LogLevel_Error | ASD_LogOption_No_Remote,
@@ -2438,29 +2405,29 @@ STATUS build_responses(ASD_MSG* state, int* response_cnt,
                                 "Failed to send message back on the socket");
                         break;
                     }
-                    explicit_bzero(state->out_msg.buffer, MAX_DATA_SIZE);
+                    explicit_bzero(msg_state.out_msg.buffer, MAX_DATA_SIZE);
                     (*response_cnt) = 0;
                 }
 
                 uint8_t cmd_byte =
                     (uint8_t)(msg.read ? I2C_READ_MIN : I2C_WRITE_MIN) +
                     msg.length;
-                state->out_msg.buffer[(*response_cnt)++] = cmd_byte;
+                msg_state.out_msg.buffer[(*response_cnt)++] = cmd_byte;
                 // Linux driver does not return the address or
                 // read ACKs, but Open IPC and the Aurora SDK
                 // do. So we will just fake it here.
                 if (ack)
-                    state->out_msg.buffer[(*response_cnt)++] =
+                    msg_state.out_msg.buffer[(*response_cnt)++] =
                         (uint8_t)(I2C_ADDRESS_ACK + msg.length);
                 else
-                    state->out_msg.buffer[(*response_cnt)++] =
+                    msg_state.out_msg.buffer[(*response_cnt)++] =
                         (uint8_t)(msg.length);
 
                 if (msg.read)
                 {
                     for (int j = 0; j < msg.length; j++)
                     {
-                        state->out_msg.buffer[(*response_cnt)++] =
+                        msg_state.out_msg.buffer[(*response_cnt)++] =
                             msg.buffer[j]; // data
                     }
                 }
@@ -2471,7 +2438,7 @@ STATUS build_responses(ASD_MSG* state, int* response_cnt,
     return status;
 }
 
-STATUS process_i2c_messages(ASD_MSG* state, struct asd_message* in_msg)
+STATUS process_i2c_messages(struct asd_message* in_msg)
 {
     int response_cnt = 0;
     STATUS status;
@@ -2482,7 +2449,7 @@ STATUS process_i2c_messages(ASD_MSG* state, struct asd_message* in_msg)
     bool i2c_command_pending = false;
     bool force_stop = false;
 
-    if (!state || !in_msg)
+    if (!in_msg)
     {
         ASD_log(ASD_LogLevel_Error, ASD_LogStream_I2C, ASD_LogOption_None,
                 "Invalid process_i2c_messages input.");
@@ -2510,10 +2477,10 @@ STATUS process_i2c_messages(ASD_MSG* state, struct asd_message* in_msg)
         else
         {
 
-            explicit_bzero(&state->out_msg.header,
+            explicit_bzero(&msg_state.out_msg.header,
                            sizeof(struct message_header));
-            explicit_bzero(&state->out_msg.buffer, MAX_DATA_SIZE);
-            if (memcpy_s(&state->out_msg.header, sizeof(struct message_header),
+            explicit_bzero(&msg_state.out_msg.buffer, MAX_DATA_SIZE);
+            if (memcpy_s(&msg_state.out_msg.header, sizeof(struct message_header),
                          &in_msg->header, sizeof(struct message_header)))
             {
                 ASD_log(ASD_LogLevel_Error, ASD_LogStream_JTAG,
@@ -2544,20 +2511,29 @@ STATUS process_i2c_messages(ASD_MSG* state, struct asd_message* in_msg)
                 while (packet.used < packet.total)
                 {
                     data_ptr = get_packet_data(&packet, 1);
-
-                    cmd = *data_ptr;
+                    if (data_ptr == NULL)
+                    {
+                        ASD_log(ASD_LogLevel_Error, ASD_LogStream_SDK, ASD_LogOption_None,
+                                "Failed to read data for cmd, short packet");
+                        status = ST_ERR;
+                        break;
+                    }
+                    else
+                    {
+                        cmd = *data_ptr;
+                    }
                     if (cmd == I2C_WRITE_CFG_BUS_SELECT)
                     {
-                        status = do_bus_select_command(state, &packet);
+                        status = do_bus_select_command(&packet);
                         if (status != ST_OK)
                         {
-                            state->out_msg.header.size_lsb =
+                            msg_state.out_msg.header.size_lsb =
                                 (uint32_t)(response_cnt & 0xFF);
-                            state->out_msg.header.size_msb =
+                            msg_state.out_msg.header.size_msb =
                                 (uint32_t)((response_cnt >> 8) & 0x1F);
-                            state->out_msg.header.cmd_stat =
+                            msg_state.out_msg.header.cmd_stat =
                                 ASD_FAILURE_PROCESS_I2C_MSG;
-                            status = send_response(state, &state->out_msg);
+                            status = send_response(&msg_state.out_msg);
                             if (status != ST_OK)
                             {
                                 ASD_log(ASD_LogLevel_Error |
@@ -2571,7 +2547,7 @@ STATUS process_i2c_messages(ASD_MSG* state, struct asd_message* in_msg)
                     }
                     else if (cmd == I2C_WRITE_CFG_SCLK)
                     {
-                        status = do_set_sclk_command(state, &packet);
+                        status = do_set_sclk_command(&packet);
                     }
                     else if (cmd >= I2C_READ_MIN && cmd <= I2C_READ_MAX)
                     {
@@ -2609,7 +2585,7 @@ STATUS process_i2c_messages(ASD_MSG* state, struct asd_message* in_msg)
                     {
                         i2c_command_pending = false;
                         force_stop = false;
-                        status = do_read_write(state, builder->msg_set);
+                        status = do_read_write(builder->msg_set);
                         if (status != ST_OK)
                         {
                             ASD_log(ASD_LogLevel_Error, ASD_LogStream_I2C,
@@ -2617,7 +2593,7 @@ STATUS process_i2c_messages(ASD_MSG* state, struct asd_message* in_msg)
                                     "i2c_read_write failed, %d, assuming NAK",
                                     status);
                         }
-                        status = build_responses(state, &response_cnt, builder,
+                        status = build_responses(&response_cnt, builder,
                                                  (status == ST_OK));
                         if (status != ST_OK)
                         {
@@ -2648,10 +2624,10 @@ STATUS process_i2c_messages(ASD_MSG* state, struct asd_message* in_msg)
 
     if (status == ST_OK)
     {
-        state->out_msg.header.size_lsb = (uint32_t)(response_cnt & 0xFF);
-        state->out_msg.header.size_msb = (uint32_t)((response_cnt >> 8) & 0x1F);
-        state->out_msg.header.cmd_stat = ASD_SUCCESS;
-        status = send_response(state, &state->out_msg);
+        msg_state.out_msg.header.size_lsb = (uint32_t)(response_cnt & 0xFF);
+        msg_state.out_msg.header.size_msb = (uint32_t)((response_cnt >> 8) & 0x1F);
+        msg_state.out_msg.header.cmd_stat = ASD_SUCCESS;
+        status = send_response(&msg_state.out_msg);
         if (status != ST_OK)
         {
             ASD_log(ASD_LogLevel_Error | ASD_LogOption_No_Remote,

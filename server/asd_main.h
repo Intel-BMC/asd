@@ -33,7 +33,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <stddef.h>
 
 #include "asd_common.h"
-#include "asd_msg.h"
+#include "config.h"
 #include "authenticate.h"
 #include "ext_network.h"
 #include "logging.h"
@@ -72,7 +72,6 @@ typedef struct asd_args
 typedef struct asd_state
 {
     asd_args args;
-    ASD_MSG* asd_msg;
     int host_fd;
     int event_fd;
     config config;
@@ -97,8 +96,8 @@ int asd_main(int argc, char** argv);
 
 bool process_command_line(int argc, char** argv, asd_args* args);
 void showUsage(char** argv);
-STATUS init_asd_state(asd_state* state);
-STATUS send_out_msg_on_socket(void* state, unsigned char* buffer,
+STATUS init_asd_state(void);
+STATUS send_out_msg_on_socket(unsigned char* buffer,
                               size_t length);
 void deinit_asd_state(asd_state* state);
 STATUS on_client_disconnect(asd_state* state);
@@ -115,8 +114,8 @@ STATUS process_all_gpio_events(asd_state* state, const struct pollfd* poll_fds,
 STATUS process_client_message(asd_state* state, struct pollfd poll_fd);
 STATUS ensure_client_authenticated(asd_state* state, extnet_conn_t* p_extconn);
 
-STATUS read_data(asd_state* state, extnet_conn_t* p_extconn, void* buffer,
-                 size_t* num_to_read, bool* b_data_pending);
+size_t read_data(void* buffer, size_t length);
+bool is_data_pending(void);
 
 STATUS close_connection(asd_state* state);
 void log_client_address(const extnet_conn_t* p_extcon);

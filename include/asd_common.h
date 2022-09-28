@@ -31,6 +31,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <poll.h>
 
 #define MAX_DATA_SIZE 3000
 #define SUPPORTED_JTAG_CHAINS 2
@@ -337,5 +338,9 @@ typedef struct asd_i2c_msg
 //                                  C is the continue bit
 #define I2C_WRITE_MIN 0x60
 #define I2C_WRITE_MAX 0x7f
+
+#define NUM_GPIOS 14
+#define NUM_DBUS_FDS 1
+typedef struct pollfd target_fdarr_t[NUM_GPIOS + NUM_DBUS_FDS];
 
 #endif // COMMON_H

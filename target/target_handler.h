@@ -103,8 +103,6 @@ typedef struct event_configuration
     FUNC(BMC_PWRGD2)                                                           \
     FUNC(BMC_PWRGD3)
 
-#define NUM_GPIOS 14
-
 typedef enum
 {
     ALL_TARGET_CONTROL_GPIOS(TO_ENUM)
@@ -124,9 +122,6 @@ static const Target_Control_GPIOS ASD_PIN_TO_GPIO[] = {
     BMC_PRDY_N,      // PIN_PRDY
     BMC_TCK_MUX_SEL, // PIN_TCK_MUX_SELECT
 };
-
-#define NUM_DBUS_FDS 1
-typedef struct pollfd target_fdarr_t[NUM_GPIOS + NUM_DBUS_FDS];
 
 typedef STATUS (*TargetReadFunctionPtr)(struct Target_Control_Handle * state,
                                         int pin, int * value);

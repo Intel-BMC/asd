@@ -30,7 +30,6 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <stdbool.h>
 #include <stddef.h>
-
 #include "jtag_handler.h"
 #include "logging.h"
 
@@ -38,9 +37,11 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #define MAX_TDO_SIZE 2048
 #define DEFAULT_TAP_DATA_PATTERN 0xdeadbeefbad4f00d // for tap comparison
 #define SIZEOF_TAP_DATA_PATTERN 8
+#define IR08_SHIFT_SIZE 8        // 8  bits per uncore
+#define DEFAULT_IR_SHIFT_SIZE 11 // 11 bits per uncore
+#define IR12_SHIFT_SIZE 12       // 12 bits per uncore
 #define IR14_SHIFT_SIZE 14       // 14 bits per uncore
 #define IR16_SHIFT_SIZE 16       // 16 bits per uncore
-#define DEFAULT_IR_SHIFT_SIZE 11 // 11 bits per uncore
 #define MAX_IR_SHIFT_SIZE 0x400
 #define DEFAULT_NUMBER_TEST_ITERATIONS 1
 #define DEFAULT_IR_VALUE 2

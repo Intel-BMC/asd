@@ -131,8 +131,14 @@ STATUS gpio_get_value(int fd, int* value)
 
     if (value && fd >= 0)
     {
-        lseek(fd, 0, SEEK_SET);
-        read(fd, &ch, 1);
+        if(lseek(fd, 0, SEEK_SET) < 0)
+        {
+            return result;
+        }
+        if(read(fd, &ch, 1) < 0)
+        {
+            return result;
+        }
         *value = ch != '0' ? 1 : 0;
         result = ST_OK;
     }

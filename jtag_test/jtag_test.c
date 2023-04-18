@@ -62,7 +62,16 @@ const ASD_LogOption option = ASD_LogOption_None;
 uint64_t failures = 0;
 const ir_shift_size_map ir_map[] = {{0x0E7BB013, IR14_SHIFT_SIZE},
                                     {0x00044113, IR16_SHIFT_SIZE},
-                                    {0x00111113, IR16_SHIFT_SIZE}};
+                                    {0x00111113, IR16_SHIFT_SIZE},
+                                    {0x0E7C5013, IR14_SHIFT_SIZE},
+                                    {0x00128113, IR12_SHIFT_SIZE},
+                                    {0x00125113, IR16_SHIFT_SIZE},
+                                    {0x00138113, IR12_SHIFT_SIZE},
+                                    {0x0E7D4113, IR08_SHIFT_SIZE},
+                                    {0x0012d113, IR16_SHIFT_SIZE}};
+
+#define MAP_LINE_SIZE 55
+char ir_size_map_str[((sizeof(ir_map)/sizeof(ir_shift_size_map)) + 6) * MAP_LINE_SIZE];
 
 #ifndef UNIT_TEST_MAIN
 int main(int argc, char** argv)
@@ -190,6 +199,8 @@ bool parse_arguments(int argc, char** argv, jtag_test_args* args)
         {NULL, 0, NULL, 0},
     };
 
+    load_ir_size_map_str();
+
     while ((c = getopt_long(argc, argv, "fcri:ht:?", opts, NULL)) != -1)
     {
         switch (c)
@@ -312,31 +323,56 @@ bool parse_arguments(int argc, char** argv, jtag_test_args* args)
     return true;
 }
 
+void load_ir_size_map_str()
+{
+    int arr_size = sizeof(ir_map)/sizeof(ir_shift_size_map);
+    sprintf_s(&ir_size_map_str[0], MAP_LINE_SIZE,
+              "                             +------------+---------+\n");
+    sprintf_s(&ir_size_map_str[MAP_LINE_SIZE - 1], MAP_LINE_SIZE,
+              "                             |  ID CODE   | IR-SIZE |\n");
+    sprintf_s(&ir_size_map_str[(MAP_LINE_SIZE - 1) * 2], MAP_LINE_SIZE,
+              "                             +------------+---------+\n");
+
+    for (int i=0; i<arr_size; i++) {
+        sprintf_s(&ir_size_map_str[(MAP_LINE_SIZE - 1)*(3 + i)], MAP_LINE_SIZE,
+                  "                             | 0x%08x | %d%s   |\n",
+                  ir_map[i].signature,
+                  ir_map[i].ir_shift_size,
+                  ir_map[i].ir_shift_size < 10 ? "    ":
+                  ir_map[i].ir_shift_size < 100 ? "   ":
+                  ir_map[i].ir_shift_size < 1000 ? "  ": " ");
+    }
+    sprintf_s(&ir_size_map_str[(MAP_LINE_SIZE-1) * (arr_size+3)], MAP_LINE_SIZE,
+              "                             | DEFAULT    | %d%s   |\n",
+              DEFAULT_IR_SHIFT_SIZE,
+              DEFAULT_IR_SHIFT_SIZE < 10 ? "    ":
+              DEFAULT_IR_SHIFT_SIZE < 100 ? "   ":
+              DEFAULT_IR_SHIFT_SIZE < 1000 ? "  ": " ");
+
+    sprintf_s(&ir_size_map_str[(MAP_LINE_SIZE-1) * (arr_size+4)], MAP_LINE_SIZE,
+              "                             +------------+---------+\n");
+
+}
+
 void showUsage(char** argv)
 {
     ASD_log(
         ASD_LogLevel_Error, stream, option,
-        "\nUsage: %s [option]\n\n"
+        "\nVersion: %s \n"
+        "Usage: %s [option]\n\n"
         "  -f          Run endlessly until ctrl-c is used\n"
         "  -c          Complete all iterations and count failing cases\n"
         "  -r          Use random pattern\n"
         "  -i <number> Run [number] of iterations (default: %d)\n"
         "  -h          Run in Hardware JTAG mode (default: %s)\n"
-        "  -t <number> JTAG tck speed (default: %d)\n" // This can be
-        // treated
-        // differently on
-        // systems as
-        // needed. It can
-        // be a divisor or
-        // actual frequency
-        // as needed.
+        "  -t <number> JTAG tck divisor (default: %d)\n"
         "\n"
         "  --dr-overshift=<hex value> Specify 64bit overscan (default: "
         "0x%llx)\n"
-        "  --ir-size=<hex bits>       Specify IR size (default: 0x%x) (max: "
-        "0x%x)\n"
-        "                             0xb for 14nm-family\n"
-        "                             0xe for 10nm-family\n"
+        "  --ir-size=<hex bits>       Specify IR size (max: 0x%x)\n"
+        "                             See default IR size setting rules for\n"
+        "                             known ID codes in the following table:\n"
+        "%s"
         "  --dr-size=<hex bits>       Specify DR size (default: 0x%x) (max: "
         "0x%x)\n"
         "  --ir-value=<hex value>     Specify IR command (default: 0x%x)\n"
@@ -368,9 +404,10 @@ void showUsage(char** argv)
         "Read a register, such as SA_TAP_LR_UNIQUEID_CHAIN.\n"
         "     jtag_test --ir-value=0x22 --dr-size=0x40\n"
         "\n",
+        asd_version,
         argv[0], DEFAULT_NUMBER_TEST_ITERATIONS,
         DEFAULT_JTAG_CONTROLLER_MODE == SW_MODE ? "SW" : "HW", DEFAULT_JTAG_TCK,
-        DEFAULT_TAP_DATA_PATTERN, DEFAULT_IR_SHIFT_SIZE, MAX_IR_SHIFT_SIZE,
+        DEFAULT_TAP_DATA_PATTERN, MAX_IR_SHIFT_SIZE, ir_size_map_str,
         DEFAULT_DR_SHIFT_SIZE, MAX_DR_SHIFT_SIZE, DEFAULT_IR_VALUE,
         ASD_LogLevelString[DEFAULT_LOG_LEVEL],
         ASD_LogLevelString[ASD_LogLevel_Off],

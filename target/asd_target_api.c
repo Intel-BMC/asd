@@ -59,10 +59,12 @@ STATUS asd_target_init(config* asd_cfg)
         status = asd_api_server_ioctl(server_interface_version, &supported,
                                       IOCTL_SERVER_IS_INTERFACE_SUPPORTED);
     }
-    if(supported) {
+    if (status == ST_OK) {
+        if(supported) {
             status = asd_msg_init(asd_cfg);
-    } else {
+        } else {
             status = ST_ERR;
+        }
     }
     return status;
 }

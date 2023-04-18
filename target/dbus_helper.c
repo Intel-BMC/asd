@@ -113,8 +113,14 @@ STATUS dbus_deinitialize(Dbus_Handle* state)
     STATUS result = ST_ERR;
     if (state && state->bus)
     {
-        sd_bus_unref(state->bus);
-        result = ST_OK;
+        sd_bus_flush_close_unrefp(&state->bus);
+        if (close(state->fd) == 0)
+        {
+            state->fd = -1;
+            result = ST_OK;
+        }
+        state->power_state = STATE_UNKNOWN;
+        state->bus = NULL;
     }
     return result;
 }
@@ -271,6 +277,7 @@ STATUS dbus_call_set_property_async(const Dbus_Handle* state,
         sd_bus_error_set_errno(&error, retcode);
     }
     sd_bus_error_free(&error);
+    sd_bus_message_unref(m);
     return result;
 }
 
@@ -412,8 +419,7 @@ int match_callback(sd_bus_message* msg, void* userdata, sd_bus_error* error)
 STATUS dbus_get_path(const Dbus_Handle* state, char* name, char* path)
 {
     struct sd_bus_message* reply = NULL;
-    sd_bus_error error __attribute__((__cleanup__(sd_bus_error_free))) =
-        SD_BUS_ERROR_NULL;
+    sd_bus_error error = SD_BUS_ERROR_NULL;
     int retcode;
     char type;
     const char* str = NULL;
@@ -437,6 +443,8 @@ STATUS dbus_get_path(const Dbus_Handle* state, char* name, char* path)
         ASD_log(ASD_LogLevel_Error, stream, option, "sd_bus_call failed: %d",
                 retcode);
 #endif
+        sd_bus_error_free(&error);
+        sd_bus_message_unref(reply);
         return ST_ERR;
     }
 
@@ -447,6 +455,8 @@ STATUS dbus_get_path(const Dbus_Handle* state, char* name, char* path)
         ASD_log(ASD_LogLevel_Error, stream, option,
                 "Failed to get peek type: %d", retcode);
 #endif
+        sd_bus_error_free(&error);
+        sd_bus_message_unref(reply);
         return ST_ERR;
     }
 
@@ -457,6 +467,8 @@ STATUS dbus_get_path(const Dbus_Handle* state, char* name, char* path)
         ASD_log(ASD_LogLevel_Error, stream, option,
                 "Failed to enter container: %d", retcode);
 #endif
+        sd_bus_error_free(&error);
+        sd_bus_message_unref(reply);
         return ST_ERR;
     }
 
@@ -467,11 +479,15 @@ STATUS dbus_get_path(const Dbus_Handle* state, char* name, char* path)
         ASD_log(ASD_LogLevel_Error, stream, option, "Failed to read string: %d",
                 retcode);
 #endif
+        sd_bus_error_free(&error);
+        sd_bus_message_unref(reply);
         return ST_ERR;
     }
 
     if (str == NULL)
     {
+        sd_bus_error_free(&error);
+        sd_bus_message_unref(reply);
         return ST_ERR;
     }
 
@@ -485,11 +501,14 @@ STATUS dbus_get_path(const Dbus_Handle* state, char* name, char* path)
         ASD_log(ASD_LogLevel_Error, stream, option,
                 "strcpy_s: platform path failed");
 #endif
+        sd_bus_error_free(&error);
+        sd_bus_message_unref(reply);
         return ST_ERR;
     }
 
     sd_bus_message_exit_container(reply);
-
+    sd_bus_error_free(&error);
+    sd_bus_message_unref(reply);
     return ST_OK;
 }
 
@@ -531,14 +550,13 @@ STATUS dbus_get_platform_path(const Dbus_Handle* state, char* path)
 STATUS dbus_get_platform_id(const Dbus_Handle* state, uint64_t* pid)
 {
     STATUS result;
-    sd_bus_error error __attribute__((__cleanup__(sd_bus_error_free))) =
-        SD_BUS_ERROR_NULL;
+    sd_bus_error error = SD_BUS_ERROR_NULL;
     int retcode = 0;
     char path[MAX_PLATFORM_PATH_SIZE] = {0};
     static uint64_t platform_id = 0;
     static bool read_from_dbus = true;
 
-    if ((state == NULL) || (path == NULL))
+    if (state == NULL)
     {
         return ST_ERR;
     }
@@ -572,11 +590,12 @@ STATUS dbus_get_platform_id(const Dbus_Handle* state, uint64_t* pid)
         ASD_log(ASD_LogLevel_Error, stream, option,
                 "sd_bus_get_property_trivial failed %d", retcode);
 #endif
+        sd_bus_error_free(&error);
         return ST_ERR;
     }
     read_from_dbus = false;
     platform_id = *pid;
-
+    sd_bus_error_free(&error);
     return result;
 }
 
@@ -588,8 +607,7 @@ STATUS dbus_read_asd_config(const Dbus_Handle* state, const char* interface,
     static char path[MAX_PLATFORM_PATH_SIZE] = {0};
     bool* bval = NULL;
     char* str = NULL;
-    sd_bus_error error __attribute__((__cleanup__(sd_bus_error_free))) =
-        SD_BUS_ERROR_NULL;
+    sd_bus_error error = SD_BUS_ERROR_NULL;
 
     if ((state == NULL) || (name == NULL) || (interface == NULL) ||
         (var == NULL))
@@ -655,6 +673,7 @@ STATUS dbus_read_asd_config(const Dbus_Handle* state, const char* interface,
             result = ST_ERR;
             break;
     }
+    sd_bus_error_free(&error);
     return result;
 }
 
@@ -665,8 +684,7 @@ STATUS dbus_get_asd_interface_paths(const Dbus_Handle* state,
 {
     STATUS result = ST_OK;
     struct sd_bus_message* reply = NULL;
-    sd_bus_error error __attribute__((__cleanup__(sd_bus_error_free))) =
-        SD_BUS_ERROR_NULL;
+    sd_bus_error error = SD_BUS_ERROR_NULL;
     int retcode;
     char type;
     const char* str;
@@ -734,6 +752,12 @@ STATUS dbus_get_asd_interface_paths(const Dbus_Handle* state,
                     i, interfaces[i]);
         }
         retcode = sd_bus_message_exit_container(reply);
+        if (retcode < 0)
+        {
+            ASD_log(ASD_LogLevel_Error, stream, option,
+                "Failed to exit container: %d", retcode);
+            return ST_ERR;
+        }
     }
 
     return ST_OK;
@@ -744,12 +768,11 @@ STATUS dbus_get_platform_bus_config(const Dbus_Handle* state,
 {
     STATUS status = ST_OK;
     static char path[MAX_PLATFORM_PATH_SIZE] = {0};
-    char* str;
+    char* str = NULL;
     uint64_t bus = 0;
     int retcode = 0;
     int cmp = 0;
-    sd_bus_error error __attribute__((__cleanup__(sd_bus_error_free))) =
-        SD_BUS_ERROR_NULL;
+    sd_bus_error error = SD_BUS_ERROR_NULL;
 
     if ((state == NULL) || (busopt == NULL))
     {
@@ -863,6 +886,8 @@ STATUS dbus_get_platform_bus_config(const Dbus_Handle* state,
                 }
             }
         }
+        free(str);
+        str = NULL;
     }
 
     // If config read fails, then return all buses disabled
@@ -877,15 +902,14 @@ STATUS dbus_get_platform_bus_config(const Dbus_Handle* state,
             busopt->bus_config_map[i] = 0;
         }
     }
-
+    sd_bus_error_free(&error);
     return status;
 }
 
 STATUS dbus_read_i3c_ownership(const Dbus_Handle* state, I3c_Ownership* owner)
 {
     int retcode = 0;
-    sd_bus_error error __attribute__((__cleanup__(sd_bus_error_free))) =
-        SD_BUS_ERROR_NULL;
+    sd_bus_error error = SD_BUS_ERROR_NULL;
 
     if ((state == NULL) || (owner == NULL))
     {
@@ -904,15 +928,14 @@ STATUS dbus_read_i3c_ownership(const Dbus_Handle* state, I3c_Ownership* owner)
     }
     ASD_log(ASD_LogLevel_Debug, stream, option,
             "dbus_get_i3c_ownership IsBmcOwner %s", *owner ? "true" : "false");
-
+    sd_bus_error_free(&error);
     return ST_OK;
 }
 
 STATUS dbus_req_i3c_ownership(const Dbus_Handle* state, int* token)
 {
     struct sd_bus_message* reply = NULL;
-    sd_bus_error error __attribute__((__cleanup__(sd_bus_error_free))) =
-        SD_BUS_ERROR_NULL;
+    sd_bus_error error = SD_BUS_ERROR_NULL;
     int retcode;
     bool isOwner;
     char type;
@@ -930,6 +953,8 @@ STATUS dbus_req_i3c_ownership(const Dbus_Handle* state, int* token)
     {
         ASD_log(ASD_LogLevel_Error, stream, option,
                 "sd_bus_call_method RequestOwnership failed: %d", retcode);
+        sd_bus_error_free(&error);
+        sd_bus_message_unref(reply);
         return ST_ERR;
     }
 
@@ -938,6 +963,8 @@ STATUS dbus_req_i3c_ownership(const Dbus_Handle* state, int* token)
     {
         ASD_log(ASD_LogLevel_Error, stream, option,
                 "Failed to get peek type: %d", retcode);
+        sd_bus_error_free(&error);
+        sd_bus_message_unref(reply);
         return ST_ERR;
     }
 
@@ -946,6 +973,8 @@ STATUS dbus_req_i3c_ownership(const Dbus_Handle* state, int* token)
     {
         ASD_log(ASD_LogLevel_Error, stream, option,
                 "Failed to enter container: %d", retcode);
+        sd_bus_error_free(&error);
+        sd_bus_message_unref(reply);
         return ST_ERR;
     }
 
@@ -954,6 +983,8 @@ STATUS dbus_req_i3c_ownership(const Dbus_Handle* state, int* token)
     {
         ASD_log(ASD_LogLevel_Error, stream, option, "Failed to read token: %d",
                 retcode);
+        sd_bus_error_free(&error);
+        sd_bus_message_unref(reply);
         return ST_ERR;
     }
     ASD_log(ASD_LogLevel_Debug, stream, option, "Read token: %d", *token);
@@ -963,12 +994,15 @@ STATUS dbus_req_i3c_ownership(const Dbus_Handle* state, int* token)
     {
         ASD_log(ASD_LogLevel_Error, stream, option, "Failed to read bool: %d",
                 retcode);
+        sd_bus_error_free(&error);
+        sd_bus_message_unref(reply);
         return ST_ERR;
     }
     ASD_log(ASD_LogLevel_Debug, stream, option, "isOwner: %d %s", isOwner,
             isOwner ? "true" : "false");
 
     sd_bus_message_exit_container(reply);
+    sd_bus_error_free(&error);
     if (isOwner == false)
         return ST_ERR;
 
@@ -978,8 +1012,7 @@ STATUS dbus_req_i3c_ownership(const Dbus_Handle* state, int* token)
 STATUS dbus_rel_i3c_ownership(const Dbus_Handle* state, int token)
 {
     struct sd_bus_message* reply = NULL;
-    sd_bus_error error __attribute__((__cleanup__(sd_bus_error_free))) =
-        SD_BUS_ERROR_NULL;
+    sd_bus_error error = SD_BUS_ERROR_NULL;
     int retcode;
 
     if (state == NULL)
@@ -994,8 +1027,11 @@ STATUS dbus_rel_i3c_ownership(const Dbus_Handle* state, int token)
     {
         ASD_log(ASD_LogLevel_Error, stream, option,
                 "sd_bus_call_method ReleaseOwnership failed: %d", retcode);
+        sd_bus_error_free(&error);
+        sd_bus_message_unref(reply);
         return ST_ERR;
     }
-
+    sd_bus_error_free(&error);
+    sd_bus_message_unref(reply);
     return ST_OK;
 }

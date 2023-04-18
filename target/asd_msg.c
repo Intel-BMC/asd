@@ -750,7 +750,11 @@ void send_remote_log_message(ASD_LogLevel asd_level, ASD_LogStream asd_stream,
         msg.header.size_lsb = lsb_from_msg_size(buffer_length);
         msg.header.size_msb = msb_from_msg_size(buffer_length);
         msg.header.cmd_stat = ASD_SUCCESS;
-        send_response(&msg);
+        if (send_response(&msg) != ST_OK)
+        {
+            ASD_log(ASD_LogLevel_Error, ASD_LogStream_SDK, ASD_LogOption_No_Remote,
+                "Failed to send remote message to client");
+        }
     }
 }
 
@@ -1034,6 +1038,7 @@ STATUS process_jtag_message(struct asd_message* s_message)
                     uint8_t chain_bytes_length =
                         (index & SCAN_CHAIN_SELECT_MASK) + 1;
                     uint8_t chain_bytes[MAX_MULTICHAINS];
+                    explicit_bzero(chain_bytes, sizeof(chain_bytes));
                     // e.g.: chain_bytes_length = 1
                     // chain_bytes[0] = b'11111111 = Chain
                     // 0-7 are selected chain_bytes[1] =
@@ -1364,7 +1369,7 @@ STATUS process_jtag_message(struct asd_message* s_message)
         {
             ASD_log(ASD_LogLevel_Error, ASD_LogStream_JTAG, ASD_LogOption_None,
                     "memcpy_s: message header to out msg header copy failed.");
-            status = ST_ERR;
+            return ST_ERR;
         }
 
         msg_state.out_msg.header.size_lsb = lsb_from_msg_size(response_cnt);
@@ -1390,8 +1395,8 @@ STATUS write_cfg(const writeCfg cmd, struct packet_data* packet)
     if (cmd == JTAG_FREQ)
     {
         // JTAG_FREQ (Index 1, Size: 1 Byte)
-        //  Bit 7:6 – Prescale Value (b'00 – 1, b'01 – 2, b'10 – 4, b'11
-        //  – 8) Bit 5:0 – Divisor (1-64, 64 is expressed as value 0)
+        //  Bit 7:6 ï¿½ Prescale Value (b'00 ï¿½ 1, b'01 ï¿½ 2, b'10 ï¿½ 4, b'11
+        //  ï¿½ 8) Bit 5:0 ï¿½ Divisor (1-64, 64 is expressed as value 0)
         //  The TAP clock frequency is determined by dividing the system
         //  clock of the TAP Master first through the prescale value
         //  (1,2,4,8) and then through the divisor (1-64).
@@ -1615,6 +1620,9 @@ STATUS determine_shift_end_state(ScanType scan_type,
             if (*next_cmd_ptr >= TAP_STATE_MIN &&
                 *next_cmd_ptr <= TAP_STATE_MAX)
             {
+                ASD_log(ASD_LogLevel_Debug, ASD_LogStream_SDK,
+                        ASD_LogOption_None,
+                        "Next is TAP_STATE(0x%x)", *next_cmd_ptr);
                 // Next command is a tap state command
                 *end_state = (enum jtag_states)(*next_cmd_ptr & TAP_STATE_MASK);
 
@@ -1622,15 +1630,18 @@ STATUS determine_shift_end_state(ScanType scan_type,
                 // to determine the end state
                 if (msg_state.asd_cfg->jtag.mode == JTAG_DRIVER_MODE_HARDWARE)
                 {
-                    next_cmd2_ptr = get_packet_data(packet, 1);
-                    next_cmd2_counter++;
                     while (packet->used < packet->total)
                     {
+                        next_cmd2_ptr = get_packet_data(packet, 1);
+                        next_cmd2_counter++;
                         if (next_cmd2_ptr == NULL)
                             break;
                         if (*next_cmd2_ptr >= TAP_STATE_MIN &&
                             *next_cmd2_ptr <= TAP_STATE_MAX)
                         {
+                            ASD_log(ASD_LogLevel_Debug, ASD_LogStream_SDK,
+                                    ASD_LogOption_None,
+                                    "Next2 is TAP_STATE(0x%x)", *next_cmd2_ptr);
                             break;
                         }
                         else if (*next_cmd2_ptr == WRITE_EVENT_CONFIG ||
@@ -1640,6 +1651,10 @@ STATUS determine_shift_end_state(ScanType scan_type,
                                  *next_cmd2_ptr == WAIT_CYCLES_TCK_ENABLE ||
                                  *next_cmd2_ptr == JTAG_FREQ)
                         {
+                            ASD_log(ASD_LogLevel_Debug, ASD_LogStream_SDK,
+                                    ASD_LogOption_None,
+                                    "Next2 is 1 byte length: 0x%x",
+                                    *next_cmd2_ptr);
                             next_cmd2_ptr = get_packet_data(packet, 1);
                             next_cmd2_counter++;
                             continue;
@@ -1647,6 +1662,10 @@ STATUS determine_shift_end_state(ScanType scan_type,
                         else if (*next_cmd2_ptr == IR_PREFIX ||
                                  *next_cmd2_ptr == IR_POSTFIX)
                         {
+                            ASD_log(ASD_LogLevel_Debug, ASD_LogStream_SDK,
+                                    ASD_LogOption_None,
+                                    "Next2 is 2 byte length: 0x%x",
+                                    *next_cmd2_ptr);
                             next_cmd2_ptr = get_packet_data(packet, 2);
                             next_cmd2_counter = next_cmd2_counter + 2;
                             continue;
@@ -2199,6 +2218,7 @@ STATUS do_read_command(uint8_t cmd, I2C_Msg_Builder* builder,
     msg.length = (uint8_t)(cmd & I2C_LENGTH_MASK);
     msg.read = true;
 
+    explicit_bzero(msg.buffer, ASD_I2C_BUFFER_LEN);
     if (force_stop == NULL)
     {
 #ifdef ENABLE_DEBUG_LOGGING

@@ -41,11 +41,6 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "target_handler.h"
 #include "vprobe_handler.h"
 
-// Two simple rules for the version string are:
-// 1. less than 265 in length (or it will be truncated in the plugin)
-// 2. no dashes, as they are used later up the sw stack between components.
-static char asd_version[] = "ASD_BMC_v1.5.0";
-
 #define NUM_IN_FLIGHT_BUFFERS_TO_USE 20
 #define MAX_MULTICHAINS 16
 #define CHARS_PER_CHAIN 5

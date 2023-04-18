@@ -43,6 +43,10 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #define MAX_WAIT_CYCLES 256
 #define BROADCAST_MESSAGE_ORIGIN_ID 7
 #define MAX_FIELD_NAME_SIZE 40
+// Two simple rules for the version string are:
+// 1. less than 255 in length (or it will be truncated in the plugin)
+// 2. no dashes, as they are used later up the sw stack between components.
+static char asd_version[] = "ASD_BMC_v1.5.1";
 
 #define TO_ENUM(ENUM) ENUM,
 #define TO_STRING(STRING) #STRING,

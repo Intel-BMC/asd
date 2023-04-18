@@ -51,7 +51,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #define CHIP_FNAME_BUFF_SIZE 48
 #endif
 
-#define TARGET_JSON_MAX_LABEL_SIZE 50
+#define TARGET_JSON_MAX_LABEL_SIZE 40
 #define PIN_NAME_MAX_SIZE 40
 
 // Use this macro to override the i2c/i3c bus configuration described on the
@@ -145,7 +145,7 @@ static const char* PIN_TYPE_STRINGS[] = {ALL_PIN_TYPES(TO_STRING)};
 
 typedef struct Target_Control_GPIO
 {
-    char name[30];
+    char name[PIN_NAME_MAX_SIZE];
     int number;
     TargetReadFunctionPtr read;
     TargetWriteFunctionPtr write;

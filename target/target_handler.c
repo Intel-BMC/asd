@@ -314,6 +314,9 @@ Target_Control_Handle* TargetHandler()
     state->gpios[BMC_RSMRST_B].direction = GPIO_DIRECTION_IN;
     state->gpios[BMC_RSMRST_B].edge = GPIO_EDGE_NONE;
 
+    // BMC_CPU_PWRGD pin mapping is platform dependent. Please check
+    // At-scale-debug Software Guide to confirm the right connection
+    // for your system.
     strcpy_s(state->gpios[BMC_CPU_PWRGD].name,
              sizeof(state->gpios[BMC_CPU_PWRGD].name), "SIO_POWER_GOOD");
     state->gpios[BMC_CPU_PWRGD].direction = GPIO_DIRECTION_IN;
@@ -370,12 +373,18 @@ Target_Control_Handle* TargetHandler()
     state->gpios[RESET_BTN].type = PIN_DBUS;
     state->gpios[RESET_BTN].write = write_dbus_reset;
 
+    // BMC_PWRGD2 pin mapping is platform dependent. Please check
+    // At-scale-debug Software Guide to confirm the right connection
+    // for your system.
     strcpy_s(state->gpios[BMC_PWRGD2].name,
              sizeof(state->gpios[BMC_PWRGD2].name), "BMC_PWRGD2");
     state->gpios[BMC_PWRGD2].direction = GPIO_DIRECTION_IN;
     state->gpios[BMC_PWRGD2].edge = GPIO_EDGE_BOTH;
     state->gpios[BMC_PWRGD2].handler = on_power2_event;
 
+    // BMC_PWRGD3 pin mapping is platform dependent. Please check
+    // At-scale-debug Software Guide to confirm the right connection
+    // for your system.
     strcpy_s(state->gpios[BMC_PWRGD3].name,
              sizeof(state->gpios[BMC_PWRGD3].name), "BMC_PWRGD3");
     state->gpios[BMC_PWRGD3].direction = GPIO_DIRECTION_IN;
@@ -405,6 +414,7 @@ Target_Control_Handle* TargetHandler()
                     state->gpios[i].read = (TargetReadFunctionPtr) read_gpiod_pin;
                 if (state->gpios[i].write == NULL)
                     state->gpios[i].write = (TargetWriteFunctionPtr) write_gpiod_pin;
+                break;
 
              default:
                 if (state->gpios[i].read == NULL)
@@ -485,10 +495,18 @@ STATUS platform_override_gpio(const Dbus_Handle* dbus, char* interface,
                              TARGET_JSON_MAX_LABEL_SIZE, "PinName", &match);
                     if (match == 0)
                     {
+                        // Clear Pin Name
+                        memset_s((char*)gpio + TARGET_JSON_MAP[i].offset,
+                                 PIN_NAME_MAX_SIZE, 0x0, PIN_NAME_MAX_SIZE);
                         // Copy Pin Name from dbus object to
-                        memcpy_s((char*)gpio + TARGET_JSON_MAP[i].offset,
-                                 MAX_PLATFORM_PATH_SIZE, &rval.str,
-                                 strnlen_s(rval.str, MAX_PLATFORM_PATH_SIZE));
+                        if(memcpy_s((char*)gpio + TARGET_JSON_MAP[i].offset,
+                                 PIN_NAME_MAX_SIZE, &rval.str,
+                                 strnlen_s(rval.str, PIN_NAME_MAX_SIZE)))
+                        {
+                            ASD_log(ASD_LogLevel_Error, stream, option,
+                                    "memcpy_s: Pin Name to target failure");
+                            return ST_ERR;
+                        }
                         break;
                     }
                     // Convert strings to enum values and set values
@@ -577,6 +595,7 @@ STATUS target_initialize(Target_Control_Handle* state, bool xdp_fail_enable)
 
     if (result == ST_OK)
     {
+
         Target_Control_GPIO xdp_gpio = state->gpios[BMC_XDP_PRST_IN];
         result = xdp_gpio.read(state, BMC_XDP_PRST_IN, &value);
         if (result != ST_OK)
@@ -745,8 +764,13 @@ STATUS initialize_gpiod(Target_Control_GPIO* gpio)
     }
 
     explicit_bzero(chip_name, CHIP_BUFFER_SIZE);
-    memcpy_s(chip_name, CHIP_BUFFER_SIZE, GPIOD_DEV_ROOT_FOLDER,
-             GPIOD_DEV_ROOT_FOLDER_STRLEN);
+    if(memcpy_s(chip_name, CHIP_BUFFER_SIZE, GPIOD_DEV_ROOT_FOLDER,
+             GPIOD_DEV_ROOT_FOLDER_STRLEN))
+    {
+        ASD_log(ASD_LogLevel_Error, stream, option,
+            "memcpy_s: chip_name gpiod copy failure");
+        return ST_ERR;
+    }
 
     rv = gpiod_ctxless_find_line(
         gpio->name, &chip_name[GPIOD_DEV_ROOT_FOLDER_STRLEN],
@@ -1656,6 +1680,22 @@ STATUS target_get_fds(Target_Control_Handle* state, target_fdarr_t* fds,
     if (state->gpios[BMC_XDP_PRST_IN].fd != -1)
     {
         (*fds)[index].fd = state->gpios[BMC_XDP_PRST_IN].fd;
+        (*fds)[index].events = events;
+        index++;
+    }
+
+    get_pin_events(state->gpios[BMC_PWRGD2], &events);
+    if (state->gpios[BMC_PWRGD2].fd != -1)
+    {
+        (*fds)[index].fd = state->gpios[BMC_PWRGD2].fd;
+        (*fds)[index].events = events;
+        index++;
+    }
+
+    get_pin_events(state->gpios[BMC_PWRGD3], &events);
+    if (state->gpios[BMC_PWRGD3].fd != -1)
+    {
+        (*fds)[index].fd = state->gpios[BMC_PWRGD3].fd;
         (*fds)[index].events = events;
         index++;
     }

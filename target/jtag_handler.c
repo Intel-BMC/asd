@@ -264,10 +264,6 @@ STATUS JTAG_set_tap_state(JTAG_Handler* state, enum jtag_states tap_state)
 
     state->active_chain->tap_state = tap_state;
 
-    if ((tap_state == jtag_rti) || (tap_state == jtag_pau_dr))
-        if (JTAG_wait_cycles(state, 5) != ST_OK)
-            return ST_ERR;
-
     ASD_log(ASD_LogLevel_Info, stream, option, "Goto state: %s (%d)",
             tap_state >=
                     (sizeof(JtagStatesString) / sizeof(JtagStatesString[0]))
@@ -625,6 +621,11 @@ STATUS JTAG_set_jtag_tck(JTAG_Handler* state, unsigned int tck)
         return ST_ERR;
     }
 #else
+    // Set tck with a minimum of 1 to prevent division by 0.
+    if (tck == 0)
+    {
+        tck = 1;
+    }
     unsigned int frq = APB_FREQ / tck;
 
     if (ioctl(state->JTAG_driver_handle, JTAG_SIOCFREQ, &frq) < 0)

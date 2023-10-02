@@ -1,5 +1,5 @@
 /*
-Copyright (c) 2019, Intel Corporation
+Copyright (c) 2023, Intel Corporation
 
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are met:
@@ -782,8 +782,9 @@ STATUS dbus_get_platform_bus_config(const Dbus_Handle* state,
     // Load bus default config with all buses disabled
     busopt->enable_i2c = false;
     busopt->enable_i3c = false;
+    busopt->enable_spp = false;
 
-    for (int i = 0; i < MAX_IxC_BUSES; i++)
+    for (int i = 0; i < MAX_IxC_BUSES + MAX_SPP_BUSES; i++)
     {
         busopt->bus_config_type[i] = BUS_CONFIG_NOT_ALLOWED;
         busopt->bus_config_map[i] = 0;
@@ -807,8 +808,8 @@ STATUS dbus_get_platform_bus_config(const Dbus_Handle* state,
     static char interface[MAX_PLATFORM_PATH_SIZE] = {0};
     explicit_bzero(interface, sizeof(interface));
 
-    // Read i2c/i3c bus config from BusConfig entry inside ASD object
-    for (int i = 0; i < MAX_IxC_BUSES; i++)
+    // Read i2c/i3c/spp bus config from BusConfig entry inside ASD object
+    for (int i = 0, j = 0, k = 0; i < MAX_IxC_BUSES + MAX_SPP_BUSES; i++)
     {
         str = NULL;
         sprintf_s(interface, MAX_PLATFORM_PATH_SIZE, "%s.%s%d", ASD_CONFIG_PATH,
@@ -829,7 +830,6 @@ STATUS dbus_get_platform_bus_config(const Dbus_Handle* state,
         }
 
         ASD_log(ASD_LogLevel_Debug, stream, option, "BusNum read: %d", bus);
-        busopt->bus_config_map[i] = (uint8_t)bus;
 
         retcode =
             sd_bus_get_property_string(state->bus, ENTITY_MANAGER_SERVICE, path,
@@ -849,15 +849,24 @@ STATUS dbus_get_platform_bus_config(const Dbus_Handle* state,
                  BUS_CONFIG_TYPE_STRINGS[BUS_CONFIG_NOT_ALLOWED], &cmp);
         if (cmp == 0)
         {
-            busopt->bus_config_type[i] = BUS_CONFIG_NOT_ALLOWED;
+            busopt->bus_config_map[j] = (uint8_t)bus;
+            busopt->bus_config_type[j++] = BUS_CONFIG_NOT_ALLOWED;
         }
         else
         {
+            if (j >= MAX_IxC_BUSES || k >= MAX_SPP_BUSES)
+            {
+                ASD_log(ASD_LogLevel_Error, stream, option,
+                        "Max number of bus configs reached");
+                        status = ST_OK;
+                        break;
+            }
             strcmp_s(str, MAX_FIELD_NAME_SIZE,
                      BUS_CONFIG_TYPE_STRINGS[BUS_CONFIG_I2C], &cmp);
             if (cmp == 0)
             {
-                busopt->bus_config_type[i] = BUS_CONFIG_I2C;
+                busopt->bus_config_map[j] = (uint8_t)bus;
+                busopt->bus_config_type[j++] = BUS_CONFIG_I2C;
                 if (!busopt->enable_i2c)
                 {
                     busopt->enable_i2c = true;
@@ -870,7 +879,8 @@ STATUS dbus_get_platform_bus_config(const Dbus_Handle* state,
                          BUS_CONFIG_TYPE_STRINGS[BUS_CONFIG_I3C], &cmp);
                 if (cmp == 0)
                 {
-                    busopt->bus_config_type[i] = BUS_CONFIG_I3C;
+                    busopt->bus_config_map[j] = (uint8_t)bus;
+                    busopt->bus_config_type[j++] = BUS_CONFIG_I3C;
                     if (!busopt->enable_i3c)
                     {
                         busopt->enable_i3c = true;
@@ -879,10 +889,25 @@ STATUS dbus_get_platform_bus_config(const Dbus_Handle* state,
                 }
                 else
                 {
-                    ASD_log(ASD_LogLevel_Debug, stream, option,
-                            "Unknown bus config type");
-                    status = ST_ERR;
-                    break;
+                    strcmp_s(str, MAX_FIELD_NAME_SIZE,
+                             BUS_CONFIG_TYPE_STRINGS[BUS_CONFIG_SPP], &cmp);
+                    if (cmp == 0)
+                    {
+                        busopt->bus_config_map[MAX_IxC_BUSES + k] = (uint8_t)bus;
+                        busopt->bus_config_type[MAX_IxC_BUSES + k++] = BUS_CONFIG_SPP;
+                        if (!busopt->enable_spp)
+                        {
+                            busopt->enable_spp = true;
+                            busopt->bus = (uint8_t)bus;
+                        }
+                    }
+                    else
+                    {
+                        ASD_log(ASD_LogLevel_Debug, stream, option,
+                                "Unknown bus config type");
+                        status = ST_ERR;
+                        break;
+                    }
                 }
             }
         }

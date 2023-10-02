@@ -1,5 +1,5 @@
 /*
-Copyright (c) 2021, Intel Corporation
+Copyright (c) 2023, Intel Corporation
 
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are met:
@@ -46,7 +46,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 // Two simple rules for the version string are:
 // 1. less than 255 in length (or it will be truncated in the plugin)
 // 2. no dashes, as they are used later up the sw stack between components.
-static char asd_version[] = "ASD_BMC_v1.5.1";
+static char asd_version[] = "ASD_BMC_v1.5.2";
 
 #define TO_ENUM(ENUM) ENUM,
 #define TO_STRING(STRING) #STRING,
@@ -92,7 +92,8 @@ typedef enum
     PROBE_MODE_TYPE,
     DMA_TYPE,
     HARDWARE_LOG_EVENT = 5,
-    I2C_TYPE
+    I2C_TYPE,
+    SPP_TYPE
 } headerType;
 
 //// These values are based on the Interface.Pins definition in the OpenIPC
@@ -166,6 +167,11 @@ typedef enum
     ASD_FAILURE_HEADER_SIZE = 0x2F,
     ASD_FAILURE_XDP_PRESENT = 0x30,
     ASD_FAILURE_INIT_VPROBE_HANDLER = 0x31,
+    ASD_FAILURE_INIT_SPP_HANDLER = 0x3C,
+    ASD_FAILURE_PROCESS_SPP_MSG = 0x3D,
+    ASD_FAILURE_PROCESS_SPP_LOCK = 0x3E,
+    ASD_FAILURE_REMOVE_SPP_LOCK = 0x3F,
+    ASD_SPP_MSG_NOT_SUPPORTED = 0x40,
     ASD_UNKNOWN_ERROR = 0x7F,
     ASD_PACKET_CONTINUATION = 0x80,
 } ASDError;
@@ -213,12 +219,14 @@ typedef struct remote_logging_config
     };
 } __attribute__((packed)) remote_logging_config;
 
-#define MAX_IxC_BUSES 4
+#define MAX_IxC_BUSES 8
+#define MAX_SPP_BUSES 8
 
 #define ALL_BUS_CONFIG_TYPES(FUNC)                                             \
     FUNC(BUS_CONFIG_NOT_ALLOWED)                                               \
     FUNC(BUS_CONFIG_I2C)                                                       \
-    FUNC(BUS_CONFIG_I3C)
+    FUNC(BUS_CONFIG_I3C)                                                       \
+    FUNC(BUS_CONFIG_SPP)
 
 typedef enum
 {
@@ -232,8 +240,9 @@ typedef struct bus_options
 {
     bool enable_i2c;
     bool enable_i3c;
-    uint8_t bus_config_map[MAX_IxC_BUSES];
-    bus_config_type bus_config_type[MAX_IxC_BUSES];
+    bool enable_spp;
+    uint8_t bus_config_map[MAX_IxC_BUSES + MAX_SPP_BUSES];
+    bus_config_type bus_config_type[MAX_IxC_BUSES + MAX_SPP_BUSES];
     uint8_t bus;
 } bus_options;
 
@@ -342,6 +351,61 @@ typedef struct asd_i2c_msg
 //                                  C is the continue bit
 #define I2C_WRITE_MIN 0x60
 #define I2C_WRITE_MAX 0x7f
+
+//  SPPWriteConfig  0000cccc        c is config setting selector
+#define SPP_CFG_MIN 0x00
+#define SPP_CFG_MAX 0x0F
+
+#define SPP_CFG_BUS_SELECT 0x00
+
+
+//  SPPSend         00010000
+//                  nnnnnnnn        n is MSB of packet size in bytes
+//                  nnnnnnnn        LSB of n is included in the next byte
+#define SPP_SEND    0x10
+#define SPP_SEND_COMMAND_SIZE 3
+
+//  SPPReceive      00100000        n is MSB of packet size in bytes
+//                  nnnnnnnn        n is MSB of packet size in bytes
+//                  nnnnnnnn        LSB of n is included in the next byte
+#define SPP_RECEIVE 0x20
+#define SPP_RECEIVE_COMMAND_SIZE 3
+
+//  SPPSendCommand  00110000
+//                  nnnnnnnn        n is MSB of packet size in bytes
+//                  nnnnnnnn        LSB of n is included in the next byte
+//                  cccccccc        c is Command type:
+//                                      BroadcastResetAction    = 0x2A,
+//                                      DirectResetAction       = 0x9A,
+//                                      BpkOpcode               = 0xD7,
+//                                      DebugAction             = 0xD8,
+//                                      BroadcastDebugAction    = 0x58
+#define SPP_SEND_CMD 0x30
+#define SPP_SEND_CMD_COMMAND_SIZE 4
+
+//  SPPSendRcvCmd   01000000
+//                  nnnnnnnn        n is MSB of packet size in bytes
+//                  nnnnnnnn        LSB of n is included in the next byte
+//                  cccccccc        c is Command type:
+//                                      BroadcastResetAction    = 0x2A,
+//                                      DirectResetAction       = 0x9A,
+//                                      BpkOpcode               = 0xD7,
+//                                      DebugAction             = 0xD8,
+//                  mmmmmmmm        m is MSB of read packet size in bytes
+//                  mmmmmmmm        LSB of m is included in the next byte
+#define SPP_SEND_RECEIVE_CMD 0x40
+#define SPP_SEND_RECEIVE_CMD_COMMAND_SIZE 6
+
+//  SPPSetSimCmd    01010000
+//                  nnnnnnnn        n is MSB of packet size in bytes
+//                  nnnnnnnn        LSB of n is included in the next byte
+//  Used in stub mode to receive simulation data from the plugin.
+#define SPP_SET_SIM_DATA_CMD 0x50
+#define SPP_SET_SIM_DATA_CMD_COMMAND_SIZE 3
+
+#define SPP_XFER_LENGTH_MSB_MASK 0x0F
+#define SPP_XFER_LENGTH_LSB_MASK 0xFF
+#define SPP_CMD_MASK             0xF0
 
 #define NUM_GPIOS 14
 #define NUM_DBUS_FDS 1

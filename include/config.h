@@ -1,5 +1,5 @@
 /*
-Copyright (c) 2021, Intel Corporation
+Copyright (c) 2023, Intel Corporation
 
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are met:
@@ -48,9 +48,10 @@ typedef struct bus_config
 {
     bool enable_i2c;
     bool enable_i3c;
+    bool enable_spp;
     uint8_t default_bus;
-    bus_config_type bus_config_type[MAX_IxC_BUSES];
-    uint8_t bus_config_map[MAX_IxC_BUSES];
+    bus_config_type bus_config_type[MAX_IxC_BUSES + MAX_SPP_BUSES];
+    uint8_t bus_config_map[MAX_IxC_BUSES + MAX_SPP_BUSES];
 } bus_config;
 
 typedef struct config

@@ -1,5 +1,5 @@
 /*
-Copyright (c) 2021, Intel Corporation
+Copyright (c) 2023, Intel Corporation
 
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are met:
@@ -1146,9 +1146,11 @@ STATUS target_event(Target_Control_Handle* state, struct pollfd poll_fd,
 #endif
         result = dbus_process_event(state->dbus, event);
     }
-    else
+    else if ((poll_fd.revents & (POLLIN | POLLPRI))
 #ifdef GPIO_SYSFS_SUPPORT_DEPRECATED
-        if ((poll_fd.revents & POLL_GPIO) == POLL_GPIO)
+             || ((poll_fd.revents & POLL_GPIO) == POLL_GPIO)
+#endif
+            )
     {
 #ifdef ENABLE_DEBUG_LOGGING
         ASD_log(ASD_LogLevel_Debug, stream, option, "Handling event for fd: %d",
@@ -1156,44 +1158,13 @@ STATUS target_event(Target_Control_Handle* state, struct pollfd poll_fd,
 #endif
         for (i = 0; i < NUM_GPIOS; i++)
         {
-            if (state->gpios[i].type == PIN_GPIO)
+            if (state->gpios[i].fd == poll_fd.fd)
             {
-                if (state->gpios[i].fd == poll_fd.fd)
-                {
-                    // do a read to clear the event
-                    int dummy;
-                    gpio_get_value(poll_fd.fd, &dummy);
-                    result = state->gpios[i].handler(state, event);
+                result = target_clear_gpio_event(state, state->gpios[i]);
+                if (result != ST_OK)
                     break;
-                }
-            }
-        }
-    }
-    else
-#endif
-        if (poll_fd.revents & (POLLIN | POLLPRI))
-    {
-#ifdef ENABLE_DEBUG_LOGGING
-        ASD_log(ASD_LogLevel_Debug, stream, option, "Handling event for fd: %d",
-                poll_fd.fd);
-#endif
-        for (i = 0; i < NUM_GPIOS; i++)
-        {
-            if (state->gpios[i].type == PIN_GPIOD)
-            {
-                if (state->gpios[i].fd == poll_fd.fd)
-                {
-                    // clear the gpiod event
-                    struct gpiod_line_event levent;
-                    rv = gpiod_line_event_read(state->gpios[i].line, &levent);
-                    if (rv != 0)
-                    {
-                        result = ST_ERR;
-                        break;
-                    }
-                    result = state->gpios[i].handler(state, event);
-                    break;
-                }
+                result = state->gpios[i].handler(state, event);
+                break;
             }
         }
     }
@@ -1291,7 +1262,7 @@ STATUS on_prdy_event(Target_Control_Handle* state, ASD_EVENT* event)
     *event = ASD_EVENT_PRDY_EVENT;
     if (state->event_cfg.break_all)
     {
-    Target_Control_GPIO gpio = state->gpios[BMC_PREQ_N];
+        Target_Control_GPIO gpio = state->gpios[BMC_PREQ_N];
 #ifdef ENABLE_DEBUG_LOGGING
         ASD_log(ASD_LogLevel_Debug, stream, option,
                 "BreakAll detected PRDY, asserting PREQ");
@@ -1572,6 +1543,33 @@ STATUS target_write_event_config(Target_Control_Handle* state,
     return status;
 }
 
+STATUS target_clear_gpio_event(Target_Control_Handle* state,
+                               Target_Control_GPIO pin)
+{
+    STATUS status = ST_OK;
+    int rv = 0;
+
+#ifdef GPIO_SYSFS_SUPPORT_DEPRECATED
+    if (pin.type == PIN_GPIO)
+    {
+        // do a read to clear the event
+        int dummy;
+        gpio_get_value(pin.fd, &dummy);
+    }
+    else
+#endif
+    if (pin.type == PIN_GPIOD)
+    {
+        // clear the gpiod event
+        struct gpiod_line_event levent;
+        rv = gpiod_line_event_read(pin.line, &levent);
+        if (rv != 0)
+            status = ST_ERR;
+    }
+
+    return status;
+}
+
 STATUS target_wait_PRDY(Target_Control_Handle* state, const uint8_t log2time)
 {
     // The design for this calls for waiting for PRDY or until a timeout
@@ -1619,6 +1617,7 @@ STATUS target_wait_PRDY(Target_Control_Handle* state, const uint8_t log2time)
             ASD_log(ASD_LogLevel_Trace, stream, option,
                     "Wait PRDY complete, detected PRDY");
 #endif
+            result = target_clear_gpio_event(state, state->gpios[BMC_PRDY_N]);
         }
     }
     else
@@ -1831,8 +1830,10 @@ STATUS target_get_i2c_i3c_config(bus_options* busopt)
 
     busopt->enable_i2c = false;
     busopt->enable_i3c = false;
+    busopt->enable_spp = false;
 
-    for (int i = 0; i < MAX_IxC_BUSES; i++)
+
+    for (int i = 0; i < MAX_IxC_BUSES + MAX_SPP_BUSES; i++)
     {
         busopt->bus_config_type[i] = BUS_CONFIG_NOT_ALLOWED;
         busopt->bus_config_map[i] = 0;
@@ -1840,7 +1841,7 @@ STATUS target_get_i2c_i3c_config(bus_options* busopt)
 #endif
 
 #ifdef ENABLE_DEBUG_LOGGING
-    for (int i = 0; i < MAX_IxC_BUSES; i++)
+    for (int i = 0; i < MAX_IxC_BUSES + MAX_SPP_BUSES; i++)
     {
         ASD_log(ASD_LogLevel_Debug, stream, option, "Bus %d: %s",
                 busopt->bus_config_map[i],

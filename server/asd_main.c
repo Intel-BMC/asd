@@ -1,5 +1,5 @@
 /*
-Copyright (c) 2021, Intel Corporation
+Copyright (c) 2023, Intel Corporation
 
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are met:
@@ -87,11 +87,13 @@ bool process_command_line(int argc, char** argv, asd_args* args)
     int c = 0;
     opterr = 0;              // prevent getopt_long from printing shell messages
     uint8_t bus_counter = 0; // Up to 4 buses
+    uint8_t spp_counter = 0; // Up to 8 buses
 
     // Set Default argument values.
 
     args->busopt.enable_i2c = DEFAULT_I2C_ENABLE;
     args->busopt.enable_i3c = DEFAULT_I3C_ENABLE;
+    args->busopt.enable_spp = DEFAULT_SPP_ENABLE;
     args->busopt.bus = DEFAULT_I2C_BUS;
     args->use_syslog = DEFAULT_LOG_TO_SYSLOG;
     args->log_level = DEFAULT_LOG_LEVEL;
@@ -120,7 +122,7 @@ bool process_command_line(int argc, char** argv, asd_args* args)
         {NULL, 0, NULL, 0},
     };
 
-    while ((c = getopt_long(argc, argv, "p:uk:n:si:c:", opts, NULL)) != -1)
+    while ((c = getopt_long(argc, argv, "p:uk:n:si:c:d:", opts, NULL)) != -1)
     {
         switch (c)
         {
@@ -228,6 +230,46 @@ bool process_command_line(int argc, char** argv, asd_args* args)
                 }
                 break;
             }
+            case 'd':
+            {
+                char* pch;
+                uint8_t bus;
+                uint8_t spp_bus_index = 0;
+                bool first_spp = true;
+                char* endptr;
+                args->busopt.enable_spp = true;
+                pch = strtok(optarg, ",");
+                while (pch != NULL)
+                {
+                    errno = 0;
+                    bus = (uint8_t)strtol(pch, &endptr, 10);
+                    if ((errno == ERANGE) || (endptr == pch))
+                    {
+                        fprintf(stderr, "Wrong I3C bus list arguments(-d)\n");
+                        break;
+                    }
+                    if (spp_counter >= MAX_SPP_BUSES)
+                    {
+                        fprintf(stderr, "Discard I3C(SPP) bus: %d\n", bus);
+                    }
+                    else
+                    {
+                        if (first_spp)
+                        {
+                            args->busopt.bus = bus;
+                            first_spp = false;
+                        }
+                        fprintf(stderr, "Enabling I3C(SPP) bus: %d\n", bus);
+                        spp_bus_index = MAX_IxC_BUSES + spp_counter;
+                        args->busopt.bus_config_type[spp_bus_index] =
+                            BUS_CONFIG_SPP;
+                        args->busopt.bus_config_map[spp_bus_index] = bus;
+                    }
+                    pch = strtok(NULL, ",");
+                    spp_counter++;
+                }
+                break;
+            }
             case ARG_XDP:
             {
                 args->xdp_fail_enable = false;
@@ -278,12 +320,17 @@ void showUsage(char** argv)
         "              Use comma to enable multiple i2c buses: -i 2,9\n"
         "              The first bus will be used as default bus.\n"
         "              The total number of i2c/i3c bus assignments cannot\n"
-        "              exceed 4 buses.\n"
+        "              exceed %d buses.\n"
         "  -c <buses>  Decimal i3c allowed bus list(default: none)\n"
         "              Use comma to enable multiple i3c buses: -c 0,1,2,3\n"
         "              The first bus will be used as default bus.\n"
         "              The total number of i2c/i3c bus assignments cannot\n"
-        "              exceed 4 buses.\n"
+        "              exceed %d buses.\n"
+        "  -d <buses>  Decimal i3c debug(SPP) allowed bus list(default: none)\n"
+        "              Use comma to enable multiple i3c buses: -d 0,1,2,3\n"
+        "              The first bus will be used as default bus.\n"
+        "              The total number of i3c bus assignments cannot exceed\n"
+        "              8 buses.\n"
         "  --xdp-ignore               Connect ASD even with XDP connected\n"
         "                             Warning: Driving signals from both\n"
         "                             ASD and XDP may cause electrical issues\n"
@@ -308,6 +355,7 @@ void showUsage(char** argv)
         "                               %s\n"
         "                               %s\n"
         "                               %s\n"
+        "                               %s\n"
         "  --help                     Show this list\n"
         "\n"
         "Examples:\n"
@@ -321,6 +369,7 @@ void showUsage(char** argv)
         "     asd -n eth0\n"
         "\n",
         argv[0], DEFAULT_PORT, DEFAULT_CERT_FILE,
+        MAX_IxC_BUSES, MAX_IxC_BUSES,
         ASD_LogLevelString[DEFAULT_LOG_LEVEL],
         ASD_LogLevelString[ASD_LogLevel_Off],
         ASD_LogLevelString[ASD_LogLevel_Error],
@@ -333,7 +382,8 @@ void showUsage(char** argv)
         streamtostring(ASD_LogStream_Pins), streamtostring(ASD_LogStream_JTAG),
         streamtostring(ASD_LogStream_Network),
         streamtostring(ASD_LogStream_Daemon),
-        streamtostring(ASD_LogStream_SDK));
+        streamtostring(ASD_LogStream_SDK),
+        streamtostring(ASD_LogStream_SPP));
 }
 
 // This function maps the open ipc log levels to the levels
@@ -475,7 +525,9 @@ STATUS request_processing_loop(asd_state* state)
         session_fdarr_t session_fds = {-1};
         int n_clients = 0, i;
         int n_gpios = 0;
-        int n_timeout = -1;
+        int n_poll_ret = -1;
+        int n_timeout = -1;       // infinite
+        int n_poll_timeout = 10;  // 10 milliseconds
         int client_fd_index = 0;
         asd_target_interface_events target_events;
 
@@ -509,17 +561,30 @@ STATUS request_processing_loop(asd_state* state)
                 }
             }
         }
-        if (result == ST_OK &&
-            poll(poll_fds, (nfds_t)(client_fd_index + n_clients + n_gpios),
-                 n_timeout) == -1)
+        if (result == ST_OK)
         {
-            result = ST_ERR;
+            // Processing network events
+            n_poll_ret = poll(poll_fds, (nfds_t)(client_fd_index + n_clients),
+                              n_poll_timeout);
+
+            if (n_poll_ret == -1)      // poll error
+            {
+                result = ST_ERR;
+            }
+            else if (n_poll_ret > 0)   // poll returned with network events
+            {
+                if (poll_fds[HOST_FD_INDEX].revents & POLLIN)
+                {
+                    process_new_client(state, poll_fds, MAX_FDS, &n_clients,
+                                       client_fd_index);
+                }
+                process_all_client_messages(
+                    state, (const struct pollfd*)(&poll_fds[client_fd_index]),
+                    (size_t)n_clients);
+            }
         }
         if (result == ST_OK)
         {
-            if (poll_fds[HOST_FD_INDEX].revents & POLLIN)
-                process_new_client(state, poll_fds, MAX_FDS, &n_clients,
-                                   client_fd_index);
             if (n_gpios > 0)
             {
                 poll_asd_target_interface_events poll_target_fds;
@@ -534,9 +599,6 @@ STATUS request_processing_loop(asd_state* state)
                     continue;
                 }
             }
-            process_all_client_messages(
-                state, (const struct pollfd*)(&poll_fds[client_fd_index]),
-                (size_t)n_clients);
         }
         if (result != ST_OK)
             break;
@@ -819,13 +881,14 @@ STATUS on_client_connect(asd_state* state, extnet_conn_t* p_extcon)
                     "Failed to read i2c/i3c platform config");
         }
 #endif
-        if (state->args.busopt.enable_i2c || state->args.busopt.enable_i3c)
+        if (state->args.busopt.enable_i2c || state->args.busopt.enable_i3c ||
+            state->args.busopt.enable_spp)
         {
             result = set_config_defaults(&state->config, &state->args.busopt);
         }
         else
         {
-            for (int i = 0; i < MAX_IxC_BUSES; i++)
+            for (int i = 0; i < MAX_IxC_BUSES + MAX_SPP_BUSES; i++)
             {
                 if (target_bus_options.bus_config_type[i] == BUS_CONFIG_I2C)
                 {
@@ -837,6 +900,12 @@ STATUS on_client_connect(asd_state* state, extnet_conn_t* p_extcon)
                 {
                     ASD_log(ASD_LogLevel_Error, ASD_LogStream_Daemon,
                             ASD_LogOption_No_Remote, "Enabling I3C bus: %d",
+                            target_bus_options.bus_config_map[i]);
+                }
+                if (target_bus_options.bus_config_type[i] == BUS_CONFIG_SPP)
+                {
+                    ASD_log(ASD_LogLevel_Error, ASD_LogStream_Daemon,
+                            ASD_LogOption_No_Remote, "Enabling SPP bus: %d",
                             target_bus_options.bus_config_map[i]);
                 }
             }

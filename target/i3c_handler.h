@@ -1,5 +1,5 @@
 /*
-Copyright (c) 2021, Intel Corporation
+Copyright (c) 2023, Intel Corporation
 
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are met:
@@ -33,6 +33,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "dbus_helper.h"
 
 #define UNINITIALIZED_I3C_DRIVER_HANDLE -1
+#define UNINITIALIZED_SPD_BUS_MAP_ENTRY -1
 #define UNINITIALIZED_I3C_BUS_TOKEN -1
 #define i3C_MAX_DEV_HANDLERS 16
 
@@ -42,6 +43,7 @@ typedef struct I3C_Handler
     bus_config* config;
     Dbus_Handle* dbus;
     int bus_token;
+    int spd_map[MAX_IxC_BUSES];
     int i3c_driver_handlers[i3C_MAX_DEV_HANDLERS];
 } I3C_Handler;
 

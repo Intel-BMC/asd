@@ -1,5 +1,5 @@
 /*
-Copyright (c) 2021, Intel Corporation
+Copyright (c) 2023, Intel Corporation
 
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are met:
@@ -40,6 +40,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "logging.h"
 #include "target_handler.h"
 #include "vprobe_handler.h"
+#include "spp_handler.h"
 
 #define NUM_IN_FLIGHT_BUFFERS_TO_USE 20
 #define MAX_MULTICHAINS 16
@@ -95,6 +96,7 @@ typedef struct ASD_MSG
     I2C_Handler* i2c_handler;
     I3C_Handler* i3c_handler;
     vProbe_Handler* vprobe_handler;
+    SPP_Handler* spp_handler;
     bool handlers_initialized;
     LogFunctionPtr send_remote_logging_message;
     unsigned char prdy_timeout;
@@ -141,5 +143,6 @@ STATUS build_responses(int* response_cnt,
 void* get_packet_data(struct packet_data* packet, int bytes_wanted);
 void process_message();
 STATUS read_openbmc_version(void);
+static STATUS send_pin_event(ASD_EVENT value);
 
 #endif // ASD_ASD_MSG_H

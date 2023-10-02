@@ -1,5 +1,5 @@
 /*
-Copyright (c) 2019, Intel Corporation
+Copyright (c) 2023, Intel Corporation
 
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are met:
@@ -57,6 +57,7 @@ typedef enum
     ASD_LogStream_Test = 16,
     ASD_LogStream_Daemon = 32,
     ASD_LogStream_SDK = 64,
+    ASD_LogStream_SPP = 128,
     ASD_LogStream_All = 0xFFFF,
 } ASD_LogStream;
 
@@ -112,6 +113,8 @@ static inline char* streamtostring(ASD_LogStream stream)
         return "Daemon";
     if (stream == ASD_LogStream_SDK)
         return "SDK";
+    if (stream == ASD_LogStream_SPP)
+        return "SPP";
     if (stream == ASD_LogStream_All)
         return "All";
     return "Unknown-Stream";

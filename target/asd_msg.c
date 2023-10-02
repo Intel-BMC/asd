@@ -1,5 +1,5 @@
 /*
-Copyright (c) 2021, Intel Corporation
+Copyright (c) 2023, Intel Corporation
 
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are met:
@@ -43,6 +43,7 @@ ASD_MSG msg_state;
 static void get_scan_length(unsigned char cmd, uint8_t* num_of_bits,
                             uint8_t* num_of_bytes);
 STATUS process_jtag_message(struct asd_message* s_message);
+STATUS process_spp_message(struct asd_message* s_message);
 void process_message(void);
 void send_remote_log_message(ASD_LogLevel, ASD_LogStream, const char* message);
 bool should_remote_log(ASD_LogLevel, ASD_LogStream);
@@ -119,8 +120,8 @@ STATUS dev_flock(uint8_t bus, int op)
 
     if (msg_state.buscfg == NULL)
     {
-        ASD_log(ASD_LogLevel_Error, ASD_LogStream_I2C, ASD_LogOption_None,
-                "Failed to read data for flock");
+    ASD_log(ASD_LogLevel_Error, ASD_LogStream_I2C | ASD_LogStream_SPP,
+            ASD_LogOption_None, "Failed to read data for flock");
         return ST_ERR;
     }
 
@@ -146,16 +147,26 @@ STATUS dev_flock(uint8_t bus, int op)
             }
             status = i3c_bus_flock(msg_state.i3c_handler, bus, op);
             break;
+        case BUS_CONFIG_SPP:
+            if (msg_state.spp_handler == NULL)
+            {
+                ASD_log(ASD_LogLevel_Debug, ASD_LogStream_SPP,
+                        ASD_LogOption_None, "Null spp handler in flock");
+                status = ST_ERR;
+                break;
+            }
+            status = spp_bus_flock(msg_state.spp_handler, bus, op);
+            break;
         case BUS_CONFIG_NOT_ALLOWED:
         default:
-            ASD_log(ASD_LogLevel_Debug, ASD_LogStream_I2C, ASD_LogOption_None,
-                    "flock not allowed");
+            ASD_log(ASD_LogLevel_Debug, ASD_LogStream_I2C | ASD_LogStream_SPP,
+                    ASD_LogOption_None, "flock not allowed");
             status = ST_ERR;
     }
     if (status != ST_OK)
     {
-        ASD_log(ASD_LogLevel_Error, ASD_LogStream_I2C, ASD_LogOption_None,
-                "bus %d device failed to %s", bus,
+        ASD_log(ASD_LogLevel_Error, ASD_LogStream_I2C | ASD_LogStream_SPP,
+                ASD_LogOption_None, "bus %d device failed to %s", bus,
                 op == LOCK_EX ? "Lock" : "Unlock");
     }
     return status;
@@ -179,10 +190,11 @@ STATUS asd_msg_init(config* asd_cfg)
         msg_state.buscfg = &asd_cfg->buscfg;
         msg_state.i2c_handler = I2CHandler(msg_state.buscfg);
         msg_state.i3c_handler = I3CHandler(msg_state.buscfg);
+        msg_state.spp_handler = SPPHandler(msg_state.buscfg);
         msg_state.vprobe_handler = vProbeHandler();
         if (!msg_state.jtag_handler || !msg_state.target_handler ||
             !msg_state.i2c_handler || !msg_state.i3c_handler ||
-            !msg_state.vprobe_handler)
+            !msg_state.spp_handler || !msg_state.vprobe_handler)
         {
             ASD_log(ASD_LogLevel_Error, ASD_LogStream_SDK,
                     ASD_LogOption_None, "Failed to create handlers");
@@ -211,6 +223,7 @@ STATUS asd_msg_free(void)
     STATUS i3c_result = ST_OK;
     STATUS target_result = ST_OK;
     STATUS vprobe_result = ST_OK;
+    STATUS spp_result = ST_OK;
 
     if (instance)
     {
@@ -251,6 +264,19 @@ STATUS asd_msg_free(void)
             }
             free(msg_state.i3c_handler);
             msg_state.i3c_handler = NULL;
+        }
+
+        if (msg_state.spp_handler)
+        {
+            spp_result = spp_deinitialize(msg_state.spp_handler);
+            if (spp_result != ST_OK)
+            {
+                ASD_log(ASD_LogLevel_Error, ASD_LogStream_SDK,
+                        ASD_LogOption_None,
+                        "Failed to de-initialize the SPP handler");
+            }
+            free(msg_state.spp_handler);
+            msg_state.spp_handler = NULL;
         }
 
         if (msg_state.target_handler)
@@ -641,6 +667,20 @@ STATUS asd_msg_on_msg_recv(void)
                 }
             }
 
+            if (msg_state.buscfg->enable_spp)
+            {
+                if (spp_initialize(msg_state.spp_handler) != ST_OK)
+                {
+                    result = ST_ERR;
+                    ASD_log(ASD_LogLevel_Error, ASD_LogStream_SDK,
+                            ASD_LogOption_None,
+                            "Failed to initialize the spp handler");
+                    send_error_message(msg,
+                                       ASD_FAILURE_INIT_SPP_HANDLER);
+                    return result;
+                }
+            }
+
             if (target_initialize(msg_state.target_handler,
                                   msg_state.asd_cfg->jtag.xdp_fail_enable) == ST_OK)
             {
@@ -649,6 +689,13 @@ STATUS asd_msg_on_msg_recv(void)
                 {
                     send_error_message(msg, ASD_FAILURE_XDP_PRESENT);
                 }
+                ASD_EVENT event;
+                result = on_power2_event(msg_state.target_handler, &event);
+                if (result == ST_OK)
+                    send_pin_event(event);
+                result = on_power_event(msg_state.target_handler, &event);
+                if (result == ST_OK)
+                    send_pin_event(event);
             }
             else
             {
@@ -761,7 +808,8 @@ void send_remote_log_message(ASD_LogLevel asd_level, ASD_LogStream asd_stream,
 void process_message()
 {
     struct asd_message* msg = &msg_state.in_msg.msg;
-    if (((msg->header.type != JTAG_TYPE) && (msg->header.type != I2C_TYPE)) ||
+    if (((msg->header.type != JTAG_TYPE) && (msg->header.type != I2C_TYPE) &&
+        (msg->header.type != SPP_TYPE) ) ||
         (msg->header.cmd_stat != 0 && msg->header.cmd_stat != 0x80 &&
          msg->header.cmd_stat != 1))
     {
@@ -817,6 +865,20 @@ void process_message()
                     "by this platform");
             send_error_message( msg, ASD_I2C_MSG_NOT_SUPPORTED);
             return;
+        }
+    }
+    else if (msg->header.type == SPP_TYPE)
+    {
+        if (msg_state.buscfg->enable_spp)
+        {
+            if (process_spp_message(msg) != ST_OK)
+            {
+                ASD_log(ASD_LogLevel_Error, ASD_LogStream_SDK,
+                        ASD_LogOption_None,
+                        "Failed to process SPP message");
+                send_error_message( msg, ASD_FAILURE_PROCESS_SPP_MSG);
+                return;
+            }
         }
     }
 }
@@ -1380,6 +1442,453 @@ STATUS process_jtag_message(struct asd_message* s_message)
         if (status != ST_OK)
         {
             ASD_log(ASD_LogLevel_Error, ASD_LogStream_SDK,
+                    ASD_LogOption_No_Remote,
+                    "Failed to send message back on the socket");
+        }
+    }
+    return status;
+}
+
+STATUS process_spp_message(struct asd_message* s_message)
+{
+    u_int32_t response_cnt = 0;
+    STATUS status = ST_OK;
+    int size = get_message_size(s_message);
+    struct packet_data packet;
+    unsigned char* data_ptr;
+    uint8_t cmd = 0;
+
+    if (size == -1)
+    {
+        ASD_log(ASD_LogLevel_Error, ASD_LogStream_SPP, ASD_LogOption_None,
+                "Failed to process spp message because %s",
+                "get message size failed.");
+        return ST_ERR;
+    }
+
+    explicit_bzero(&msg_state.out_msg.header, sizeof(struct message_header));
+    explicit_bzero(&msg_state.out_msg.buffer, MAX_DATA_SIZE);
+
+#ifdef ENABLE_DEBUG_LOGGING
+    ASD_log(ASD_LogLevel_Debug, ASD_LogStream_Network, ASD_LogOption_No_Remote,
+            "NetReq tag: %d size: %d", s_message->header.tag, size);
+    ASD_log_buffer(ASD_LogLevel_Debug, ASD_LogStream_Network,
+                   ASD_LogOption_No_Remote, s_message->buffer, (size_t)size,
+                   "NetReq");
+#endif
+
+    packet.next_data = s_message->buffer;
+    packet.used = 0;
+    packet.total = (unsigned int)size;
+
+    while (packet.used < packet.total)
+    {
+        data_ptr = get_packet_data(&packet, 1);
+        if (data_ptr == NULL)
+        {
+            ASD_log(ASD_LogLevel_Error, ASD_LogStream_SPP, ASD_LogOption_None,
+                    "Failed to read data for cmd, short packet");
+            status = ST_ERR;
+            break;
+        }
+        else
+        {
+            cmd = *data_ptr;
+        }
+
+        if (cmd >= SPP_CFG_MIN && cmd <= SPP_CFG_MAX)
+        {
+            // For future enhacements
+            ASD_log(ASD_LogLevel_Debug, ASD_LogStream_SPP, ASD_LogOption_None,
+                    "SPP config");
+        }
+        else if (cmd == SPP_SEND)
+        {
+            uint16_t num_of_bytes = 0;
+            uint8_t lsb_length = 0;
+            uint8_t msb_length = 0;
+
+            data_ptr = get_packet_data(&packet, 1);
+            if (data_ptr == NULL)
+            {
+                ASD_log(ASD_LogLevel_Error, ASD_LogStream_SPP,
+                        ASD_LogOption_None,
+                        "Failed to read send cmd msb length, short packet");
+                status = ST_ERR;
+                break;
+            }
+            msb_length = *data_ptr;
+
+            data_ptr = get_packet_data(&packet, 1);
+            if (data_ptr == NULL)
+            {
+                ASD_log(ASD_LogLevel_Error, ASD_LogStream_SPP,
+                        ASD_LogOption_None,
+                        "Failed to read send cmd lsb length, short packet");
+                status = ST_ERR;
+                break;
+            }
+            lsb_length = *data_ptr;
+
+            num_of_bytes = (msb_length << 8) | lsb_length;
+
+            data_ptr = get_packet_data(&packet, num_of_bytes);
+            if (data_ptr == NULL)
+            {
+                ASD_log(ASD_LogLevel_Error, ASD_LogStream_SPP,
+                        ASD_LogOption_None,
+                        "Failed to read data from buffer(send): %d",
+                        num_of_bytes);
+                status = ST_ERR;
+                break;
+            }
+
+            status = spp_send(msg_state.spp_handler, num_of_bytes, data_ptr);
+            if (status == ST_OK)
+            {
+                msg_state.out_msg.buffer[response_cnt++] = cmd;
+                msg_state.out_msg.buffer[response_cnt++] = msb_length;
+                msg_state.out_msg.buffer[response_cnt++] = lsb_length;
+            }
+            else
+            {
+                msg_state.out_msg.buffer[response_cnt++] = cmd;
+                msg_state.out_msg.buffer[response_cnt++] = 0;
+                msg_state.out_msg.buffer[response_cnt++] = 0;
+                ASD_log(ASD_LogLevel_Error, ASD_LogStream_SPP,
+                        ASD_LogOption_None,
+                        "Failed to process SPP send");
+                status = ST_ERR;
+                break;
+            }
+        }
+        else if (cmd == SPP_RECEIVE)
+        {
+            uint16_t num_of_bytes = 0;
+            uint8_t lsb_length = 0;
+            uint8_t msb_length = 0;
+
+            data_ptr = get_packet_data(&packet, 1);
+            if (data_ptr == NULL)
+            {
+                ASD_log(ASD_LogLevel_Error, ASD_LogStream_SPP,
+                        ASD_LogOption_None,
+                        "Failed to read receive cmd msb length, short packet");
+                status = ST_ERR;
+                break;
+            }
+            msb_length = *data_ptr;
+
+            data_ptr = get_packet_data(&packet, 1);
+            if (data_ptr == NULL)
+            {
+                ASD_log(ASD_LogLevel_Error, ASD_LogStream_SPP,
+                        ASD_LogOption_None,
+                        "Failed to read receive cmd lsb length, short packet");
+                status = ST_ERR;
+                break;
+            }
+            lsb_length = *data_ptr;
+
+            num_of_bytes = (msb_length << 8) | lsb_length;
+
+            status = spp_receive(msg_state.spp_handler, &num_of_bytes,
+                                 &msg_state.out_msg.buffer[response_cnt +
+                                 SPP_RECEIVE_COMMAND_SIZE]);
+            if (status == ST_OK)
+            {
+                msg_state.out_msg.buffer[response_cnt++] = cmd;
+                msg_state.out_msg.buffer[response_cnt++] = msb_length;
+                msg_state.out_msg.buffer[response_cnt++] = lsb_length;
+                response_cnt = response_cnt + num_of_bytes;
+            }
+            else
+            {
+                msg_state.out_msg.buffer[response_cnt++] = cmd;
+                msg_state.out_msg.buffer[response_cnt++] = 0;
+                msg_state.out_msg.buffer[response_cnt++] = 0;
+                ASD_log(ASD_LogLevel_Error, ASD_LogStream_SPP,
+                        ASD_LogOption_None,
+                        "Failed to process SPP Receive");
+                status = ST_ERR;
+                break;
+            }
+        }
+        else if (cmd == SPP_SEND_CMD)
+        {
+            uint16_t num_of_bytes = 0;
+            uint8_t msb_length = 0;
+            uint8_t lsb_length = 0;
+            uint8_t spp_command = 0;
+
+            data_ptr = get_packet_data(&packet, 1);
+            if (data_ptr == NULL)
+            {
+                ASD_log(ASD_LogLevel_Error, ASD_LogStream_SPP,
+                        ASD_LogOption_None,
+                        "Failed to read send_cmd msb length, short packet");
+                status = ST_ERR;
+                break;
+            }
+            msb_length = *data_ptr;
+
+            data_ptr = get_packet_data(&packet, 1);
+            if (data_ptr == NULL)
+            {
+                ASD_log(ASD_LogLevel_Error, ASD_LogStream_SPP,
+                        ASD_LogOption_None,
+                        "Failed to read send_cmd lsb length, short packet");
+                status = ST_ERR;
+                break;
+            }
+            lsb_length = *data_ptr;
+
+            num_of_bytes = (msb_length << 8) | lsb_length;
+
+            data_ptr = get_packet_data(&packet, 1);
+            if (data_ptr == NULL)
+            {
+                ASD_log(ASD_LogLevel_Error, ASD_LogStream_SPP,
+                        ASD_LogOption_None,
+                        "Failed to read send command from buffer");
+                status = ST_ERR;
+                break;
+            }
+            spp_command = *data_ptr;
+
+            data_ptr = get_packet_data(&packet, num_of_bytes);
+            if (data_ptr == NULL)
+            {
+                ASD_log(ASD_LogLevel_Error, ASD_LogStream_SPP,
+                        ASD_LogOption_None,
+                        "Failed to read data from buffer(send_cmd): %d",
+                        num_of_bytes);
+                status = ST_ERR;
+                break;
+            }
+
+            status = spp_send_cmd(msg_state.spp_handler, spp_command,
+                                  num_of_bytes, data_ptr);
+            if (status == ST_OK)
+            {
+                msg_state.out_msg.buffer[response_cnt++] = cmd;
+                msg_state.out_msg.buffer[response_cnt++] = lsb_length;
+                msg_state.out_msg.buffer[response_cnt++] = spp_command;
+            }
+            else
+            {
+                msg_state.out_msg.buffer[response_cnt++] = cmd & SPP_CMD_MASK;
+                msg_state.out_msg.buffer[response_cnt++] = 0;
+                msg_state.out_msg.buffer[response_cnt++] = spp_command;
+                ASD_log(ASD_LogLevel_Error, ASD_LogStream_SPP,
+                        ASD_LogOption_None,
+                        "Failed to process SPP send command");
+                status = ST_ERR;
+                break;
+            }
+        }
+        else if (cmd == SPP_SEND_RECEIVE_CMD)
+        {
+            uint16_t num_of_write_bytes = 0;
+            uint16_t num_of_read_bytes = 0;
+            uint8_t msb_wlength = 0;
+            uint8_t lsb_wlength = 0;
+            uint8_t msb_rlength = 0;
+            uint8_t lsb_rlength = 0;
+            uint8_t spp_command = 0;
+
+            data_ptr = get_packet_data(&packet, 1);
+            if (data_ptr == NULL)
+            {
+                ASD_log(ASD_LogLevel_Error, ASD_LogStream_SPP,
+                        ASD_LogOption_None,
+                        "Failed to read send_cmd msb length, short packet");
+                status = ST_ERR;
+                break;
+            }
+            msb_wlength = *data_ptr;
+
+            data_ptr = get_packet_data(&packet, 1);
+            if (data_ptr == NULL)
+            {
+                ASD_log(ASD_LogLevel_Error, ASD_LogStream_SPP,
+                        ASD_LogOption_None,
+                        "Failed to read send_cmd lsb length, short packet");
+                status = ST_ERR;
+                break;
+            }
+            lsb_wlength = *data_ptr;
+
+            num_of_write_bytes = (msb_wlength << 8) | lsb_wlength;
+
+            data_ptr = get_packet_data(&packet, 1);
+            if (data_ptr == NULL)
+            {
+                ASD_log(ASD_LogLevel_Error, ASD_LogStream_SPP,
+                        ASD_LogOption_None,
+                        "Failed to read SPP send receive command from buffer");
+                status = ST_ERR;
+                break;
+            }
+            spp_command = *data_ptr;
+
+            data_ptr = get_packet_data(&packet, 1);
+            if (data_ptr == NULL)
+            {
+                ASD_log(ASD_LogLevel_Error, ASD_LogStream_SPP,
+                        ASD_LogOption_None,
+                        "Failed to read max size(MSB) for receive");
+                status = ST_ERR;
+                break;
+            }
+            msb_rlength = *data_ptr;
+
+            data_ptr = get_packet_data(&packet, 1);
+            if (data_ptr == NULL)
+            {
+                ASD_log(ASD_LogLevel_Error, ASD_LogStream_SPP,
+                        ASD_LogOption_None,
+                        "Failed to read max size(LSB) for receive");
+                status = ST_ERR;
+                break;
+            }
+            lsb_rlength = *data_ptr;
+            num_of_read_bytes = (msb_rlength << 8) | lsb_rlength;
+
+            data_ptr = get_packet_data(&packet, num_of_write_bytes);
+            if (data_ptr == NULL)
+            {
+                ASD_log(ASD_LogLevel_Error, ASD_LogStream_SPP,
+                        ASD_LogOption_None,
+                        "Failed to read data from buffer(send_receive_cmd): %d",
+                        num_of_write_bytes);
+                status = ST_ERR;
+                break;
+            }
+
+            status = spp_send_receive_cmd(msg_state.spp_handler, spp_command,
+                                          num_of_write_bytes, data_ptr,
+                                          &num_of_read_bytes,
+                                          &msg_state.out_msg.buffer[
+                                          response_cnt +
+                                          SPP_SEND_RECEIVE_CMD_COMMAND_SIZE]);
+
+            if (status == ST_OK)
+            {
+                msg_state.out_msg.buffer[response_cnt++] = cmd;
+                msg_state.out_msg.buffer[response_cnt++] = lsb_wlength;
+                msg_state.out_msg.buffer[response_cnt++] = spp_command;
+                msg_state.out_msg.buffer[response_cnt++] =
+                    (num_of_read_bytes >> 8) & SPP_XFER_LENGTH_MSB_MASK;
+                msg_state.out_msg.buffer[response_cnt++] =
+                    num_of_read_bytes & SPP_XFER_LENGTH_LSB_MASK;
+                response_cnt = response_cnt + num_of_read_bytes;
+            }
+            else
+            {
+                msg_state.out_msg.buffer[response_cnt++] = cmd & SPP_CMD_MASK;
+                msg_state.out_msg.buffer[response_cnt++] = 0;
+                msg_state.out_msg.buffer[response_cnt++] = spp_command;
+                msg_state.out_msg.buffer[response_cnt++] = 0;
+                msg_state.out_msg.buffer[response_cnt++] = 0;
+                ASD_log(ASD_LogLevel_Error, ASD_LogStream_SPP,
+                        ASD_LogOption_None,
+                        "Failed to process SPP Send Receive Command");
+                status = ST_ERR;
+                break;
+            }
+
+        }
+        else if (cmd == SPP_SET_SIM_DATA_CMD)
+        {
+            uint16_t num_of_bytes = 0;
+            uint8_t msb_length = 0;
+            uint8_t lsb_length = 0;
+
+            data_ptr = get_packet_data(&packet, 1);
+            if (data_ptr == NULL)
+            {
+                ASD_log(ASD_LogLevel_Error, ASD_LogStream_SPP,
+                        ASD_LogOption_None,
+                        "Failed to read send cmd msb length, short packet");
+                status = ST_ERR;
+                break;
+            }
+            msb_length = *data_ptr;
+
+            data_ptr = get_packet_data(&packet, 1);
+            if (data_ptr == NULL)
+            {
+                ASD_log(ASD_LogLevel_Error, ASD_LogStream_SPP,
+                        ASD_LogOption_None,
+                        "Failed to read send cmd lsb length, short packet");
+                status = ST_ERR;
+                break;
+            }
+            lsb_length = *data_ptr;
+
+            num_of_bytes = (msb_length << 8) | lsb_length;
+
+            if (num_of_bytes > 0)
+            {
+                data_ptr = get_packet_data(&packet, num_of_bytes);
+                if (data_ptr == NULL)
+                {
+                    ASD_log(ASD_LogLevel_Error, ASD_LogStream_SPP,
+                        ASD_LogOption_None,
+                        "Failed to read data from buffer(sim): %d",
+                        num_of_bytes);
+                    status = ST_ERR;
+                    break;
+                }
+            }
+
+            status = spp_set_sim_data_cmd(msg_state.spp_handler, num_of_bytes,
+                                          data_ptr);
+            if (status == ST_OK)
+            {
+                msg_state.out_msg.buffer[response_cnt++] = cmd;
+                msg_state.out_msg.buffer[response_cnt++] = lsb_length;
+            }
+            else
+            {
+                msg_state.out_msg.buffer[response_cnt++] = cmd & SPP_CMD_MASK;
+                msg_state.out_msg.buffer[response_cnt++] = 0;
+                ASD_log(ASD_LogLevel_Error, ASD_LogStream_SPP,
+                        ASD_LogOption_None,
+                        "Failed to process SPP Set Simulated Data Command");
+                status = ST_ERR;
+                break;
+            }
+        }
+        else
+        {
+            // Unknown Command
+            ASD_log(ASD_LogLevel_Error, ASD_LogStream_SPP, ASD_LogOption_None,
+                    "Encountered unknown SPP command 0x%02x", (int)cmd);
+            status = ST_ERR;
+            break;
+        }
+    }
+
+    if (status == ST_OK)
+    {
+        if (memcpy_s(&msg_state.out_msg.header, sizeof(struct message_header),
+                     &s_message->header, sizeof(struct message_header)))
+        {
+            ASD_log(ASD_LogLevel_Error, ASD_LogStream_SPP, ASD_LogOption_None,
+                    "memcpy_s: message header to out msg header copy failed.");
+            return ST_ERR;
+        }
+
+        msg_state.out_msg.header.size_lsb = lsb_from_msg_size(response_cnt);
+        msg_state.out_msg.header.size_msb = msb_from_msg_size(response_cnt);
+        msg_state.out_msg.header.cmd_stat = ASD_SUCCESS;
+
+        status = send_response(&msg_state.out_msg);
+        if (status != ST_OK)
+        {
+            ASD_log(ASD_LogLevel_Error, ASD_LogStream_SPP,
                     ASD_LogOption_No_Remote,
                     "Failed to send message back on the socket");
         }
@@ -2083,17 +2592,17 @@ STATUS do_bus_select_command(struct packet_data* packet)
 
     if (data_ptr == NULL)
     {
-        ASD_log(ASD_LogLevel_Error, ASD_LogStream_I2C, ASD_LogOption_None,
-                "Failed to read data for I2C_WRITE_CFG_BUS_SELECT, "
-                "short packet");
+        ASD_log(ASD_LogLevel_Error, ASD_LogStream_I2C | ASD_LogStream_SPP,
+                ASD_LogOption_None, "Failed to read data for %s"
+                "I2C_WRITE_CFG_BUS_SELECT, short packet");
         return ST_ERR;
     }
 
     uint8_t bus = (uint8_t)*data_ptr;
     if (msg_state.buscfg == NULL)
     {
-        ASD_log(ASD_LogLevel_Error, ASD_LogStream_I2C, ASD_LogOption_None,
-                "msg_state.buscfg == NULL");
+        ASD_log(ASD_LogLevel_Error, ASD_LogStream_I2C | ASD_LogStream_SPP,
+                ASD_LogOption_None, "msg_state.buscfg == NULL");
         return ST_ERR;
     }
 
@@ -2139,17 +2648,28 @@ STATUS do_bus_select_command(struct packet_data* packet)
             }
             status = i3c_bus_select(msg_state.i3c_handler, bus);
             break;
+        case BUS_CONFIG_SPP:
+            if (msg_state.spp_handler == NULL)
+            {
+                ASD_log(ASD_LogLevel_Debug, ASD_LogStream_SPP,
+                        ASD_LogOption_None, "Null spp handler on bus select");
+                status = ST_ERR;
+                break;
+            }
+            status = spp_bus_select(msg_state.spp_handler, bus);
+            break;
         case BUS_CONFIG_NOT_ALLOWED:
         default:
-            ASD_log(ASD_LogLevel_Debug, ASD_LogStream_I2C, ASD_LogOption_None,
-                    "Bus selection not allowed");
+            ASD_log(ASD_LogLevel_Debug, ASD_LogStream_I2C | ASD_LogStream_SPP,
+                    ASD_LogOption_None, "Bus selection not allowed");
             status = ST_ERR;
     }
 
     if (status != ST_OK)
     {
-        ASD_log(ASD_LogLevel_Error, ASD_LogStream_I2C, ASD_LogOption_None,
-                "bus select command failed for bus %d", bus);
+        ASD_log(ASD_LogLevel_Error, ASD_LogStream_I2C | ASD_LogStream_SPP,
+                ASD_LogOption_None, "bus select command failed for bus %d",
+                bus);
     }
 
     return status;
@@ -2162,7 +2682,8 @@ STATUS do_set_sclk_command(struct packet_data* packet)
 
     if (data_ptr == NULL)
     {
-        ASD_log(ASD_LogLevel_Error, ASD_LogStream_I2C, ASD_LogOption_None,
+        ASD_log(ASD_LogLevel_Error, ASD_LogStream_I2C | ASD_LogStream_SPP,
+                ASD_LogOption_None,
                 "Failed to read data for I2C_WRITE_CFG_SCLK, short packet");
         return ST_ERR;
     }
@@ -2194,16 +2715,27 @@ STATUS do_set_sclk_command(struct packet_data* packet)
             status =
                 i3c_set_sclk(msg_state.i3c_handler, (uint16_t)((msb << 8) + lsb));
             break;
+        case BUS_CONFIG_SPP:
+            if (msg_state.spp_handler == NULL)
+            {
+                ASD_log(ASD_LogLevel_Debug, ASD_LogStream_SPP,
+                        ASD_LogOption_None, "Null spp handler on set sclk");
+                status = ST_ERR;
+                break;
+            }
+            status =
+                spp_set_sclk(msg_state.spp_handler, (uint16_t)((msb << 8) + lsb));
+            break;
         case BUS_CONFIG_NOT_ALLOWED:
         default:
-            ASD_log(ASD_LogLevel_Debug, ASD_LogStream_I2C, ASD_LogOption_None,
-                    "Set sclk not allowed");
+            ASD_log(ASD_LogLevel_Debug, ASD_LogStream_I2C | ASD_LogStream_SPP,
+                    ASD_LogOption_None, "Set sclk not allowed");
             status = ST_ERR;
     }
     if (status != ST_OK)
     {
-        ASD_log(ASD_LogLevel_Error, ASD_LogStream_I2C, ASD_LogOption_None,
-                "Set sclk command failed for bus %d", bus);
+        ASD_log(ASD_LogLevel_Error, ASD_LogStream_I2C | ASD_LogStream_SPP,
+                ASD_LogOption_None, "Set sclk command failed for bus %d", bus);
     }
 
     return status;
@@ -2505,7 +3037,7 @@ STATUS process_i2c_messages(struct asd_message* in_msg)
             {
                 ASD_log(ASD_LogLevel_Error, ASD_LogStream_JTAG,
                         ASD_LogOption_None, "memcpy_s: message header to \
-							out msg header copy failed.");
+                                             out msg header copy failed.");
             }
             status = i2c_msg_initialize(builder);
             if (status != ST_OK)

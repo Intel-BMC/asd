@@ -19,6 +19,7 @@ endif(${APB_FREQ})
 set(I2C_MSG_BUILDER "i2c_msg_builder.c")
 set(I2C_HANDLER "i2c_handler.c")
 set(I3C_HANDLER "i3c_handler.c")
+set(SPP_STUB "1")
 
 if(${I2C_STUB})
     if(${I3C_STUB})
@@ -34,11 +35,15 @@ if(${I3C_STUB})
     set(I3C_HANDLER "i3c_handler_stub.c")
 endif(${I3C_STUB})
 
+if(${SPP_STUB})
+    set(SPP_HANDLER "spp_handler_stub.c")
+endif(${SPP_STUB})
+
 if(NOT ${BUILD_UT})
     add_library(asd_target STATIC asd_msg.c jtag_handler.c 
             target_handler.c ${I2C_MSG_BUILDER} ${I2C_HANDLER}
             ${I3C_HANDLER} gpio.c dbus_helper.c vprobe_handler.c
-            asd_target_api.c asd_server_interface.c)
+            ${SPP_HANDLER} asd_target_api.c asd_server_interface.c)
     target_link_libraries(asd_target -lm -lsystemd -lgpiod)
 endif(${BUILD_UT})
 

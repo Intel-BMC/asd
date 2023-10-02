@@ -1,5 +1,5 @@
 /*
-Copyright (c) 2019, Intel Corporation
+Copyright (c) 2023, Intel Corporation
 
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are met:
@@ -340,6 +340,13 @@ bool strtostreams(char* input, ASD_LogStream* output)
                     if (cmp == 0)
                     {
                         *output |= ASD_LogStream_SDK;
+                        result = true;
+                        break;
+                    }
+                    strcmp_s(temp, STRTOSTREAMMAX, "spp", &cmp);
+                    if (cmp == 0)
+                    {
+                        *output |= ASD_LogStream_SPP;
                         result = true;
                         break;
                     }

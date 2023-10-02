@@ -1,5 +1,5 @@
 /*
-Copyright (c) 2021, Intel Corporation
+Copyright (c) 2023, Intel Corporation
 
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are met:
@@ -37,17 +37,23 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <limits.h>
 #include <sys/ioctl.h>
 #include <unistd.h>
+// Include local copy of unofficial i3cdev header
+// Taken from linux:include/uapi/linux/i3c/i3cdev.h
+// Replace with <linux/i3c/i3cdev.h> when available in upstream kernel
 #include <uapi/linux/i3c/i3cdev.h>
 #include <linux/i2c-dev.h>
 #include <linux/i2c.h>
+#include <regex.h>
+#include <dirent.h>
 // clang-format on
 
 #include "logging.h"
 
 #define I3C_DEV_FILE_NAME "/dev/i3c"
-#define I3C_MASTER_DRV_FILE_NAME "/sys/bus/platform/drivers/dw-i3c-master"
+#define I3C_SYS_BUS_DEVICES "/sys/bus/i3c/devices/"
 #define MAX_I3C_DEV_FILENAME 256
 #define I3C_BUS_ADDRESS_RESERVED 127
 
@@ -59,7 +65,10 @@ static bool i3c_device_drivers_opened(I3C_Handler* state);
 static STATUS i3c_open_device_drivers(I3C_Handler* state, uint8_t bus);
 static void i3c_close_device_drivers(I3C_Handler* state);
 static bool i3c_bus_allowed(I3C_Handler* state, uint8_t bus);
-static STATUS i3c_get_dev_name(I3C_Handler* state, uint8_t bus, uint8_t* dev);
+static STATUS is_spd_bus(char * bus_name, bool * ret);
+static STATUS get_bound_index(char * bus_name, int * boundIndex);
+static STATUS get_platform_index(char * bus_name, uint8_t * platIndex);
+static STATUS create_spd_mapping(I3C_Handler* state);
 
 #define AST2600_I3C_BUSES 4
 const char* i3c_bus_names[AST2600_I3C_BUSES] = {
@@ -408,25 +417,343 @@ static bool i3c_device_drivers_opened(I3C_Handler* state)
     return false;
 }
 
+/* Under /sys/bus/platform/devices select the buses which have *.i3c* in
+ * their name and the of_node directory contains jdec-spd. In case of
+ * Hub based platforms (BHS) a further check of hub@70,3C000000100 under
+ * of_node directory is required to confirm the given bus is i3c-spd.
+ */
+static STATUS is_spd_bus(char * bus_name, bool * ret)
+{
+    FILE * fd = NULL;
+    char jedec_name[MAX_I3C_DEV_FILENAME];
+    char spd_hub_name[MAX_I3C_DEV_FILENAME];
+
+    if(bus_name == NULL || ret == NULL)
+        return ST_ERR;
+
+    // Check if i3c device has jdec-spd file
+    snprintf(jedec_name, MAX_I3C_DEV_FILENAME, "%s%s/of_node/jdec-spd",
+             I3C_SYS_BUS_DEVICES, bus_name);
+    fd = fopen(jedec_name, "rb");
+    if (fd == NULL)
+    {
+        ASD_log(ASD_LogLevel_Debug, stream, option,
+                "No SPD BUS: Can't find %s", jedec_name);
+        return ST_ERR;
+    }
+    ASD_log(ASD_LogLevel_Debug, stream, option, "SPD device found: %s",
+            jedec_name);
+    fclose(fd);
+    fd = NULL;
+
+    // Check if i3c device is a hub
+    snprintf(spd_hub_name, MAX_I3C_DEV_FILENAME,
+             "%s%s/of_node/hub@70,3C000000100",
+             I3C_SYS_BUS_DEVICES, bus_name);
+    fd = fopen(spd_hub_name, "rb");
+    if (fd != NULL)
+    {
+        ASD_log(ASD_LogLevel_Debug, stream, option,
+                "No SPD BUS: Dev is a HUB, found %s", spd_hub_name);
+        *ret = false;
+        fclose(fd);
+    }
+    else
+    {
+        ASD_log(ASD_LogLevel_Debug, stream, option, "Dev %s is an SPD bus",
+                spd_hub_name);
+        *ret = true;
+    }
+
+    return ST_OK;
+}
+
+/* Once the binding is successful, we should be able to see all the available
+ * devices connected to the bus which can be viewed under
+ * /sys/bus/i3c/devices and also under /dev.
+ * These devices would have an index assigned by Linux depending on when and
+ * the order in which the binding and enumeration of devices was done.
+ * /sys/bus/i3c/devices would have directories in the form of
+ * i3c-<bound index>.
+ */
+static STATUS get_bound_index(char * bus_name, int * boundIndex)
+{
+    char * endptr = NULL;
+    char * str = NULL;
+    long val = 0;
+
+    if(bus_name == NULL || boundIndex == NULL)
+        return ST_ERR;
+
+    str = &bus_name[4];
+    val = strtol(str, &endptr, 10);
+
+    // check if strtol failed
+    if (endptr == str || *endptr != '\0' ||
+        ((val == LONG_MIN || val == LONG_MAX) && errno == ERANGE))
+        return ST_ERR;
+
+    *boundIndex = (int) val;
+
+    return ST_OK;
+}
+
+/* /sys/bus/i3c/devices/i3c-<bound index>/of_name/name will give the actual
+ * platform index.
+ */
+static STATUS get_platform_index(char * bus_name, uint8_t * platIndex)
+{
+    STATUS status = ST_ERR;
+    char bus_filename[MAX_I3C_DEV_FILENAME];
+    char buffer[MAX_I3C_DEV_FILENAME];
+    regex_t platformNameRegex;
+    int ret_value = 0;
+    FILE * fd = NULL;
+    char * endptr = NULL;
+    char * str = NULL;
+    char * pstr = NULL;
+    long length = 0;
+    long val = 0;
+
+    if(bus_name == NULL || platIndex == NULL)
+        return ST_ERR;
+
+    // calling regcomp() function to create regex and check if the compilation
+    // was successful
+    ret_value = regcomp(&platformNameRegex, "i3c[0-9]+", REG_EXTENDED);
+
+    if (ret_value != 0)
+    {
+        ASD_log(ASD_LogLevel_Debug, stream, option,
+                "platformNameRegex compilation Process failed");
+        return ST_ERR;
+    }
+
+    snprintf(bus_filename, MAX_I3C_DEV_FILENAME, "%s%s/of_node/name",
+             I3C_SYS_BUS_DEVICES, bus_name);
+
+    fd = fopen(bus_filename, "rb");
+    if (fd == NULL)
+    {
+        ASD_log(ASD_LogLevel_Debug, stream, option,
+                "Can't open i3c bus file name %s", bus_filename);
+    }
+    else
+    {
+        // Read Linux assigned bus from bus_filename
+        fseek (fd, 0, SEEK_END);
+        length = ftell (fd);
+        fseek (fd, 0, SEEK_SET);
+
+        if (sizeof(buffer) > length)
+        {
+            if(fread (buffer, 1, length, fd) == length)
+            {
+                buffer[length-1] = 0x0; // Null character
+                str = buffer;
+                ret_value = regexec(&platformNameRegex,
+                                    str, 0, NULL, 0);
+                if (ret_value == 0)
+                {
+                    ASD_log(ASD_LogLevel_Debug, stream, option,
+                            "%s pattern found in %s", buffer,
+                            bus_filename);
+
+                    pstr = &buffer[3];
+                    val = strtol(pstr, &endptr, 10);
+                    // check if strtol failed
+                    if (endptr == pstr || *endptr != '\0' ||
+                        ((val == LONG_MIN || val == LONG_MAX) &&
+                        errno == ERANGE))
+                    {
+                        ASD_log(ASD_LogLevel_Debug, stream, option,
+                                "strtol failed for platIndex");
+                    }
+                    else
+                    {
+                        if (val < MAX_IxC_BUSES)
+                        {
+                            *platIndex = (uint8_t) val;
+                            ASD_log(ASD_LogLevel_Debug, stream, option,
+                                    "platIndex = %d", *platIndex);
+                            status = ST_OK;
+                        }
+                        else
+                        {
+                            ASD_log(ASD_LogLevel_Debug, stream, option,
+                                    "platIndex %d out of bus boundaries", val);
+                        }
+                    }
+                }
+                else
+                {
+                    ASD_log(ASD_LogLevel_Debug, stream, option,
+                            "i3cX pattern not found in %s", bus_filename);
+                }
+            }
+            else
+            {
+                ASD_log(ASD_LogLevel_Debug, stream, option, "%s fread error",
+                        bus_filename);
+            }
+        }
+        fclose(fd);
+    }
+    // free REGEX allocated memory
+    regfree(&platformNameRegex);
+
+    return status;
+}
+
+/* The bound index and the platform index described as above are used to form
+ * the mapping.
+ * Eg: /sys/bus/i3c/devices/i3c-0 is the device file and
+ * /sys/bus/i3c/devices/i3c-0/of_name/name contains i3c3 Implies
+ * BoundIndex 0 => platIndex 3. Which means all the devices enumerated as
+ * 0-XXXXXXXX are under platform bus 3. i.e 1e7a5000.i3c3.In case of hub-based
+ * system, platform index 3 implies the devices are under downstream port 3.
+ */
+STATUS create_spd_mapping(I3C_Handler* state)
+{
+    STATUS status = ST_ERR;
+
+    DIR *d;
+    struct dirent *dir;
+    char bus_name[MAX_I3C_DEV_FILENAME];
+
+    int fd = 0;
+    char * str;
+    char * endptr = NULL;
+
+    uint8_t platIndex = 0;
+    int boundIndex = 0;
+    bool spd_bus_found = false;
+    int ret_value = 0;
+    uint8_t spd_bus_count = 0;
+
+    regex_t busRegex;
+
+    if(state == NULL)
+        return ST_ERR;
+
+    // cleanup SPD map
+    for (int i = 0; i < MAX_IxC_BUSES; i++)
+    {
+        state->spd_map[i] = UNINITIALIZED_SPD_BUS_MAP_ENTRY;
+    }
+
+    // calling regcomp() function to create regex and check if the compilation
+    // was successful
+    ret_value = regcomp(&busRegex, "i3c-[0-9]+", REG_EXTENDED);
+    if (ret_value != 0)
+    {
+        ASD_log(ASD_LogLevel_Debug, stream, option,
+                "busRegex compilation Process failed");
+        return ST_ERR;
+    }
+
+    // For all files in /sys/bus/i3c/devices/
+    d = opendir(I3C_SYS_BUS_DEVICES);
+    if (d)
+    {
+        while (((dir = readdir(d)) != NULL))
+        {
+            if (dir->d_type != DT_DIR)
+            {
+                ret_value = regexec(&busRegex, dir->d_name, 0, NULL, 0);
+                if (ret_value == 0)
+                {
+                    status = is_spd_bus(dir->d_name, &spd_bus_found);
+                    if(status != ST_OK || !spd_bus_found)
+                        continue;
+
+                    status = get_bound_index(dir->d_name, &boundIndex);
+                    if (status != ST_OK)
+                    {
+                        ASD_log(ASD_LogLevel_Debug, stream, option,
+                                "failed to get boundIndex on %s",
+                                dir->d_name);
+                        continue;
+                    }
+                    ASD_log(ASD_LogLevel_Debug, stream, option,
+                            "boundIndex = %d", boundIndex);
+
+                    status = get_platform_index(dir->d_name, &platIndex);
+                    if (status != ST_OK)
+                    {
+                        ASD_log(ASD_LogLevel_Debug, stream, option,
+                                "failed to get platIndex on %s", dir->d_name);
+                        continue;
+                    }
+
+                    if (platIndex < MAX_IxC_BUSES)
+                    {
+                        state->spd_map[platIndex] = boundIndex;
+                        spd_bus_count++;
+                        ASD_log(ASD_LogLevel_Debug, stream, option,
+                                "spd_map[%d] = %d",  platIndex, boundIndex);
+                    }
+                    else
+                    {
+                        ASD_log(ASD_LogLevel_Debug, stream, option,
+                                "platIndex out of bus boundaries\r\n");
+                        continue;
+                    }
+
+                }
+            }
+        }
+        status = (spd_bus_count > 0) ? ST_OK : ST_ERR;
+        closedir(d);
+    }
+    // free REGEX allocated memory
+    regfree(&busRegex);
+
+    ASD_log(ASD_LogLevel_Debug, stream, option,"spd map = {");
+    for (int i=0; i<MAX_IxC_BUSES; i++)
+    {
+        if (state->spd_map[i] == UNINITIALIZED_SPD_BUS_MAP_ENTRY)
+        {
+            ASD_log(ASD_LogLevel_Debug, stream, option,
+                    "UNINITIALIZED_SPD_BUS_MAP_ENTRY,");
+        }
+        else
+        {
+            ASD_log(ASD_LogLevel_Debug, stream, option,"%d,",
+            state->spd_map[i]);
+        }
+    }
+    ASD_log(ASD_LogLevel_Debug, stream, option,"}");
+
+    return status;
+}
+
 static STATUS i3c_open_device_drivers(I3C_Handler* state, uint8_t bus)
 {
     STATUS status = ST_ERR;
-    char i3c_dev_name[MAX_I3C_DEV_FILENAME];
     char i3c_dev[MAX_I3C_DEV_FILENAME];
 
-    status = i3c_get_dev_name(state, bus, i3c_dev_name);
-    if (status != ST_OK)
+    if (bus >= MAX_IxC_BUSES)
     {
         ASD_log(ASD_LogLevel_Error, stream, option,
-                "Could not find i3c bus %d dev name", bus);
+                "bus %d out of platform bounds", bus);
         return status;
+    }
+
+    status = create_spd_mapping(state);
+    if (status != ST_OK ||
+        state->spd_map[bus] == UNINITIALIZED_SPD_BUS_MAP_ENTRY)
+    {
+        ASD_log(ASD_LogLevel_Error, stream, option,
+                "spd map couldn't be created for bus %d", bus);
+        return ST_ERR;
     }
 
     status = ST_ERR;
     for (int i = 0; i < i3C_MAX_DEV_HANDLERS; i++)
     {
-        snprintf(i3c_dev, sizeof(i3c_dev), "/dev/%s-3c00000000%x", i3c_dev_name,
-                 i);
+        snprintf(i3c_dev, sizeof(i3c_dev), "/dev/i3c-%d-3c00000000%x",
+                 state->spd_map[bus], i);
         state->i3c_driver_handlers[i] = open(i3c_dev, O_RDWR);
         if (state->i3c_driver_handlers[i] != UNINITIALIZED_I3C_DRIVER_HANDLE)
         {
@@ -472,40 +799,4 @@ static bool i3c_bus_allowed(I3C_Handler* state, uint8_t bus)
             return true;
     }
     return false;
-}
-
-static STATUS i3c_get_dev_name(I3C_Handler* state, uint8_t bus, uint8_t* dev)
-{
-    STATUS status = ST_ERR;
-    char i3c_bus_drv[MAX_I3C_DEV_FILENAME];
-    int dev_handle = UNINITIALIZED_I3C_DRIVER_HANDLE;
-
-    if (bus >= AST2600_I3C_BUSES)
-    {
-        ASD_log(ASD_LogLevel_Error, stream, option, "Unexpected i3c bus");
-        return ST_ERR;
-    }
-
-    for (int i = 0; i < AST2600_I3C_BUSES; i++)
-    {
-        snprintf(dev, MAX_I3C_DEV_FILENAME, "i3c-%d", i);
-        snprintf(i3c_bus_drv, MAX_I3C_DEV_FILENAME, "%s/%s/i3c-%d",
-                 I3C_MASTER_DRV_FILE_NAME, i3c_bus_names[bus], i);
-
-        dev_handle = open(i3c_bus_drv, O_RDONLY);
-        if (dev_handle == UNINITIALIZED_I3C_DRIVER_HANDLE)
-        {
-            ASD_log(ASD_LogLevel_Debug, stream, option,
-                    "Can't open i3c bus driver %s", i3c_bus_drv);
-        }
-        else
-        {
-            ASD_log(ASD_LogLevel_Debug, stream, option, "Found dev %s on %s",
-                    dev, i3c_bus_drv);
-            close(dev_handle);
-            status = ST_OK;
-            break;
-        }
-    }
-    return status;
 }

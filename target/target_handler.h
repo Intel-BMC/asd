@@ -185,6 +185,8 @@ STATUS target_write(Target_Control_Handle* state, Pin pin, bool assert);
 STATUS target_read(Target_Control_Handle* state, Pin pin, bool* asserted);
 STATUS target_write_event_config(Target_Control_Handle* state,
                                  WriteConfig event_cfg, bool enable);
+STATUS target_clear_gpio_event(Target_Control_Handle* state,
+                               Target_Control_GPIO pin);
 STATUS target_wait_PRDY(Target_Control_Handle* state, uint8_t log2time);
 STATUS target_get_fds(Target_Control_Handle* state, target_fdarr_t* fds,
                       int* num_fds);

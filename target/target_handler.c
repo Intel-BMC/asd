@@ -39,7 +39,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <string.h>
 #include <sys/time.h>
 #include <unistd.h>
-
+#include "i3c_debug_handler.h"
 #include "asd_common.h"
 #include "gpio.h"
 #include "logging.h"
@@ -431,9 +431,9 @@ Target_Control_Handle* TargetHandler()
     state->event_cfg.reset_break = false;
     state->xdp_present = false;
 
-    // Change is_master_probe accordingly on your BMC implementations.
+    // Change is_controller_probe accordingly on your BMC implementations.
     // <MODIFY>
-    state->is_master_probe = false;
+    state->is_controller_probe = false;
     // </MODIFY>
 
     return state;
@@ -1131,13 +1131,34 @@ STATUS target_event(Target_Control_Handle* state, struct pollfd poll_fd,
 {
     STATUS result = ST_ERR;
     int i, rv = 0;
+    size_t ret;
+    struct i3c_get_event_data event_data;
 
     if (state == NULL || !state->initialized || event == NULL)
         return ST_ERR;
 
     *event = ASD_EVENT_NONE;
 
-    if (state->dbus && state->dbus->fd == poll_fd.fd &&
+    if (state->spp_fd == poll_fd.fd &&
+        (poll_fd.revents & POLLIN) == POLLIN)
+    {
+        if (state->i3c_ibi_handled == false)
+        {
+            if (i3c_ibi_handler(poll_fd.fd, state->ibi_event_buffer,
+                                &state->ibi_event_size) == ST_OK)
+            {
+                *event = ASD_EVENT_BPK;
+                state->i3c_ibi_handled = true;
+                result = ST_OK;
+            }
+        }
+        else
+        {
+            //TODO: Add flag for IBI handling on RX function
+            result = ST_OK;
+        }
+    }
+    else if (state->dbus && state->dbus->fd == poll_fd.fd &&
         (poll_fd.revents & POLLIN) == POLLIN)
     {
 #ifdef ENABLE_DEBUG_LOGGING
@@ -1706,32 +1727,39 @@ STATUS target_get_fds(Target_Control_Handle* state, target_fdarr_t* fds,
         index++;
     }
 
+    if (state->spp_fd != -1)
+    {
+        (*fds)[index].fd = state->spp_fd;
+        (*fds)[index].events = POLLIN;
+        index++;
+    }
+
     *num_fds = index;
 
     return ST_OK;
 }
 
 // target_wait_sync - This command will only be issued in a multiple
-//   probe configuration where there are two or more TAP masters. The
-//   WaitSync command is used to tell all TAP masters to wait until a
+//   probe configuration where there are two or more TAP controllers. The
+//   WaitSync command is used to tell all TAP controllers to wait until a
 //   sync indication is received. The exact flow of sync signaling is
 //   implementation specific. Command processing will continue after
 //   either the Sync indication is received or the SyncTimeout is
 //   reached. The SyncDelay is intended to be used in an implementation
 //   where there is a single sync signal routed from a single designated
-//   TAP Master to all other TAP Masters. The SyncDelay is used as an
-//   implicit means to ensure that all other TAP Masters have reached
+//   TAP Controller to all other TAP Controllers. The SyncDelay is used as an
+//   implicit means to ensure that all other TAP Controllers have reached
 //   the WaitSync before the Sync signal is asserted.
 //
 // Parameters:
-//  timeout - the SyncTimeout provides a timeout value to all slave
-//    probes. If a slave probe does not receive the sync signal during
+//  timeout - the SyncTimeout provides a timeout value to all target
+//    probes. If a target probe does not receive the sync signal during
 //    this timeout period, then a timeout occurs. The value is in
 //    milliseconds (Range 0ms - 65s).
-//  delay - the SyncDelay is meant to be used in a single master probe
+//  delay - the SyncDelay is meant to be used in a single controller probe
 //    sync singal implmentation. Upon receiving the WaitSync command,
 //    the probe will delay for the Sync Delay Value before sending
-//    the sync signal. This is to ensure that all slave probes
+//    the sync signal. This is to ensure that all target probes
 //    have reached WaitSync state prior to the sync being sent.
 //    The value is in milliseconds (Range 0ms - 65s).
 //
@@ -1755,10 +1783,10 @@ STATUS target_wait_sync(Target_Control_Handle* state, const uint16_t timeout,
 #ifdef ENABLE_DEBUG_LOGGING
     ASD_log(ASD_LogLevel_Debug, stream, option,
             "WaitSync(%s) - delay=%u ms - timeout=%u ms",
-            state->is_master_probe ? "master" : "slave", delay, timeout);
+            state->is_controller_probe ? "controller" : "target", delay, timeout);
 #endif
 
-    if (state->is_master_probe)
+    if (state->is_controller_probe)
     {
         usleep((__useconds_t)(delay * 1000)); // convert from us to ms
         // Once delay has occurred, send out the sync signal.

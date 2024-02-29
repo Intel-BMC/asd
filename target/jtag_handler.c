@@ -247,7 +247,7 @@ STATUS JTAG_set_tap_state(JTAG_Handler* state, enum jtag_states tap_state)
     tap_state_t.endstate = tap_state;
     tap_state_t.reset =
         (tap_state == jtag_tlr) ? JTAG_FORCE_RESET : JTAG_NO_RESET;
-    tap_state_t.tck = 1;
+    tap_state_t.tck = 0;
 #endif
 
 #ifdef JTAG_LEGACY_DRIVER

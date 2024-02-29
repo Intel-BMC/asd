@@ -19,7 +19,7 @@ endif(${APB_FREQ})
 set(I2C_MSG_BUILDER "i2c_msg_builder.c")
 set(I2C_HANDLER "i2c_handler.c")
 set(I3C_HANDLER "i3c_handler.c")
-set(SPP_STUB "1")
+set(SPP_HANDLER "spp_handler.c" "i3c_debug_handler.c")
 
 if(${I2C_STUB})
     if(${I3C_STUB})
@@ -45,8 +45,4 @@ if(NOT ${BUILD_UT})
             ${I3C_HANDLER} gpio.c dbus_helper.c vprobe_handler.c
             ${SPP_HANDLER} asd_target_api.c asd_server_interface.c)
     target_link_libraries(asd_target -lm -lsystemd -lgpiod)
-endif(${BUILD_UT})
-
-if(${BUILD_UT})
-    add_subdirectory(tests)
-endif(${BUILD_UT})
+endif(NOT ${BUILD_UT})

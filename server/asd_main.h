@@ -80,9 +80,11 @@ typedef struct asd_state
     ExtNet* extnet;
 } asd_state;
 
+#define MAX_INPUT_SIZE 100
 #define HOST_FD_INDEX 0
 #define GPIO_FD_INDEX 1
-#define MAX_FDS (GPIO_FD_INDEX + MAX_SESSIONS + NUM_GPIOS + NUM_DBUS_FDS)
+#define NUM_I3C_DEBUG_FDS 1
+#define MAX_FDS (GPIO_FD_INDEX + MAX_SESSIONS + NUM_GPIOS + NUM_DBUS_FDS + NUM_I3C_DEBUG_FDS)
 
 typedef enum
 {

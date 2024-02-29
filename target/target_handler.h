@@ -165,8 +165,12 @@ typedef struct Target_Control_Handle
     bool initialized;
     Target_Control_GPIO gpios[NUM_GPIOS];
     Dbus_Handle* dbus;
-    bool is_master_probe;
+    bool is_controller_probe;
     bool xdp_present;
+    int spp_fd;
+    bool i3c_ibi_handled;
+    char* ibi_event_buffer;
+    size_t ibi_event_size;
 } Target_Control_Handle;
 
 typedef struct data_json_map

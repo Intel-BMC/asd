@@ -34,7 +34,8 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <poll.h>
 
 #define MAX_DATA_SIZE 3000
-#define SUPPORTED_JTAG_CHAINS 2
+#define SUPPORTED_JTAG_CHAINS 1
+#define NO_JTAG_CHAINS 0
 #define SUPPORTED_I2C_BUSES 1
 #define HEADER_SIZE 4
 #define MAX_PACKET_SIZE (MAX_DATA_SIZE + HEADER_SIZE)
@@ -46,7 +47,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 // Two simple rules for the version string are:
 // 1. less than 255 in length (or it will be truncated in the plugin)
 // 2. no dashes, as they are used later up the sw stack between components.
-static char asd_version[] = "ASD_BMC_v1.5.2";
+static char asd_version[] = "ASD_BMC_v1.5.4";
 
 #define TO_ENUM(ENUM) ENUM,
 #define TO_STRING(STRING) #STRING,
@@ -65,6 +66,9 @@ typedef enum
     ASD_EVENT_PWRFAIL2,
     ASD_EVENT_PWRRESTORE3,
     ASD_EVENT_PWRFAIL3,
+    ASD_EVENT_RSV1,
+    ASD_EVENT_RSV2,
+    ASD_EVENT_BPK,
     ASD_EVENT_NONE
 } ASD_EVENT;
 

@@ -26,8 +26,4 @@ if(NOT ${BUILD_UT})
         DESTINATION /etc/pam.d/
         RENAME asd
     )
-endif(${BUILD_UT})
-
-if(${BUILD_UT})
-    add_subdirectory(tests)
-endif(${BUILD_UT})
+endif(NOT ${BUILD_UT})

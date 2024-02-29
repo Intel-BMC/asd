@@ -7,4 +7,4 @@ set(ASD_DIR ${PROJECT_SOURCE_DIR})
 add_subdirectory(jtag_test)
 add_subdirectory(server)
 add_subdirectory(target)
-
+add_subdirectory(spp_test)

@@ -507,13 +507,11 @@ bool uncore_discovery(JTAG_Handler* jtag, uncore_info* uncore,
     // The number of uncores in the system will be the number of bits in the
     // shiftDR / 32 bits (each id code is 32 bits)
     uncore->numUncores = index / 32;
-    int ia[1];
     ASD_log(ASD_LogLevel_Info, stream, option, "Found %d possible device%s",
             uncore->numUncores, (uncore->numUncores == 1) ? "" : "s");
     for (int i = 0; i < uncore->numUncores; i++)
     {
-        ia[0] = i;
-        sprintf_s(prefix, sizeof(prefix), "Device %d", ia, 1);
+        sprintf_s(prefix, sizeof(prefix), "Device %d", i );
         ASD_log_shift(ASD_LogLevel_Info, stream, option, 32, 4, &tdo[i * 4],
                       prefix);
     }

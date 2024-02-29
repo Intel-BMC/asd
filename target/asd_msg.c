@@ -54,6 +54,7 @@ STATUS do_bus_select_command(struct packet_data* packet);
 STATUS do_set_sclk_command(struct packet_data* packet);
 STATUS do_read_write(void* msg_set);
 static ASD_MSG* instance = NULL;
+static uint8_t get_supported_jtag_chains(void);
 
 STATUS read_openbmc_version()
 {
@@ -311,13 +312,21 @@ STATUS asd_msg_free(void)
         return ST_ERR;
     }
 
-    if ((jtag_result != ST_OK) || (i2c_result != ST_OK) ||
-        (target_result != ST_OK) || (vprobe_result != ST_OK))
+    if ((jtag_result != ST_OK) || (i2c_result != ST_OK) || (spp_result != ST_OK) ||
+        (i3c_result != ST_OK) || (target_result != ST_OK) || (vprobe_result != ST_OK))
     {
         return ST_ERR;
     }
 
     return ST_OK;
+}
+
+static uint8_t get_supported_jtag_chains(void)
+{
+    if (msg_state.buscfg->enable_spp)
+        return NO_JTAG_CHAINS;
+    else
+        return SUPPORTED_JTAG_CHAINS;
 }
 
 STATUS asd_msg_on_msg_recv(void)
@@ -368,7 +377,7 @@ STATUS asd_msg_on_msg_recv(void)
                 msg_state.out_msg.header.cmd_stat = ASD_SUCCESS;
                 break;
             case SUPPORTED_JTAG_CHAINS_CMD:
-                msg_state.out_msg.buffer[1] = SUPPORTED_JTAG_CHAINS;
+                msg_state.out_msg.buffer[1] = get_supported_jtag_chains();
                 msg_state.out_msg.header.size_lsb = 2;
                 msg_state.out_msg.header.size_msb = 0;
                 break;
@@ -679,6 +688,8 @@ STATUS asd_msg_on_msg_recv(void)
                                        ASD_FAILURE_INIT_SPP_HANDLER);
                     return result;
                 }
+            msg_state.target_handler->spp_fd = msg_state.spp_handler->spp_driver_handle;
+            msg_state.spp_handler->ibi_handled = msg_state.target_handler->i3c_ibi_handled;
             }
 
             if (target_initialize(msg_state.target_handler,
@@ -1672,12 +1683,14 @@ STATUS process_spp_message(struct asd_message* s_message)
             if (status == ST_OK)
             {
                 msg_state.out_msg.buffer[response_cnt++] = cmd;
+                msg_state.out_msg.buffer[response_cnt++] = msb_length;
                 msg_state.out_msg.buffer[response_cnt++] = lsb_length;
                 msg_state.out_msg.buffer[response_cnt++] = spp_command;
             }
             else
             {
                 msg_state.out_msg.buffer[response_cnt++] = cmd & SPP_CMD_MASK;
+                msg_state.out_msg.buffer[response_cnt++] = 0;
                 msg_state.out_msg.buffer[response_cnt++] = 0;
                 msg_state.out_msg.buffer[response_cnt++] = spp_command;
                 ASD_log(ASD_LogLevel_Error, ASD_LogStream_SPP,
@@ -1776,6 +1789,7 @@ STATUS process_spp_message(struct asd_message* s_message)
             if (status == ST_OK)
             {
                 msg_state.out_msg.buffer[response_cnt++] = cmd;
+                msg_state.out_msg.buffer[response_cnt++] = msb_wlength;
                 msg_state.out_msg.buffer[response_cnt++] = lsb_wlength;
                 msg_state.out_msg.buffer[response_cnt++] = spp_command;
                 msg_state.out_msg.buffer[response_cnt++] =
@@ -1787,6 +1801,7 @@ STATUS process_spp_message(struct asd_message* s_message)
             else
             {
                 msg_state.out_msg.buffer[response_cnt++] = cmd & SPP_CMD_MASK;
+                msg_state.out_msg.buffer[response_cnt++] = 0;
                 msg_state.out_msg.buffer[response_cnt++] = 0;
                 msg_state.out_msg.buffer[response_cnt++] = spp_command;
                 msg_state.out_msg.buffer[response_cnt++] = 0;
@@ -1907,7 +1922,7 @@ STATUS write_cfg(const writeCfg cmd, struct packet_data* packet)
         //  Bit 7:6 � Prescale Value (b'00 � 1, b'01 � 2, b'10 � 4, b'11
         //  � 8) Bit 5:0 � Divisor (1-64, 64 is expressed as value 0)
         //  The TAP clock frequency is determined by dividing the system
-        //  clock of the TAP Master first through the prescale value
+        //  clock of the TAP Controller first through the prescale value
         //  (1,2,4,8) and then through the divisor (1-64).
         // e.g. system clock/(prescale * divisor)
         uint8_t prescaleVal = 0, divisorVal = 0, tCLK = 0;
@@ -2526,13 +2541,45 @@ static STATUS send_pin_event(ASD_EVENT value)
     return result;
 }
 
+STATUS send_bpk_event(ASD_EVENT value, char* buffer, size_t buffer_size)
+{
+    STATUS result;
+    struct asd_message message = {{0}};
+
+    message.header.size_lsb = buffer_size + 1;
+    message.header.size_msb = 0;
+    message.header.type = JTAG_TYPE;
+    message.header.tag = BROADCAST_MESSAGE_ORIGIN_ID;
+    message.header.origin_id = BROADCAST_MESSAGE_ORIGIN_ID;
+    message.buffer[0] = (value & 0xFF);
+
+    for (size_t i = 0; i < buffer_size; i++) {
+        message.buffer[i+1] = buffer[i];
+    }
+    result = send_response(&message);
+    if (result != ST_OK)
+    {
+        ASD_log(ASD_LogLevel_Error, ASD_LogStream_SDK, ASD_LogOption_No_Remote,
+                "Failed to send an event message to client");
+    }
+    return result;
+}
+
 STATUS asd_msg_event(struct pollfd poll_fd)
 {
     STATUS result;
     ASD_EVENT event;
+    uint8_t event_buffer[512] = {0};
     struct asd_message* msg = &msg_state.in_msg.msg;
-
+    if (msg_state.target_handler == NULL || !msg_state.target_handler->initialized)
+    {
+        return ST_ERR;
+    }
+    msg_state.target_handler->ibi_event_buffer = event_buffer;
+    msg_state.target_handler->ibi_event_size = 0;
+    msg_state.target_handler->i3c_ibi_handled = msg_state.spp_handler->ibi_handled;
     result = target_event(msg_state.target_handler, poll_fd, &event);
+    msg_state.spp_handler->ibi_handled = msg_state.target_handler->i3c_ibi_handled;
 
     if (result == ST_OK)
     {
@@ -2546,6 +2593,11 @@ STATUS asd_msg_event(struct pollfd poll_fd)
             {
                 result = ST_ERR;
             }
+        }
+        if (event == ASD_EVENT_BPK)
+        {
+            result = send_bpk_event(event, msg_state.target_handler->ibi_event_buffer,
+                                    msg_state.target_handler->ibi_event_size);
         }
         else if (event != ASD_EVENT_NONE)
         {

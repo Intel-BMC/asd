@@ -2361,12 +2361,12 @@ void target_wait_sync_not_initialized_test(void** state)
     assert_int_equal(ST_ERR, target_wait_sync(&handle, 0, 0));
 }
 
-void target_wait_sync_master_test(void** state)
+void target_wait_sync_controller_test(void** state)
 {
     (void)state; /* unused */
     Target_Control_Handle handle;
     handle.initialized = true;
-    handle.is_master_probe = true;
+    handle.is_controller_probe = true;
     uint16_t delay = 193;
 
     expect_value(__wrap_usleep, useconds, delay * 1000);
@@ -2374,12 +2374,12 @@ void target_wait_sync_master_test(void** state)
     assert_int_equal(ST_ERR, target_wait_sync(&handle, 1, delay));
 }
 
-void target_wait_sync_slave_test(void** state)
+void target_wait_sync_target_test(void** state)
 {
     (void)state; /* unused */
     Target_Control_Handle handle;
     handle.initialized = true;
-    handle.is_master_probe = false;
+    handle.is_controller_probe = false;
     uint16_t timeout = 193;
 
     expect_value(__wrap_usleep, useconds, timeout * 1000);
@@ -2505,8 +2505,8 @@ int main()
         cmocka_unit_test_setup_teardown(target_event_to_ignore_test, setup,
                                         teardown),
         cmocka_unit_test(target_wait_sync_not_initialized_test),
-        cmocka_unit_test(target_wait_sync_master_test),
-        cmocka_unit_test(target_wait_sync_slave_test),
+        cmocka_unit_test(target_wait_sync_controller_test),
+        cmocka_unit_test(target_wait_sync_target_test),
 
     };
 

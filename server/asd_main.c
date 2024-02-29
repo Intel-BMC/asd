@@ -82,6 +82,51 @@ int asd_main(int argc, char** argv)
     return result == ST_OK ? 0 : 1;
 }
 
+bool validateCharInputs(char* input, char* bad_char, bool alphabetUpper,
+                        bool alphabetLower, bool numerics,
+                        bool extraChars, bool comma, bool dash)
+{
+    uint16_t strSize = strlen(input);
+    bool goodValues=false;
+    if (strSize > 0 && strSize < MAX_INPUT_SIZE)
+    {
+        for (size_t i = 0; i < strSize; i++)
+        {
+            if (alphabetUpper && (input[i] >= 'A' && input[i] <= 'Z'))
+            {
+                goodValues = true;
+            }
+            else if (alphabetLower && (input[i] >= 'a' && input[i] <= 'z'))
+            {
+                goodValues = true;
+            }
+            else if (numerics && (input[i] >= '0' && input[i] <= '9'))
+            {
+                goodValues = true;
+            }
+            else if (extraChars && (input[i] == '.' || input[i] == '/'))
+            {
+                goodValues = true;
+            }
+            else if (comma && (input[i] == ','))
+            {
+                goodValues = true;
+            }
+            else if (dash && (input[i] == '-'))
+            {
+                goodValues = true;
+            }
+            else
+            {
+                *bad_char = input[i];
+                goodValues = false;
+                break;
+            }
+        }
+    }
+    return goodValues;
+}
+
 bool process_command_line(int argc, char** argv, asd_args* args)
 {
     int c = 0;
@@ -128,9 +173,22 @@ bool process_command_line(int argc, char** argv, asd_args* args)
         {
             case 'p':
             {
-                uint16_t port = (uint16_t)strtol(optarg, NULL, 10);
-                fprintf(stderr, "Setting Port: %d\n", port);
-                args->session.n_port_number = port;
+                char ch=0;
+                if(validateCharInputs(optarg, &ch, false, false, true, false,
+                                       false, false))
+                {
+                    uint16_t port = (uint16_t)strtol(optarg, NULL, 10);
+                    fprintf(stderr, "Setting Port: %d\n", port);
+                    args->session.n_port_number = port;
+                }
+                else
+                {
+                    fprintf(stderr,
+                            "Invalid character in port: %c.\n",
+                            ch);
+                    showUsage(argv);
+                    return false;
+                }
                 break;
             }
             case 's':
@@ -146,12 +204,38 @@ bool process_command_line(int argc, char** argv, asd_args* args)
             }
             case 'k':
             {
-                args->session.cp_certkeyfile = optarg;
+                char ch=0;
+                if(validateCharInputs(optarg, &ch, true, true, true, true,
+                                       false, false))
+                {
+                    args->session.cp_certkeyfile = optarg;
+                }
+                else
+                {
+                    fprintf(stderr,
+                            "Invalid character in certificate filename: %c.\n",
+                            ch);
+                    showUsage(argv);
+                    return false;
+                }
                 break;
             }
             case 'n':
             {
-                args->session.cp_net_bind_device = optarg;
+                char ch=0;
+                if(validateCharInputs(optarg, &ch, true, true, true, false,
+                                       false, false))
+                {
+                    args->session.cp_net_bind_device = optarg;
+                }
+                else
+                {
+                    fprintf(stderr,
+                            "Invalid character in network bind device: %c.\n",
+                            ch);
+                    showUsage(argv);
+                    return false;
+                }
                 break;
             }
             case 'i':
@@ -161,6 +245,16 @@ bool process_command_line(int argc, char** argv, asd_args* args)
                 bool first_i2c = true;
                 char* endptr;
                 args->busopt.enable_i2c = true;
+                char ch=0;
+                if(!validateCharInputs(optarg, &ch, false, false, true, false,
+                                        true, false))
+                {
+                    fprintf(stderr,
+                            "Invalid character in i2c bus: %c.\n",
+                            ch);
+                    showUsage(argv);
+                    return false;
+                }
                 pch = strtok(optarg, ",");
                 while (pch != NULL)
                 {
@@ -199,6 +293,16 @@ bool process_command_line(int argc, char** argv, asd_args* args)
                 bool first_i3c = true;
                 char* endptr;
                 args->busopt.enable_i3c = true;
+                char ch = 0;
+                if(!validateCharInputs(optarg, &ch, false, false, true, false,
+                                        true, false))
+                {
+                    fprintf(stderr,
+                            "Invalid character in i3c bus list: %c.\n",
+                            ch);
+                    showUsage(argv);
+                    return false;
+                }
                 pch = strtok(optarg, ",");
                 while (pch != NULL)
                 {
@@ -238,6 +342,16 @@ bool process_command_line(int argc, char** argv, asd_args* args)
                 bool first_spp = true;
                 char* endptr;
                 args->busopt.enable_spp = true;
+                char ch = 0;
+                if(!validateCharInputs(optarg, &ch, false, false, true, false,
+                                        true, false))
+                {
+                    fprintf(stderr,
+                            "Invalid character in spp bus list: %c.\n",
+                            ch);
+                    showUsage(argv);
+                    return false;
+                }
                 pch = strtok(optarg, ",");
                 while (pch != NULL)
                 {
@@ -245,12 +359,12 @@ bool process_command_line(int argc, char** argv, asd_args* args)
                     bus = (uint8_t)strtol(pch, &endptr, 10);
                     if ((errno == ERANGE) || (endptr == pch))
                     {
-                        fprintf(stderr, "Wrong I3C bus list arguments(-d)\n");
+                        fprintf(stderr, "Wrong SPP bus list arguments(-d)\n");
                         break;
                     }
                     if (spp_counter >= MAX_SPP_BUSES)
                     {
-                        fprintf(stderr, "Discard I3C(SPP) bus: %d\n", bus);
+                        fprintf(stderr, "Discard SPP bus: %d\n", bus);
                     }
                     else
                     {
@@ -279,6 +393,16 @@ bool process_command_line(int argc, char** argv, asd_args* args)
             }
             case ARG_LOG_LEVEL:
             {
+                char ch=0;
+                if(!validateCharInputs(optarg, &ch, true, true, false, false,
+                                        false, true))
+                {
+                    fprintf(stderr,
+                            "Invalid character in log level: %c.\n",
+                            ch);
+                    showUsage(argv);
+                    return false;
+                }
                 if (!strtolevel(optarg, &args->log_level))
                 {
                     showUsage(argv);
@@ -288,6 +412,16 @@ bool process_command_line(int argc, char** argv, asd_args* args)
             }
             case ARG_LOG_STREAMS:
             {
+                char ch = 0;
+                if(!validateCharInputs(optarg, &ch, true, true, false, false,
+                                        true, true))
+                {
+                    fprintf(stderr,
+                            "Invalid character in log streams: %c.\n",
+                            ch);
+                    showUsage(argv);
+                    return false;
+                }
                 if (!strtostreams(optarg, &args->log_streams))
                 {
                     showUsage(argv);

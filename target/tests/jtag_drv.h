@@ -84,6 +84,6 @@ enum jtag_states
 #define AST_JTAG_BITBANG _IOWR(JTAGIOC_BASE, 5, struct tck_bitbang)
 #define AST_JTAG_SET_TAPSTATE _IOW(JTAGIOC_BASE, 6, struct tap_state_param)
 #define AST_JTAG_READWRITESCAN _IOWR(JTAGIOC_BASE, 7, struct scan_xfer)
-#define AST_JTAG_SLAVECONTLR _IOW(JTAGIOC_BASE, 8, struct controller_mode_param)
+#define AST_JTAG_TARGETCONTLR _IOW(JTAGIOC_BASE, 8, struct controller_mode_param)
 
 #endif

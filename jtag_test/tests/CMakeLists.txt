@@ -2,11 +2,13 @@ project(at-scale-debug-jtag-test-tests C)
 
 #
 # CMake options
-cmake_minimum_required(VERSION 2.8)
-
+cmake_minimum_required(VERSION 3.0)
+include(FindPkgConfig)
 #
 # import cmocka
-find_package(cmocka REQUIRED)
+find_package(cmocka 1.1.0 REQUIRED)
+pkg_check_modules(CMOCKA REQUIRED cmocka)
+list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake/cmocka)
 
 pkg_check_modules (SAFEC REQUIRED libsafec)
 include_directories (${SAFEC_INCLUDE_DIRS})
@@ -44,11 +46,10 @@ add_definitions(-DUNIT_TEST_MAIN)
 # jtag_test tests
 add_executable(jtag_test_tests
                "jtag_test_tests.c"
-               ../jtag_test.c
-               ../mem_helper.c)
+               ../jtag_test.c)
 set_property(TARGET jtag_test_tests PROPERTY C_STANDARD 99)
 target_link_libraries(
-  jtag_test_tests cmocka.a pthread -fprofile-arcs -ftest-coverage -lm ${SAFEC_LIBRARIES})
+  jtag_test_tests ${CMOCKA_LIBRARIES} pthread -fprofile-arcs -ftest-coverage -lm ${SAFEC_LIBRARIES})
 add_test(jtag_test_tests jtag_test_tests)
 set_target_properties(
   jtag_test_tests
@@ -58,7 +59,7 @@ set_target_properties(
         -Wl,--wrap=strtolevel -Wl,--wrap=strtostreams -Wl,--wrap=JTAGHandler \
         -Wl,--wrap=JTAG_initialize -Wl,--wrap=JTAG_deinitialize -Wl,--wrap=JTAG_set_tap_state \
         -Wl,--wrap=JTAG_shift -Wl,--wrap=JTAG_set_jtag_tck \
-        -Wl,--wrap=memcpy_safe \
+        -Wl,--wrap=_memcpy_s_chk \
         -Wl,--wrap=ASD_initialize_log_settings"
   )
 

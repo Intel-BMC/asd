@@ -43,7 +43,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #define IR14_SHIFT_SIZE 14       // 14 bits per uncore
 #define IR16_SHIFT_SIZE 16       // 16 bits per uncore
 #define MAX_IR_SHIFT_SIZE 0x400
-#define DEFAULT_NUMBER_TEST_ITERATIONS 1
+#define DEFAULT_NUMBER_TEST_ITERATIONS 40000
 #define DEFAULT_IR_VALUE 2
 #define DEFAULT_DR_SHIFT_SIZE 32
 #define MAX_DR_SHIFT_SIZE 0x20000
@@ -93,6 +93,8 @@ extern bool continue_loop;
 #ifndef UNIT_TEST_MAIN
 int main(int argc, char** argv);
 #endif
+
+void load_ir_size_map_str();
 
 int jtag_test_main(int argc, char** argv);
 

@@ -34,7 +34,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "asd_common.h"
 #include "config.h"
 
-#define UNINITIALIZED_I3C_DEBUG_DRIVER_HANDLE -1
+#define UNINITIALIZED_SPP_DEBUG_DRIVER_HANDLE -1
 
 typedef uint16_t __u16;
 typedef uint8_t __u8;
@@ -51,12 +51,15 @@ typedef enum {
 
 typedef struct SPP_Handler
 {
+    uint8_t spp_bus;
     int spp_buses[MAX_SPP_BUSES];
-    int i3c_debug_driver_handle;
+    bus_config* config;
+    int spp_driver_handle;
+    bool ibi_handled;
 } SPP_Handler;
 
 SPP_Handler* SPPHandler(bus_config* config);
-STATUS SPP_initialize(SPP_Handler* state);
+STATUS spp_initialize(SPP_Handler* state);
 STATUS spp_deinitialize(SPP_Handler* state);
 STATUS spp_bus_flock(SPP_Handler* state, uint8_t bus, int op);
 STATUS spp_bus_select(SPP_Handler* state, uint8_t bus);
@@ -67,6 +70,6 @@ STATUS spp_send_cmd(SPP_Handler* state, spp_command_t cmd, uint16_t size,
                     uint8_t * write_buffer);
 STATUS spp_send_receive_cmd(SPP_Handler* state, spp_command_t cmd,
                             uint16_t wsize, uint8_t * write_buffer,
-                            uint16_t * rsize, uint8_t * read_buffer);
+                            const uint16_t * rsize, uint8_t * read_buffer);
 STATUS spp_set_sim_data_cmd(SPP_Handler* state, uint16_t size, uint8_t * read_buffer);
 #endif // _SPP_HANDLER_H_

@@ -80,13 +80,15 @@ int main(int argc, char** argv)
 
 STATUS spp_test_main(int argc, char** argv)
 {
-    uncore_info uncore;
-    explicit_bzero(uncore.idcode, sizeof(uncore.idcode));
-    uncore.numUncores = 0;
+    uncore_info uncore[MAX_SPP_BUS_DEVICES];
     spp_test_args args;
     STATUS result;
     int i3c_fd = -1;
-
+    for (int i = 0; i < MAX_SPP_BUS_DEVICES; i++)
+    {
+        explicit_bzero(uncore[i].idcode, sizeof(uncore[i].idcode));
+        uncore[i].numUncores = 0;
+    }
     signal(SIGINT, interrupt_handler); // catch ctrl-c
 
     ASD_initialize_log_settings(DEFAULT_LOG_LEVEL, DEFAULT_LOG_STREAMS, false,
@@ -101,23 +103,61 @@ STATUS spp_test_main(int argc, char** argv)
 
     ASD_initialize_log_settings(args.log_level, args.log_streams, false, NULL,
                                 NULL);
-    SPP_Handler* state = SPPHandler(&args.busopt);
+    SPP_Handler* state = SPPHandler(&args.buscfg);
 
     if(spp_initialize(state) == ST_OK)
     {
-        if (initialize_bpk(state) == ST_OK)
+        uint8_t count = 0;
+        result = spp_bus_device_count(state, &count);
+        if (result == ST_OK)
         {
-            if (configure_bpk(state, &args) == ST_OK)
+            ASD_log(ASD_LogLevel_Error, stream, option,
+                    "spp_test found %d possible bpk link%s on bus: %d", count,
+                    count == 1 ? "" : "s", state->spp_bus);
+        }
+        else
+        {
+            ASD_log(ASD_LogLevel_Error, stream, option,
+                    "spp_test fail to read spp device count");
+        }
+
+        if (result == ST_OK)
+        {
+            for(uint8_t i = 0; i < count; i++)
             {
-                if (discovery(state, &uncore, &args) == ST_OK)
+                result = spp_device_select(state, i);
+                if (result != ST_OK)
                 {
-                    if (reset_jtag_to_rti_spp(state) == ST_OK)
+                    ASD_log(ASD_LogLevel_Error, stream, option,
+                            "spp_test failed to select device: %d", i);
+                    break;
+                }
+
+                ASD_log(ASD_LogLevel_Error, stream, option,
+                        "spp_test running on bus: %d bpk link: %d",
+                        state->spp_bus, i);
+
+                if (initialize_bpk(state) == ST_OK)
+                {
+                    if (configure_bpk(state, &args) == ST_OK)
                     {
-                        if (spp_test(state, &uncore, &args) == ST_OK)
+                        if (discovery(state, &uncore[i], &args) == ST_OK)
                         {
-                            result = ST_OK;
+                            if (reset_jtag_to_rti_spp(state) == ST_OK)
+                            {
+                                if (spp_test(state, &uncore[i], &args) == ST_OK)
+                                {
+                                    result = ST_OK;
+                                }
+                            }
                         }
                     }
+                }
+                if (disconnect_bpk(state) == ST_ERR)
+                {
+                    ASD_log(ASD_LogLevel_Error, stream, option,
+                            "Failed to disconnect.");
+                    result = ST_ERR;
                 }
             }
         }
@@ -157,8 +197,8 @@ STATUS parse_arguments(int argc, char** argv, spp_test_args* args)
     args->manual_mode = DEFAULT_TO_MANUAL_MODE;
     args->count_mode = false;
     args->random_mode = false;
-    args->busopt.bus = 0;
-    args->busopt.enable_spp = false;
+    args->buscfg.default_bus = 0;
+    args->buscfg.enable_spp = false;
     args->bpk_values = false;
     enum
     {
@@ -215,7 +255,7 @@ STATUS parse_arguments(int argc, char** argv, spp_test_args* args)
                 uint8_t spp_bus_index = 0;
                 bool first_spp = true;
                 char* endptr;
-                args->busopt.enable_spp = true;
+                args->buscfg.enable_spp = true;
                 pch = strtok(optarg, ",");
                 while (pch != NULL)
                 {
@@ -234,14 +274,14 @@ STATUS parse_arguments(int argc, char** argv, spp_test_args* args)
                     {
                         if (first_spp)
                         {
-                            args->busopt.bus = bus;
+                            args->buscfg.default_bus = bus;
                             first_spp = false;
                         }
                         fprintf(stderr, "Enabling I3C(SPP) bus: %d\n", bus);
                         spp_bus_index = MAX_IxC_BUSES + spp_counter;
-                        args->busopt.bus_config_type[spp_bus_index] =
+                        args->buscfg.bus_config_type[spp_bus_index] =
                             BUS_CONFIG_SPP;
-                        args->busopt.bus_config_map[spp_bus_index] = bus;
+                        args->buscfg.bus_config_map[spp_bus_index] = bus;
                     }
                     pch = strtok(NULL, ",");
                     spp_counter++;
@@ -341,6 +381,7 @@ void showUsage(char** argv)
 {
     ASD_log(
             ASD_LogLevel_Error, stream, option,
+            "\nVersion: %s \n"
             "\nUsage: %s [option]\n\n"
             "  -f          Run endlessly until ctrl-c is used\n"
             "  -c          Complete all iterations and count failing cases\n"
@@ -386,6 +427,7 @@ void showUsage(char** argv)
             "Read a register, such as SA_TAP_LR_UNIQUEID_CHAIN.\n"
             "     spp_test --ir-value=0x22 --dr-size=0x40\n"
             "\n",
+            asd_version,
             argv[0], DEFAULT_NUMBER_TEST_ITERATIONS,
             DEFAULT_TAP_DATA_PATTERN, MAX_IR_SHIFT_SIZE, ir_size_map_str,
             DEFAULT_DR_SHIFT_SIZE, MAX_DR_SHIFT_SIZE, DEFAULT_IR_VALUE,
@@ -466,10 +508,10 @@ STATUS configure_bpk(SPP_Handler* state, spp_test_args* args)
                 "DFX Security Policy: %s", (bool)output[1] ? "true" : "false");
             ASD_log(ASD_LogLevel_Info, stream, option,
                 "Debug Capabilities Window State: %s",
-                (bool)(output[2] && 0x1) ? "true" : "false");
+                (output[2] & 0x1) ? "true" : "false");
             ASD_log(ASD_LogLevel_Info, stream, option,
                 "Debug Capabilities Window Lock State:%s",
-                (bool)((output[2] && 0x2)>>1) ? "true" : "false");    
+                (output[2] & 0x2) ? "true" : "false");
         }
     }
     if(read_sp_config_cmd(state, SP_IDCODE, output, &num_bytes) == ST_OK)
@@ -534,6 +576,30 @@ STATUS configure_bpk(SPP_Handler* state, spp_test_args* args)
                 jtag_enabled ? "true" : "false");
         }
     }
+    return ST_OK;
+}
+
+STATUS disconnect_bpk(SPP_Handler* state)
+{
+    uint8_t output[BUFFER_SIZE_MAX];
+    uint8_t num_bytes;
+    if(write_sp_config_cmd(state, SP_AS_EN_CLEAR, CLEAR_ALL, output,
+                            &num_bytes) == ST_ERR)
+    {
+        ASD_log(ASD_LogLevel_Error, stream, option,
+                "Failure writing to configuration space");
+        return ST_ERR;
+    }
+    if(read_sp_config_cmd(state, SP_AS_EN_STAT, output, &num_bytes) == ST_OK)
+    {
+        if (num_bytes == 0x4)
+        {
+            ASD_log(ASD_LogLevel_Info, stream, option,
+                    "Status: %s",
+                    (output[0] & 0x1) ? "disconnected" : "connected");
+        }
+    }
+
     return ST_OK;
 }
 
@@ -604,8 +670,10 @@ STATUS discovery(SPP_Handler* state, uncore_info* uncore, spp_test_args* args)
     // shiftDR / 32 bits (each id code is 32 bits)
     uncore->numUncores = index / 32;
     int ia[1];
-    ASD_log(ASD_LogLevel_Info, stream, option, "Found %d possible device%s",
-            uncore->numUncores, (uncore->numUncores == 1) ? "" : "s");
+    ASD_log(ASD_LogLevel_Info, stream, option,
+            "Found %d possible device%s on bus: %d bpk device link:%d",
+            uncore->numUncores, (uncore->numUncores == 1) ? "" : "s",
+            state->spp_bus, state->device_index);
     for (int i = 0; i < uncore->numUncores; i++)
     {
         ia[0] = i;

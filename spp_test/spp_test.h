@@ -88,10 +88,12 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #define SP_AS_EN_STAT 0xc0
 #define SP_AS_EN_SET 0xc8
 #define SP_AS_AVAIL_STAT 0xd0
+#define SP_AS_EN_CLEAR 0xcc
 #define SP_AS_AVAIL_REQ_SET 0xd8
 #define SP_SESSION_MGMT_0 0x180
 #define SP_SESSION_MGMT_1 0x184
 #define JTAG_SET 0x1
+#define CLEAR_ALL 0xFFFFFFFF
 
 
 struct jtagSppCommandPacket {
@@ -200,7 +202,7 @@ typedef struct spp_test_args
     bool manual_mode;
     bool count_mode;
     bool random_mode;
-    bus_options busopt;
+    bus_config buscfg;
     unsigned char tap_data_pattern[12]; // Used for tap data comparison
     ASD_LogLevel log_level;
     ASD_LogStream log_streams;
@@ -262,6 +264,7 @@ void interrupt_handler(int dummy);
 STATUS parse_arguments(int argc, char** argv, spp_test_args* args);
 void showUsage(char** argv);
 STATUS initialize_bpk(SPP_Handler* state);
+STATUS disconnect_bpk(SPP_Handler* state);
 STATUS configure_bpk(SPP_Handler* state, spp_test_args* args);
 unsigned int find_pattern(const unsigned char* haystack,
                           unsigned int haystack_size,

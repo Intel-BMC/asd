@@ -27,31 +27,38 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "i3c_debug_handler.h"
 
-void debug_i3c_rx(i3c_cmd* cmd)
+void debug_i3c_rx(i3c_cmd* cmd, int device_index)
 {
     if (cmd->read_len > 0 && cmd->rx_buffer != NULL)
     {
+        char infoStr[6] = {0};
+        snprintf(&infoStr, sizeof(infoStr), "[RX%d]",device_index);
         ASD_log_buffer(ASD_LogLevel_Debug, ASD_LogStream_SPP, ASD_LogOption_None,
-           cmd->rx_buffer, cmd->read_len, "[RX]");
+                cmd->rx_buffer, cmd->read_len, infoStr);
+
     }
 }
 
-void debug_i3c_tx(i3c_cmd* cmd)
+void debug_i3c_tx(i3c_cmd* cmd, int device_index)
 {
     if (cmd->msgType == opcode)
     {
+
         ASD_log(ASD_LogLevel_Debug, ASD_LogStream_SPP, ASD_LogOption_None,
-           "[TX OPCODE]: %02X ", cmd->opcode);
+                "[TX OPCODE%d]: %02X ", device_index, cmd->opcode);
+
     }
     if (cmd->msgType == action)
     {
         ASD_log(ASD_LogLevel_Debug, ASD_LogStream_SPP, ASD_LogOption_None,
-           "[TX ACTION]: %02X ", cmd->action);
+                "[TX ACTION%d]: %02X ", device_index, cmd->action);
     }
     if (cmd->write_len > 0  && cmd->tx_buffer != NULL)
     {
-        ASD_log_buffer(ASD_LogLevel_Debug, ASD_LogStream_SPP, ASD_LogOption_None,
-           cmd->tx_buffer, cmd->write_len, "[TX]");
+        char infoStr[6] = {0};
+        snprintf(&infoStr, sizeof(infoStr), "[TX%d]",device_index);
+        ASD_log_buffer(ASD_LogLevel_Debug, ASD_LogStream_SPP,
+                ASD_LogOption_None, cmd->tx_buffer, cmd->write_len, infoStr);
     }
 }
 
@@ -63,20 +70,23 @@ STATUS send_i3c_action(SPP_Handler* state, i3c_cmd *cmd)
     if (!state->spp_driver_handle)
     {
         ASD_log(ASD_LogLevel_Error, ASD_LogStream_SPP, ASD_LogOption_None,
-                "Failed to use file descriptor:  %d\n", state->spp_driver_handle);
+                "[/dev/i3c-debug%d] Failed to use file descriptor:  %d\n",
+                state->device_index, state->spp_driver_handle);
         return ST_ERR;
     }
-    debug_i3c_tx(cmd);
+    debug_i3c_tx(cmd, state->device_index);
     ret = ioctl(state->spp_driver_handle, I3C_DEBUG_IOCTL_DEBUG_ACTION_CCC,
                 (int32_t*)&action_ccc);
     ASD_log(ASD_LogLevel_Debug, ASD_LogStream_SPP, ASD_LogOption_None,
-            "Ioctl debug action status: %i, errno=%i\n", ret, errno);
-    debug_i3c_rx(cmd);
+            "[/dev/i3c-debug%d] Ioctl debug action status: %i, errno=%i\n",
+            state->device_index, ret, errno);
+    debug_i3c_rx(cmd, state->device_index);
 
     if (ret < 0)
     {
         ASD_log(ASD_LogLevel_Error, ASD_LogStream_SPP, ASD_LogOption_None,
-                "Failed to send Debug Action ioctl\n");
+                "[/dev/i3c-debug%d] Failed to send Debug Action ioctl\n",
+                state->device_index);
         return ST_ERR;
     }
     return ST_OK;
@@ -90,7 +100,8 @@ STATUS send_i3c_opcode(SPP_Handler* state, i3c_cmd *cmd)
     if (!state->spp_driver_handle)
     {
         ASD_log(ASD_LogLevel_Error, ASD_LogStream_SPP, ASD_LogOption_None,
-                "Failed to use file descriptor:  %d\n", state->spp_driver_handle);
+                "[/dev/i3c-debug%d] Failed to use file descriptor:  %d\n",
+                state->device_index, state->spp_driver_handle);
         return ST_ERR;
     }
     if (cmd->write_len)
@@ -104,22 +115,24 @@ STATUS send_i3c_opcode(SPP_Handler* state, i3c_cmd *cmd)
         opcode_ccc.read_ptr = (uintptr_t)cmd->rx_buffer;
     }
 
-    debug_i3c_tx(cmd);
+    debug_i3c_tx(cmd, state->device_index);
     ret = ioctl(state->spp_driver_handle, I3C_DEBUG_IOCTL_DEBUG_OPCODE_CCC,
                 (int32_t*)&opcode_ccc);
     ASD_log(ASD_LogLevel_Debug, ASD_LogStream_SPP, ASD_LogOption_None,
-            "Ioctl debug opcode status: %i, errno=%i\n", ret, errno);
-    debug_i3c_rx(cmd);
+            "[/dev/i3c-debug%d] Ioctl debug opcode status: %i, errno=%i\n",
+             state->device_index, ret, errno);
+    debug_i3c_rx(cmd, state->device_index);
     if (ret < 0)
     {
         ASD_log(ASD_LogLevel_Error, ASD_LogStream_SPP, ASD_LogOption_None,
-                "Failed to send Debug Opcode ioctl\n");
+                "[/dev/i3c-debug%d] Failed to send Debug Opcode ioctl\n",
+                state->device_index);
         return ST_ERR;
     }
     return ST_OK;
 }
 
-ssize_t rx_i3c(int fd, uint8_t* buffer, uint16_t read_len)
+ssize_t rx_i3c(int fd, uint8_t* buffer, int16_t read_len)
 {
     ssize_t read_ret = -1;
     memset(buffer, 0, read_len);
@@ -140,7 +153,7 @@ ssize_t receive_i3c(SPP_Handler* state, i3c_cmd *cmd)
     struct pollfd debug_poll_fd;
     debug_poll_fd.fd = state->spp_driver_handle;
     uint8_t event_buffer[MAX_DATA_SIZE] = {0};
-    uint16_t *event_size = 0;
+    size_t event_size = sizeof(event_buffer);
     debug_poll_fd.events = POLLIN;
     struct i3c_get_event_data event_data;
     if (state->ibi_handled == false)
@@ -151,13 +164,27 @@ ssize_t receive_i3c(SPP_Handler* state, i3c_cmd *cmd)
             if (ret < 0)
             {
                 ASD_log(ASD_LogLevel_Error, ASD_LogStream_SPP, ASD_LogOption_None,
-                        "receive_i3c: Error while polling");
+                        "[/dev/i3c-debug%d] receive_i3c: Error while polling",
+                        state->device_index);
                 return ret;
             }
             if (!ret) {
+                //Workaround - In the runcontrol go flow, there is case where openIPC
+                //will issue a LoopTrig command to stop BPK from responding IBIs or
+                //response packets. BPK will continue until a Action or Broadcast Action
+                //0xA0 is seen. For this particular case we have seen that the poll
+                //function will return 0 (timeout) even if there is a valid response from
+                //BPK.  For now in the timeout case we reread and check. if reads fails
+                //we change it to no error.
                 ASD_log(ASD_LogLevel_Error, ASD_LogStream_SPP, ASD_LogOption_None,
-                        "receive_i3c: Timeout on read");
-                break;
+                        "[/dev/i3c-debug%d] receive_i3c: Timeout on read",
+                        state->device_index);
+                read_ret = rx_i3c(state->spp_driver_handle, cmd->rx_buffer, cmd->read_len);
+                cmd->read_len = read_ret;
+                debug_i3c_rx(cmd, state->device_index);
+                if (read_ret == -1)
+                    read_ret = 0;
+                return read_ret;
             }
             if ((debug_poll_fd.revents & POLLIN) == POLLIN)
             {
@@ -180,14 +207,21 @@ ssize_t receive_i3c(SPP_Handler* state, i3c_cmd *cmd)
         cmd->read_len = read_ret;
         state->ibi_handled = false;
     }
-    debug_i3c_rx(cmd);
+    debug_i3c_rx(cmd, state->device_index);
     return read_ret;
 }
 
-STATUS i3c_ibi_handler(int fd, uint8_t* ibi_buffer, uint16_t* ibi_len)
+STATUS i3c_ibi_handler(int fd, uint8_t* ibi_buffer, size_t* ibi_len)
 {
     struct i3c_get_event_data event_data;
-    event_data.data_len = (uint16_t)(sizeof(ibi_buffer));
+
+    if (ibi_buffer == NULL || ibi_len == NULL)
+        return ST_ERR;
+
+    if (*ibi_len > UINT16_MAX)
+        return ST_ERR;
+
+    event_data.data_len = (uint16_t)(*ibi_len);
     event_data.data_ptr = (uintptr_t)ibi_buffer;
     int ret = ioctl(fd, I3C_DEBUG_IOCTL_GET_EVENT_DATA, (int32_t*)&event_data);
     ASD_log(ASD_LogLevel_Debug, ASD_LogStream_SPP, ASD_LogOption_None,
@@ -214,22 +248,24 @@ STATUS send_i3c_cmd(SPP_Handler* state, i3c_cmd *cmd)
     debug_poll_fd.fd = state->spp_driver_handle;
     debug_poll_fd.events = POLLIN;
     uint8_t event_buffer[MAX_DATA_SIZE] = {0};
-    uint16_t event_size = 0;
+    size_t event_size = sizeof(event_buffer);
     bool data_ready = false;
 
     if (state->spp_driver_handle == UNINITIALIZED_SPP_DEBUG_DRIVER_HANDLE)
     {
         ASD_log(ASD_LogLevel_Error, ASD_LogStream_SPP, ASD_LogOption_None,
-                "Failed to use file descriptor:  %d\n", state->spp_driver_handle);
+                "[/dev/i3c-debug%d] Failed to use file descriptor:  %d\n",
+                state->device_index, state->spp_driver_handle);
         return ST_ERR;
     }
-    debug_i3c_tx(cmd);
+    debug_i3c_tx(cmd, state->device_index);
 
     write_ret = write(state->spp_driver_handle, cmd->tx_buffer, cmd->write_len);
     if (write_ret < 0)
     {
         ASD_log(ASD_LogLevel_Error, ASD_LogStream_SPP, ASD_LogOption_None,
-                "Failed to write data");
+                "[/dev/i3c-debug%d] Failed to write data",
+                state->device_index);
         return ST_ERR;
     }
 
@@ -240,12 +276,14 @@ STATUS send_i3c_cmd(SPP_Handler* state, i3c_cmd *cmd)
         if (ret < 0)
         {
             ASD_log(ASD_LogLevel_Error, ASD_LogStream_SPP, ASD_LogOption_None,
-                    "send_i3c_cmd: Error while polling");
+                    "[/dev/i3c-debug%d] send_i3c_cmd: Error while polling",
+                    state->device_index);
             return ret;
         }
         if (!ret) {
             ASD_log(ASD_LogLevel_Error, ASD_LogStream_SPP, ASD_LogOption_None,
-                    "send_i3c_cmd: Timeout wating on data ready");
+                    "[/dev/i3c-debug%d] send_i3c_cmd: Timeout wating on data ready",
+                    state->device_index);
             break;
         }
         if ((debug_poll_fd.revents & POLLIN) == POLLIN)
@@ -261,7 +299,8 @@ STATUS send_i3c_cmd(SPP_Handler* state, i3c_cmd *cmd)
                 }
                 else {
                     ASD_log(ASD_LogLevel_Debug, ASD_LogStream_SPP, ASD_LogOption_None,
-                            "send_i3c_cmd: Not Data Ready IBI");
+                            "[/dev/i3c-debug%d] send_i3c_cmd: Not Data Ready IBI",
+                            state->device_index);
                     ASD_log_buffer(ASD_LogLevel_Debug, ASD_LogStream_SPP,
                                    ASD_LogOption_None, event_buffer,
                                    event_size, "[NIBI]");

@@ -52,7 +52,7 @@ struct i3c_debug_opcode_ccc {
 struct i3c_debug_action_ccc {
     __u8 action;
 };
-#define TIMEOUT_I3C_DEBUG_RX 1000   // milliseconds
+#define TIMEOUT_I3C_DEBUG_RX  300   // milliseconds
 
 #define I3C_DEBUG_IOCTL_BASE    0x79
 
@@ -84,8 +84,8 @@ typedef struct i3c_cmd
     enum i3cMsgType msgType;
     uint8_t opcode;
     uint8_t action;
-    uint16_t write_len;
-    uint16_t read_len;
+    int16_t write_len;
+    int16_t read_len;
     uint8_t* tx_buffer;
     uint8_t* rx_buffer;
 } i3c_cmd;
@@ -95,10 +95,10 @@ STATUS init_i3c( SPP_Handler* state);
 STATUS send_i3c_action(SPP_Handler* state, i3c_cmd *cmd);
 STATUS send_i3c_opcode(SPP_Handler* state, i3c_cmd *cmd);
 ssize_t receive_i3c(SPP_Handler* state, i3c_cmd *cmd);
-void debug_rx(i3c_cmd* cmd);
-void debug_i3c_tx(i3c_cmd* cmd);
+void debug_i3c_rx(i3c_cmd*, int device_index);
+void debug_i3c_tx(i3c_cmd* cmd, int device_index);
 STATUS send_i3c_cmd(SPP_Handler* state, i3c_cmd *cmd);
-STATUS i3c_ibi_handler(int fd, uint8_t* ibi_buffer, uint16_t* ibi_len);
+STATUS i3c_ibi_handler(int fd, uint8_t* ibi_buffer, size_t* ibi_len);
 
 
 #endif // I3C_DEBUG_HANDLER_H

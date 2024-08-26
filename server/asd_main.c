@@ -444,6 +444,7 @@ void showUsage(char** argv)
 {
     ASD_log(
         ASD_LogLevel_Error, ASD_LogStream_Daemon, ASD_LogOption_No_Remote,
+        "\nVersion: %s"
         "\nUsage: %s [option]\n\n"
         "  -p <number> Port number (default=%d)\n\n"
         "  -s          Route log messages to the system log\n"
@@ -502,7 +503,7 @@ void showUsage(char** argv)
         "Default logging, only listen on eth0.\n"
         "     asd -n eth0\n"
         "\n",
-        argv[0], DEFAULT_PORT, DEFAULT_CERT_FILE,
+        asd_version, argv[0], DEFAULT_PORT, DEFAULT_CERT_FILE,
         MAX_IxC_BUSES, MAX_IxC_BUSES,
         ASD_LogLevelString[DEFAULT_LOG_LEVEL],
         ASD_LogLevelString[ASD_LogLevel_Off],

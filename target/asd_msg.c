@@ -217,6 +217,23 @@ STATUS asd_msg_init(config* asd_cfg)
     return ST_OK;
 }
 
+STATUS asd_msg_state_free(void)
+{
+    msg_state.in_msg.msg.header.size_lsb = 0;
+    msg_state.in_msg.msg.header.size_msb = 0;
+    msg_state.in_msg.msg.header.cmd_stat = 0;
+    msg_state.in_msg.msg.header.type = 0;
+    msg_state.in_msg.msg.header.tag = 0;
+    msg_state.in_msg.msg.header.origin_id = 0;
+    msg_state.in_msg.msg.header.enc_bit = 0;
+    explicit_bzero(msg_state.in_msg.msg.buffer, MAX_DATA_SIZE);
+    msg_state.in_msg.read_state = READ_STATE_HEADER;
+    msg_state.in_msg.read_index = 0;
+    msg_state.in_msg.data_size = 0;
+    msg_state.in_msg.msg.header.type = 0;
+    return ST_OK;
+}
+
 STATUS asd_msg_free(void)
 {
     STATUS jtag_result = ST_OK;
@@ -269,6 +286,13 @@ STATUS asd_msg_free(void)
 
         if (msg_state.spp_handler)
         {
+            spp_result = disconnect(msg_state.spp_handler);
+            if (spp_result == ST_OK)
+            {
+                ASD_log(ASD_LogLevel_Error, ASD_LogStream_Daemon,
+                        ASD_LogOption_None,
+                        "Disconnecting from I3C Host");
+            }
             spp_result = spp_deinitialize(msg_state.spp_handler);
             if (spp_result != ST_OK)
             {
@@ -317,7 +341,7 @@ STATUS asd_msg_free(void)
     {
         return ST_ERR;
     }
-
+    asd_msg_state_free();
     return ST_OK;
 }
 
@@ -500,6 +524,27 @@ STATUS asd_msg_on_msg_recv(void)
                     result = ST_ERR;
                 }
                 break;
+            case REMOTE_SPP_CONFIG_CMD:
+                {
+                    uint32_t spp_bus_device_mask = 0x0;
+                    if (msg_state.spp_handler != NULL)
+                    {
+                        msg_state.out_msg.header.size_lsb = 5;
+                        msg_state.out_msg.header.size_msb = 0;
+                        result = spp_bus_get_device_map(msg_state.spp_handler,
+                                 (uint32_t *) &msg_state.out_msg.buffer[1]);
+                    }
+                    else
+                    {
+                        msg_state.out_msg.header.size_lsb = 5;
+                        msg_state.out_msg.header.size_msb = 0;
+                        msg_state.out_msg.buffer[1] = 0x0;
+                        msg_state.out_msg.buffer[2] = 0x0;
+                        msg_state.out_msg.buffer[3] = 0x0;
+                        msg_state.out_msg.buffer[4] = 0x0;
+                    }
+                break;
+                }
             case AGENT_CONFIGURATION_CMD:
             {
                 // An agent configuration command was sent.
@@ -689,7 +734,7 @@ STATUS asd_msg_on_msg_recv(void)
                     return result;
                 }
             msg_state.target_handler->spp_fd = msg_state.spp_handler->spp_driver_handle;
-            msg_state.spp_handler->ibi_handled = msg_state.target_handler->i3c_ibi_handled;
+            msg_state.target_handler->spp_handler = msg_state.spp_handler;
             }
 
             if (target_initialize(msg_state.target_handler,
@@ -886,8 +931,10 @@ void process_message()
             {
                 ASD_log(ASD_LogLevel_Error, ASD_LogStream_SDK,
                         ASD_LogOption_None,
-                        "Failed to process SPP message");
-                send_error_message( msg, ASD_FAILURE_PROCESS_SPP_MSG);
+                        "Failed to process SPP message, do not FW error");
+                // TODO: For now do not report all errors since some timeouts are
+                //       expected during power flows.
+                //send_error_message( msg, ASD_FAILURE_PROCESS_SPP_MSG);
                 return;
             }
         }
@@ -1515,9 +1562,21 @@ STATUS process_spp_message(struct asd_message* s_message)
         }
         else if (cmd == SPP_SEND)
         {
+            uint8_t address = 0;
             uint16_t num_of_bytes = 0;
             uint8_t lsb_length = 0;
             uint8_t msb_length = 0;
+
+            data_ptr = get_packet_data(&packet, 1);
+            if (data_ptr == NULL)
+            {
+                ASD_log(ASD_LogLevel_Error, ASD_LogStream_SPP,
+                        ASD_LogOption_None,
+                        "Failed to read send address, short packet");
+                status = ST_ERR;
+                break;
+            }
+            address = *data_ptr;
 
             data_ptr = get_packet_data(&packet, 1);
             if (data_ptr == NULL)
@@ -1554,16 +1613,26 @@ STATUS process_spp_message(struct asd_message* s_message)
                 break;
             }
 
+            status = spp_device_select(msg_state.spp_handler, address);
+            if (status != ST_OK)
+            {
+                ASD_log(ASD_LogLevel_Error, ASD_LogStream_SPP, ASD_LogOption_None,
+                        "asd_msg failed to select device: %d", address);
+                break;
+            }
+
             status = spp_send(msg_state.spp_handler, num_of_bytes, data_ptr);
             if (status == ST_OK)
             {
                 msg_state.out_msg.buffer[response_cnt++] = cmd;
+                msg_state.out_msg.buffer[response_cnt++] = address;
                 msg_state.out_msg.buffer[response_cnt++] = msb_length;
                 msg_state.out_msg.buffer[response_cnt++] = lsb_length;
             }
             else
             {
                 msg_state.out_msg.buffer[response_cnt++] = cmd;
+                msg_state.out_msg.buffer[response_cnt++] = address;
                 msg_state.out_msg.buffer[response_cnt++] = 0;
                 msg_state.out_msg.buffer[response_cnt++] = 0;
                 ASD_log(ASD_LogLevel_Error, ASD_LogStream_SPP,
@@ -1575,9 +1644,21 @@ STATUS process_spp_message(struct asd_message* s_message)
         }
         else if (cmd == SPP_RECEIVE)
         {
+            uint8_t address = 0;
             uint16_t num_of_bytes = 0;
             uint8_t lsb_length = 0;
             uint8_t msb_length = 0;
+
+            data_ptr = get_packet_data(&packet, 1);
+            if (data_ptr == NULL)
+            {
+                ASD_log(ASD_LogLevel_Error, ASD_LogStream_SPP,
+                        ASD_LogOption_None,
+                        "Failed to read receive address, short packet");
+                status = ST_ERR;
+                break;
+            }
+            address = *data_ptr;
 
             data_ptr = get_packet_data(&packet, 1);
             if (data_ptr == NULL)
@@ -1603,12 +1684,21 @@ STATUS process_spp_message(struct asd_message* s_message)
 
             num_of_bytes = (msb_length << 8) | lsb_length;
 
+            status = spp_device_select(msg_state.spp_handler, address);
+            if (status != ST_OK)
+            {
+                ASD_log(ASD_LogLevel_Error, ASD_LogStream_SPP, ASD_LogOption_None,
+                        "asd_msg failed to select device: %d", address);
+                break;
+            }
+
             status = spp_receive(msg_state.spp_handler, &num_of_bytes,
                                  &msg_state.out_msg.buffer[response_cnt +
                                  SPP_RECEIVE_COMMAND_SIZE]);
             if (status == ST_OK)
             {
                 msg_state.out_msg.buffer[response_cnt++] = cmd;
+                msg_state.out_msg.buffer[response_cnt++] = address;
                 msg_state.out_msg.buffer[response_cnt++] = msb_length;
                 msg_state.out_msg.buffer[response_cnt++] = lsb_length;
                 response_cnt = response_cnt + num_of_bytes;
@@ -1616,21 +1706,37 @@ STATUS process_spp_message(struct asd_message* s_message)
             else
             {
                 msg_state.out_msg.buffer[response_cnt++] = cmd;
+                msg_state.out_msg.buffer[response_cnt++] = address;
                 msg_state.out_msg.buffer[response_cnt++] = 0;
                 msg_state.out_msg.buffer[response_cnt++] = 0;
                 ASD_log(ASD_LogLevel_Error, ASD_LogStream_SPP,
                         ASD_LogOption_None,
-                        "Failed to process SPP Receive");
-                status = ST_ERR;
-                break;
+                        "Failed to process SPP Receive, do not send error");
+                // TODO: For now do not report all errors since some are expected
+                //       during power flows.
+                //status = ST_ERR;
+                //break;
+                status = ST_OK;
             }
         }
         else if (cmd == SPP_SEND_CMD)
         {
+            uint8_t address = 0;
             uint16_t num_of_bytes = 0;
             uint8_t msb_length = 0;
             uint8_t lsb_length = 0;
             uint8_t spp_command = 0;
+
+            data_ptr = get_packet_data(&packet, 1);
+            if (data_ptr == NULL)
+            {
+                ASD_log(ASD_LogLevel_Error, ASD_LogStream_SPP,
+                        ASD_LogOption_None,
+                        "Failed to read send command address, short packet");
+                status = ST_ERR;
+                break;
+            }
+            address = *data_ptr;
 
             data_ptr = get_packet_data(&packet, 1);
             if (data_ptr == NULL)
@@ -1678,11 +1784,20 @@ STATUS process_spp_message(struct asd_message* s_message)
                 break;
             }
 
+            status = spp_device_select(msg_state.spp_handler, address);
+            if (status != ST_OK)
+            {
+                ASD_log(ASD_LogLevel_Error, ASD_LogStream_SPP, ASD_LogOption_None,
+                        "asd_msg failed to select device: %d", address);
+                break;
+            }
+
             status = spp_send_cmd(msg_state.spp_handler, spp_command,
                                   num_of_bytes, data_ptr);
             if (status == ST_OK)
             {
                 msg_state.out_msg.buffer[response_cnt++] = cmd;
+                msg_state.out_msg.buffer[response_cnt++] = address;
                 msg_state.out_msg.buffer[response_cnt++] = msb_length;
                 msg_state.out_msg.buffer[response_cnt++] = lsb_length;
                 msg_state.out_msg.buffer[response_cnt++] = spp_command;
@@ -1690,6 +1805,7 @@ STATUS process_spp_message(struct asd_message* s_message)
             else
             {
                 msg_state.out_msg.buffer[response_cnt++] = cmd & SPP_CMD_MASK;
+                msg_state.out_msg.buffer[response_cnt++] = address;
                 msg_state.out_msg.buffer[response_cnt++] = 0;
                 msg_state.out_msg.buffer[response_cnt++] = 0;
                 msg_state.out_msg.buffer[response_cnt++] = spp_command;
@@ -1702,6 +1818,7 @@ STATUS process_spp_message(struct asd_message* s_message)
         }
         else if (cmd == SPP_SEND_RECEIVE_CMD)
         {
+            uint8_t address = 0;
             uint16_t num_of_write_bytes = 0;
             uint16_t num_of_read_bytes = 0;
             uint8_t msb_wlength = 0;
@@ -1709,6 +1826,17 @@ STATUS process_spp_message(struct asd_message* s_message)
             uint8_t msb_rlength = 0;
             uint8_t lsb_rlength = 0;
             uint8_t spp_command = 0;
+
+            data_ptr = get_packet_data(&packet, 1);
+            if (data_ptr == NULL)
+            {
+                ASD_log(ASD_LogLevel_Error, ASD_LogStream_SPP,
+                        ASD_LogOption_None,
+                        "Failed to read send command address, short packet");
+                status = ST_ERR;
+                break;
+            }
+            address = *data_ptr;
 
             data_ptr = get_packet_data(&packet, 1);
             if (data_ptr == NULL)
@@ -1779,6 +1907,14 @@ STATUS process_spp_message(struct asd_message* s_message)
                 break;
             }
 
+            status = spp_device_select(msg_state.spp_handler, address);
+            if (status != ST_OK)
+            {
+                ASD_log(ASD_LogLevel_Error, ASD_LogStream_SPP, ASD_LogOption_None,
+                        "asd_msg failed to select device: %d", address);
+                break;
+            }
+
             status = spp_send_receive_cmd(msg_state.spp_handler, spp_command,
                                           num_of_write_bytes, data_ptr,
                                           &num_of_read_bytes,
@@ -1789,6 +1925,7 @@ STATUS process_spp_message(struct asd_message* s_message)
             if (status == ST_OK)
             {
                 msg_state.out_msg.buffer[response_cnt++] = cmd;
+                msg_state.out_msg.buffer[response_cnt++] = address;
                 msg_state.out_msg.buffer[response_cnt++] = msb_wlength;
                 msg_state.out_msg.buffer[response_cnt++] = lsb_wlength;
                 msg_state.out_msg.buffer[response_cnt++] = spp_command;
@@ -1801,6 +1938,7 @@ STATUS process_spp_message(struct asd_message* s_message)
             else
             {
                 msg_state.out_msg.buffer[response_cnt++] = cmd & SPP_CMD_MASK;
+                msg_state.out_msg.buffer[response_cnt++] = address;
                 msg_state.out_msg.buffer[response_cnt++] = 0;
                 msg_state.out_msg.buffer[response_cnt++] = 0;
                 msg_state.out_msg.buffer[response_cnt++] = spp_command;
@@ -2541,20 +2679,21 @@ static STATUS send_pin_event(ASD_EVENT value)
     return result;
 }
 
-STATUS send_bpk_event(ASD_EVENT value, char* buffer, size_t buffer_size)
+STATUS send_bpk_event(ASD_EVENT value, ASD_EVENT_DATA event_data)
 {
     STATUS result;
     struct asd_message message = {{0}};
 
-    message.header.size_lsb = buffer_size + 1;
+    message.header.size_lsb = event_data.size + 2;
     message.header.size_msb = 0;
     message.header.type = JTAG_TYPE;
     message.header.tag = BROADCAST_MESSAGE_ORIGIN_ID;
     message.header.origin_id = BROADCAST_MESSAGE_ORIGIN_ID;
-    message.buffer[0] = (value & 0xFF);
+    message.buffer[0] = (value & 0xFF);  // ASD_EVENT_BPK
+    message.buffer[1] = (uint8_t)(event_data.addr & 0xFF);  // i3c_debug device id
 
-    for (size_t i = 0; i < buffer_size; i++) {
-        message.buffer[i+1] = buffer[i];
+    for (size_t i = 0; i < event_data.size; i++) {
+        message.buffer[i+2] = event_data.buffer[i];
     }
     result = send_response(&message);
     if (result != ST_OK)
@@ -2569,17 +2708,16 @@ STATUS asd_msg_event(struct pollfd poll_fd)
 {
     STATUS result;
     ASD_EVENT event;
+    ASD_EVENT_DATA event_data;
     uint8_t event_buffer[512] = {0};
     struct asd_message* msg = &msg_state.in_msg.msg;
     if (msg_state.target_handler == NULL || !msg_state.target_handler->initialized)
     {
         return ST_ERR;
     }
-    msg_state.target_handler->ibi_event_buffer = event_buffer;
-    msg_state.target_handler->ibi_event_size = 0;
-    msg_state.target_handler->i3c_ibi_handled = msg_state.spp_handler->ibi_handled;
-    result = target_event(msg_state.target_handler, poll_fd, &event);
-    msg_state.spp_handler->ibi_handled = msg_state.target_handler->i3c_ibi_handled;
+    event_data.buffer = event_buffer;
+    event_data.size = sizeof(event_buffer);
+    result = target_event(msg_state.target_handler, poll_fd, &event, &event_data);
 
     if (result == ST_OK)
     {
@@ -2596,8 +2734,7 @@ STATUS asd_msg_event(struct pollfd poll_fd)
         }
         if (event == ASD_EVENT_BPK)
         {
-            result = send_bpk_event(event, msg_state.target_handler->ibi_event_buffer,
-                                    msg_state.target_handler->ibi_event_size);
+            result = send_bpk_event(event, event_data);
         }
         else if (event != ASD_EVENT_NONE)
         {

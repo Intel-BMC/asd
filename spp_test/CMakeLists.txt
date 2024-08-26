@@ -20,3 +20,5 @@ if(NOT ${BUILD_UT})
     install (TARGETS spp_test DESTINATION bin)
 endif(NOT ${BUILD_UT})
 
+add_subdirectory(debug_over_i3c)
+

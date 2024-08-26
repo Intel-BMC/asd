@@ -269,6 +269,8 @@ Target_Control_Handle* TargetHandler()
         ASD_log(ASD_LogLevel_Error, stream, option, "dbus cannot be allocated");
     }
 
+    state->spp_handler = NULL;
+
     state->initialized = false;
 
     explicit_bzero(&state->gpios, sizeof(state->gpios));
@@ -1127,38 +1129,53 @@ STATUS deinitialize_gpios(Target_Control_Handle* state)
 }
 
 STATUS target_event(Target_Control_Handle* state, struct pollfd poll_fd,
-                    ASD_EVENT* event)
+                    ASD_EVENT* event, ASD_EVENT_DATA * event_data)
 {
     STATUS result = ST_ERR;
     int i, rv = 0;
     size_t ret;
-    struct i3c_get_event_data event_data;
 
     if (state == NULL || !state->initialized || event == NULL)
         return ST_ERR;
 
     *event = ASD_EVENT_NONE;
 
-    if (state->spp_fd == poll_fd.fd &&
-        (poll_fd.revents & POLLIN) == POLLIN)
+    if (state->spp_handler != NULL)
     {
-        if (state->i3c_ibi_handled == false)
+        uint8_t count = 0;
+        int i = 0;
+
+        if (event_data == NULL)
+            return ST_ERR;
+
+        result = spp_bus_device_count(state->spp_handler, &count);
+        if (result == ST_OK)
         {
-            if (i3c_ibi_handler(poll_fd.fd, state->ibi_event_buffer,
-                                &state->ibi_event_size) == ST_OK)
+            for(i = 0; i < count; i++)
             {
-                *event = ASD_EVENT_BPK;
-                state->i3c_ibi_handled = true;
-                result = ST_OK;
+                if (state->spp_handler->spp_dev_handlers[i] == poll_fd.fd &&
+                    (poll_fd.revents & POLLIN) == POLLIN)
+                {
+                    if (i3c_ibi_handler(poll_fd.fd, event_data->buffer,
+                        &event_data->size) == ST_OK)
+                    {
+                        *event = ASD_EVENT_BPK;
+                        event_data->addr = i;
+                        state->spp_handler->ibi_handled = true;
+                        return ST_OK;
+                    }
+                    else
+                    {
+                        ASD_log(ASD_LogLevel_Error, stream, option,
+                                "target_event() ASD_EVENT_BPK already processed");
+                        return ST_ERR;
+                    }
+                }
             }
         }
-        else
-        {
-            //TODO: Add flag for IBI handling on RX function
-            result = ST_OK;
-        }
     }
-    else if (state->dbus && state->dbus->fd == poll_fd.fd &&
+
+    if (state->dbus && state->dbus->fd == poll_fd.fd &&
         (poll_fd.revents & POLLIN) == POLLIN)
     {
 #ifdef ENABLE_DEBUG_LOGGING
@@ -1596,13 +1613,17 @@ STATUS target_wait_PRDY(Target_Control_Handle* state, const uint8_t log2time)
     // The design for this calls for waiting for PRDY or until a timeout
     // occurs. The timeout is computed using the PRDY timeout setting
     // (log2time) and the JTAG TCLK.
+    // bool platform reset added to check if there has been a call reset during
+    // wait PRDY
 
     int timeout_ms = 0;
+    static bool platform_reset = false;
     struct pollfd pfd = {0};
     int poll_result = 0;
     STATUS result = ST_OK;
+    STATUS platform_result = ST_OK;
     short events = 0;
-
+    short value = 0;
     if (state == NULL || !state->initialized)
     {
         ASD_log(ASD_LogLevel_Error, stream, option,
@@ -1621,13 +1642,46 @@ STATUS target_wait_PRDY(Target_Control_Handle* state, const uint8_t log2time)
     get_pin_events(state->gpios[BMC_PRDY_N], &events);
     pfd.events = events;
     pfd.fd = state->gpios[BMC_PRDY_N].fd;
+
+    if (platform_reset)
+    {
+        timeout_ms = 0;
+    }
     poll_result = poll(&pfd, 1, timeout_ms);
+
+    Target_Control_GPIO pltrst_gpio = state->gpios[BMC_PLTRST_B];
+
+    platform_result = pltrst_gpio.read(state, BMC_PLTRST_B, &value);
+
+    if (platform_result != ST_OK)
+    {
+        ASD_log(ASD_LogLevel_Error, stream, option,
+                "Failed to get event status for PLTRST: %d", platform_result);
+    }
+    else if (value == 0)
+    {
+        platform_reset = false;
+    }
+    else
+    {
+#ifdef ENABLE_DEBUG_LOGGING
+        ASD_log(ASD_LogLevel_Debug, stream, option,
+                "Platform reset pin in: %d, Next Timeout set to 0", value);
+#endif
+        platform_reset = true;
+    }
+
     if (poll_result == 0)
     {
 #ifdef ENABLE_DEBUG_LOGGING
         ASD_log(ASD_LogLevel_Debug, stream, option,
                 "Wait PRDY timed out occurred");
 #endif
+        timeout_ms = (1 << log2time) / JTAG_CLOCK_CYCLE_MILLISECONDS;
+        if (timeout_ms <= 0)
+        {
+            timeout_ms = 1;
+        }
         // future: we should return something to indicate a timeout
     }
     else if (poll_result > 0)
@@ -1655,6 +1709,7 @@ STATUS target_get_fds(Target_Control_Handle* state, target_fdarr_t* fds,
 {
     int index = 0;
     short events = 0;
+    STATUS result = ST_ERR;
 
     if (state == NULL || !state->initialized || fds == NULL || num_fds == NULL)
     {
@@ -1727,11 +1782,20 @@ STATUS target_get_fds(Target_Control_Handle* state, target_fdarr_t* fds,
         index++;
     }
 
-    if (state->spp_fd != -1)
+    if (state->spp_handler != NULL)
     {
-        (*fds)[index].fd = state->spp_fd;
-        (*fds)[index].events = POLLIN;
-        index++;
+        uint8_t count = 0;
+        int i = 0;
+        result = spp_bus_device_count(state->spp_handler, &count);
+        if (result == ST_OK)
+        {
+            for(i = 0; i<count; i++)
+            {
+                (*fds)[index].fd = state->spp_handler->spp_dev_handlers[i];
+                (*fds)[index].events = POLLIN;
+                index++;
+            }
+        }
     }
 
     *num_fds = index;

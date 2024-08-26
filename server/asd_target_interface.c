@@ -111,7 +111,7 @@ STATUS asd_api_target_ioctl(void* input, void* output, unsigned int cmd)
                 break;
             target_interface_version = (char *) output;
             status = asd_target_interface_version(target_interface_version);
-        break;
+            break;
         case IOCTL_TARGET_IS_INTERFACE_SUPPORTED:
             if (input == NULL || output == NULL)
                 break;
@@ -119,6 +119,7 @@ STATUS asd_api_target_ioctl(void* input, void* output, unsigned int cmd)
             bool * supported = (bool *) output;
             *supported = asd_is_api_target_version_supported(target_interface_version);
             status = ST_OK;
+            break;
         default:
             status = asd_target_ioctl(input, output, cmd);
     }

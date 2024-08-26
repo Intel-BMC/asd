@@ -36,6 +36,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "asd_common.h"
 #include "dbus_helper.h"
 #include "gpio.h"
+#include "spp_handler.h"
 
 #define POLL_GPIO (POLLPRI + POLLERR)
 #define CHIP_BUFFER_SIZE 32
@@ -159,6 +160,14 @@ typedef struct Target_Control_GPIO
     Pin_Type type;
 } Target_Control_GPIO;
 
+typedef struct ASD_EVENT_DATA
+{
+    uint32_t addr;
+    size_t size;
+    char* buffer;
+} ASD_EVENT_DATA;
+
+
 typedef struct Target_Control_Handle
 {
     event_configuration event_cfg;
@@ -168,9 +177,7 @@ typedef struct Target_Control_Handle
     bool is_controller_probe;
     bool xdp_present;
     int spp_fd;
-    bool i3c_ibi_handled;
-    char* ibi_event_buffer;
-    size_t ibi_event_size;
+    SPP_Handler* spp_handler;
 } Target_Control_Handle;
 
 typedef struct data_json_map
@@ -195,7 +202,7 @@ STATUS target_wait_PRDY(Target_Control_Handle* state, uint8_t log2time);
 STATUS target_get_fds(Target_Control_Handle* state, target_fdarr_t* fds,
                       int* num_fds);
 STATUS target_event(Target_Control_Handle* state, struct pollfd poll_fd,
-                    ASD_EVENT* event);
+                    ASD_EVENT* event, ASD_EVENT_DATA * ret_data);
 STATUS target_wait_sync(Target_Control_Handle* state, uint16_t timeout,
                         uint16_t delay);
 STATUS on_power_event(Target_Control_Handle* state, ASD_EVENT* event);

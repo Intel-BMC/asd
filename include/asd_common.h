@@ -47,7 +47,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 // Two simple rules for the version string are:
 // 1. less than 255 in length (or it will be truncated in the plugin)
 // 2. no dashes, as they are used later up the sw stack between components.
-static char asd_version[] = "ASD_BMC_v1.5.4";
+static char asd_version[] = "ASD_BMC_v1.6.0";
 
 #define TO_ENUM(ENUM) ENUM,
 #define TO_STRING(STRING) #STRING,
@@ -126,6 +126,7 @@ typedef enum
 #define SUPPORTED_REMOTE_PROBES_CMD 16
 #define REMOTE_PROBES_CONFIG_CMD 17
 #define LOOPBACK_CMD 18
+#define REMOTE_SPP_CONFIG_CMD 19
 
 // AGENT_CONFIGURATION_CMD types
 #define AGENT_CONFIG_TYPE_LOGGING 1
@@ -361,21 +362,25 @@ typedef struct asd_i2c_msg
 #define SPP_CFG_MAX 0x0F
 
 #define SPP_CFG_BUS_SELECT 0x00
+#define MAX_SPP_BUS_DEVICES 8
 
 
-//  SPPSend         00010000
+//  SPPSend         00010000        SPP_SEND ID code
+//                  aaaaaaaa        BPK device address id (multisocket)
 //                  nnnnnnnn        n is MSB of packet size in bytes
 //                  nnnnnnnn        LSB of n is included in the next byte
 #define SPP_SEND    0x10
-#define SPP_SEND_COMMAND_SIZE 3
+#define SPP_SEND_COMMAND_SIZE 4
 
-//  SPPReceive      00100000        n is MSB of packet size in bytes
+//  SPPReceive      00100000        SPP_RECEIVE ID code
+//                  aaaaaaaa        BPK device address id (multisocket)
 //                  nnnnnnnn        n is MSB of packet size in bytes
 //                  nnnnnnnn        LSB of n is included in the next byte
 #define SPP_RECEIVE 0x20
-#define SPP_RECEIVE_COMMAND_SIZE 3
+#define SPP_RECEIVE_COMMAND_SIZE 4
 
-//  SPPSendCommand  00110000
+//  SPPSendCommand  00110000        SPP_SEND_COMMAND ID code
+//                  aaaaaaaa        BPK device address id (multisocket)
 //                  nnnnnnnn        n is MSB of packet size in bytes
 //                  nnnnnnnn        LSB of n is included in the next byte
 //                  cccccccc        c is Command type:
@@ -385,9 +390,10 @@ typedef struct asd_i2c_msg
 //                                      DebugAction             = 0xD8,
 //                                      BroadcastDebugAction    = 0x58
 #define SPP_SEND_CMD 0x30
-#define SPP_SEND_CMD_COMMAND_SIZE 4
+#define SPP_SEND_CMD_COMMAND_SIZE 5
 
-//  SPPSendRcvCmd   01000000
+//  SPPSendRcvCmd   01000000        SPP_SEND_RECEIVE_COMMAND ID code
+//                  aaaaaaaa        BPK device address id (multisocket)
 //                  nnnnnnnn        n is MSB of packet size in bytes
 //                  nnnnnnnn        LSB of n is included in the next byte
 //                  cccccccc        c is Command type:
@@ -398,7 +404,7 @@ typedef struct asd_i2c_msg
 //                  mmmmmmmm        m is MSB of read packet size in bytes
 //                  mmmmmmmm        LSB of m is included in the next byte
 #define SPP_SEND_RECEIVE_CMD 0x40
-#define SPP_SEND_RECEIVE_CMD_COMMAND_SIZE 6
+#define SPP_SEND_RECEIVE_CMD_COMMAND_SIZE 7
 
 //  SPPSetSimCmd    01010000
 //                  nnnnnnnn        n is MSB of packet size in bytes

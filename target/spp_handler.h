@@ -35,7 +35,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "config.h"
 
 #define UNINITIALIZED_SPP_DEBUG_DRIVER_HANDLE -1
-
+#define SPASENCLEAR_CMD {0x52, 0x30, 0x04, 0x00, 0xcc, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff}
 typedef uint16_t __u16;
 typedef uint8_t __u8;
 typedef uint32_t __u32;
@@ -54,6 +54,9 @@ typedef struct SPP_Handler
     uint8_t spp_bus;
     int spp_buses[MAX_SPP_BUSES];
     bus_config* config;
+    int spp_dev_handlers[MAX_SPP_BUS_DEVICES];
+    int spp_device_count;
+    uint8_t device_index;
     int spp_driver_handle;
     bool ibi_handled;
 } SPP_Handler;
@@ -61,9 +64,13 @@ typedef struct SPP_Handler
 SPP_Handler* SPPHandler(bus_config* config);
 STATUS spp_initialize(SPP_Handler* state);
 STATUS spp_deinitialize(SPP_Handler* state);
+STATUS disconnect(SPP_Handler* state);
 STATUS spp_bus_flock(SPP_Handler* state, uint8_t bus, int op);
 STATUS spp_bus_select(SPP_Handler* state, uint8_t bus);
 STATUS spp_set_sclk(SPP_Handler* state, uint16_t sclk);
+STATUS spp_bus_device_count(SPP_Handler* state, uint8_t * count);
+STATUS spp_bus_get_device_map(SPP_Handler* state, uint32_t * device_mask);
+STATUS spp_device_select(SPP_Handler* state, uint8_t device);
 STATUS spp_send(SPP_Handler* state, uint16_t size, uint8_t * write_buffer);
 STATUS spp_receive(SPP_Handler* state, uint16_t * size, uint8_t * read_buffer);
 STATUS spp_send_cmd(SPP_Handler* state, spp_command_t cmd, uint16_t size, 

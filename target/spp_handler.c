@@ -66,7 +66,12 @@ SPP_Handler* SPPHandler(bus_config* config)
     }
     else
     {
-        state->spp_driver_handle = UNINITIALIZED_SPP_DEBUG_DRIVER_HANDLE;
+        for (int i = 0; i < MAX_SPP_BUS_DEVICES; i++)
+        {
+            state->spp_dev_handlers[i] = UNINITIALIZED_SPP_DEBUG_DRIVER_HANDLE;
+        }
+        state->spp_device_count = 0;
+        state->device_index = 0;
         state->config = config;
     }
 
@@ -129,6 +134,9 @@ STATUS spp_receive(SPP_Handler* state, uint16_t * size, uint8_t * read_buffer)
 STATUS spp_send_cmd(SPP_Handler* state, spp_command_t cmd, uint16_t size,
                     uint8_t * write_buffer)
 {
+    STATUS result = ST_ERR;
+    STATUS status = ST_ERR;
+
     ASD_log(ASD_LogLevel_Debug, stream, option, "ASD SPP_send_cmd");
     if (cmd == BroadcastResetAction)
     {
@@ -169,9 +177,59 @@ STATUS spp_send_cmd(SPP_Handler* state, spp_command_t cmd, uint16_t size,
     }
     else if (cmd == BroadcastDebugAction )
     {
+        uint8_t count = 0;
+        uint8_t i = 0;
+        uint8_t device = state->device_index;
+        // TODO: For now we will send the command to each link manually but
+        //       it.go() uses this feature because all cores need to be
+        //       running at the same time (atomic function) to avoid a kernel
+        //       panic.
         ASD_log(ASD_LogLevel_Debug,stream, option, "BroadcastDebugAction");
+
+        result = spp_bus_device_count(state, &count);
+        if (result == ST_OK)
+        {
+            for(i = 0; i < count; i++)
+            {
+                result = spp_device_select(state, i);
+                if (result == ST_OK)
+                {
+                    ASD_log(ASD_LogLevel_Debug,stream, option,
+                            "BroadcastDebugAction to /dev/i3c-debug%d", i);
+                    result = spp_send_cmd(state, DebugAction, size,
+                                          write_buffer);
+                    if (result != ST_OK)
+                    {
+                        ASD_log(ASD_LogLevel_Debug,stream, option,
+                                "BroadcastDebugAction spp_send_cmd error");
+                        break;
+                    }
+                }
+                else
+                {
+                    ASD_log(ASD_LogLevel_Debug,stream, option,
+                            "BroadcastDebugAction device select error");
+                    return ST_ERR;
+                }
+            }
+            status = spp_device_select(state, device);
+            if (status != ST_OK)
+            {
+                ASD_log(ASD_LogLevel_Debug,stream, option,
+                        "BroadcastDebugAction device select restore error");
+            }
+            if (result == ST_OK)
+            {
+                result = status;
+            }
+        }
+        else
+        {
+            ASD_log(ASD_LogLevel_Debug,stream, option,
+                    "BroadcastDebugAction device count error");
+        }
     }
-    return ST_OK;
+    return result;
 }
 
 STATUS spp_send_receive_cmd(SPP_Handler* state, spp_command_t cmd, uint16_t  wsize,
@@ -230,8 +288,10 @@ STATUS spp_set_sim_data_cmd(SPP_Handler* state, uint16_t size,
 STATUS spp_bus_flock(SPP_Handler* state, uint8_t bus, int op)
 {
     STATUS status = ST_OK;
+    int flock_count = 0;
     ASD_log(ASD_LogLevel_Debug, ASD_LogStream_SPP, ASD_LogOption_None,
-            "i2c - bus %d %s", bus, op == LOCK_EX ? "LOCK" : "UNLOCK");
+            "i3c-debug%d bus %s", bus, op == LOCK_EX ? "LOCK" : "UNLOCK");
+
     if (bus != state->spp_bus)
     {
         spp_close_driver(state);
@@ -239,7 +299,26 @@ STATUS spp_bus_flock(SPP_Handler* state, uint8_t bus, int op)
     }
     if (status == ST_OK)
     {
-        if (flock(state->spp_driver_handle, op) != 0)
+        for(int i = 0; i< MAX_SPP_BUS_DEVICES; i++)
+        {
+            if (state->spp_dev_handlers[i] !=
+                UNINITIALIZED_SPP_DEBUG_DRIVER_HANDLE)
+            {
+                if (flock(state->spp_dev_handlers[i], op) != 0)
+                {
+                    ASD_log(ASD_LogLevel_Debug, ASD_LogStream_SPP,
+                            ASD_LogOption_None,
+                            "spp flock for bus %d device %d failed",
+                            bus, i);
+                    break;
+                }
+                else
+                {
+                    flock_count++;
+                }
+            }
+        }
+        if (flock_count != state->spp_device_count)
         {
             ASD_log(ASD_LogLevel_Debug, ASD_LogStream_SPP, ASD_LogOption_None,
                     "spp flock for bus %d failed", bus);
@@ -268,28 +347,59 @@ static bool spp_enabled(SPP_Handler* state)
 
 static STATUS spp_open_driver(SPP_Handler* state, uint8_t bus)
 {
+    STATUS status = ST_ERR;
     char spp_dev[MAX_SPP_DEV_FILENAME];
     state->spp_bus = bus;
-    snprintf(spp_dev, sizeof(spp_dev), "%s-%d", SPP_DEV_FILE_NAME, bus);
-    state->spp_driver_handle = open(spp_dev, O_RDWR);
-    ASD_log(ASD_LogLevel_Debug, stream, option,
-            "SPP initialize with fd: %d", state->spp_driver_handle);
-    if (state->spp_driver_handle == UNINITIALIZED_SPP_DEBUG_DRIVER_HANDLE)
+    state->spp_device_count = 0;
+
+    for(int i = 0; i< MAX_SPP_BUS_DEVICES; i++)
     {
-        ASD_log(ASD_LogLevel_Error, stream, option,
-                "Can't open %s, please install driver", spp_dev);
-        return ST_ERR;
+        // In the future bus should affect device path mapping, but for now
+        // it is not used because we only have one i3c_debug bus.
+        snprintf(spp_dev, sizeof(spp_dev), "%s-%d", SPP_DEV_FILE_NAME, i);
+        state->spp_dev_handlers[i] = open(spp_dev, O_RDWR);
+        if (state->spp_dev_handlers[i] == UNINITIALIZED_SPP_DEBUG_DRIVER_HANDLE)
+        {
+            ASD_log(ASD_LogLevel_Debug, stream, option, "Can't open %s",
+                    spp_dev);
+        }
+        else
+        {
+            ASD_log(ASD_LogLevel_Info, stream, option,
+                    "Open %s spp device with fd: %d", spp_dev,
+                    state->spp_dev_handlers[i]);
+            state->spp_device_count++;
+            status = ST_OK;
+        }
     }
-    return ST_OK;
+    if (state->spp_device_count == 0)
+    {
+        ASD_log(ASD_LogLevel_Debug, stream, option,
+                "Can't find a device on i3c-debug%d, please install driver",
+                bus);
+        status = ST_ERR;
+    }
+    return status;
 }
 
 static void spp_close_driver(SPP_Handler* state)
 {
+    for(int i = 0; i< MAX_SPP_BUS_DEVICES; i++)
+    {
+        if (state->spp_dev_handlers[i] != UNINITIALIZED_SPP_DEBUG_DRIVER_HANDLE)
+        {
+            close(state->spp_dev_handlers[i]);
+            state->spp_dev_handlers[i] = UNINITIALIZED_SPP_DEBUG_DRIVER_HANDLE;
+        }
+    }
+
     if (state->spp_driver_handle != UNINITIALIZED_SPP_DEBUG_DRIVER_HANDLE)
     {
-        close(state->spp_driver_handle);
         state->spp_driver_handle = UNINITIALIZED_SPP_DEBUG_DRIVER_HANDLE;
     }
+
+    state->spp_device_count = 0;
+    state->device_index = 0;
 }
 
 STATUS spp_bus_select(SPP_Handler* state, uint8_t bus)
@@ -299,7 +409,7 @@ STATUS spp_bus_select(SPP_Handler* state, uint8_t bus)
     {
         ASD_log(ASD_LogLevel_Trace, stream, option, "bus %d state->spp_bus %d",
                     bus, state->spp_bus);
-        if (bus == state->spp_bus && !(state->spp_driver_handle == UNINITIALIZED_SPP_DEBUG_DRIVER_HANDLE))
+        if (bus == state->spp_bus && state->spp_device_count > 0)
         {
             status = ST_OK;
         }
@@ -312,6 +422,8 @@ STATUS spp_bus_select(SPP_Handler* state, uint8_t bus)
             if (status == ST_OK)
             {
                 state->config->default_bus = bus;
+                state->spp_bus = bus;
+                status = spp_device_select(state, 0);
             }
         }
         else
@@ -324,5 +436,100 @@ STATUS spp_bus_select(SPP_Handler* state, uint8_t bus)
 }
 STATUS spp_set_sclk(SPP_Handler* state, uint16_t sclk)
 {
+    return ST_OK;
+}
+
+STATUS spp_bus_device_count(SPP_Handler* state, uint8_t * count)
+{
+    if (state == NULL || count == NULL)
+        return ST_ERR;
+
+    *count = state->spp_device_count;
+
+    return ST_OK;
+}
+
+STATUS spp_bus_get_device_map(SPP_Handler* state, uint32_t * device_mask)
+{
+    STATUS status;
+
+    if (state == NULL || device_mask == NULL)
+        return ST_ERR;
+
+    *device_mask = 0x0;
+
+    // The spp_bus_get_device_map function is called during initial connection,
+    // prior to handlers initialization. For that reason spp_dev_handlers are
+    // not initialized at this point. We need to open the driver and see how many
+    // i3c-debug handlers are available in the system.
+    spp_close_driver(state);
+    status = spp_open_driver(state, state->spp_bus);
+
+    if (status == ST_OK)
+    {
+        for(int i = 0; i< MAX_SPP_BUS_DEVICES; i++)
+        {
+            if (state->spp_dev_handlers[i] !=
+                UNINITIALIZED_SPP_DEBUG_DRIVER_HANDLE)
+            {
+                *device_mask |= (0x1 << i);
+            }
+        }
+    }
+    spp_close_driver(state);
+
+    return status;
+}
+
+STATUS spp_device_select(SPP_Handler* state, uint8_t device)
+{
+    if (state == NULL || device >= MAX_SPP_BUS_DEVICES)
+        return ST_ERR;
+
+    if (state->spp_dev_handlers[device] == UNINITIALIZED_SPP_DEBUG_DRIVER_HANDLE)
+        return ST_ERR;
+
+    ASD_log(ASD_LogLevel_Info, stream, option,
+            "Device select /dev/i3c-debug%d handle fd: %d", device,
+            state->spp_dev_handlers[device]);
+
+    state->spp_driver_handle = state->spp_dev_handlers[device];
+    state->device_index = device;
+
+    return ST_OK;
+}
+
+STATUS disconnect(SPP_Handler* state)
+{
+    uint8_t count,i;
+    STATUS result;
+    uint8_t write_buffer[12] = SPASENCLEAR_CMD;
+    ASD_log(ASD_LogLevel_Debug, stream, option, "Disconnect");
+    result = spp_bus_device_count(state, &count);
+    if (result == ST_OK)
+    {
+        for (i = 0; i < count; i++)
+        {
+            result = spp_device_select(state, i);
+            if (result == ST_OK)
+            {
+                ASD_log(ASD_LogLevel_Debug, stream, option,
+                        "Disconnect cmd /dev/i3c-debug%d", i);
+                result = spp_send(state, 12,  write_buffer);
+                if (result != ST_OK)
+                {
+                    ASD_log(ASD_LogLevel_Error, stream, option,
+                            "Disconnect spp_send error");
+                    break;
+                }
+            }
+            else
+            {
+                ASD_log(ASD_LogLevel_Error, stream, option,
+                        "Disconnect device select error");
+                return ST_ERR;
+            }
+        }
+    }
     return ST_OK;
 }

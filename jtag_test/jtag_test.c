@@ -63,6 +63,7 @@ uint64_t failures = 0;
 const ir_shift_size_map ir_map[] = {{0x0E7BB013, IR14_SHIFT_SIZE},
                                     {0x00044113, IR16_SHIFT_SIZE},
                                     {0x00111113, IR16_SHIFT_SIZE},
+                                    {0x00133113, IR16_SHIFT_SIZE},
                                     {0x0E7C5013, IR14_SHIFT_SIZE},
                                     {0x00155113, IR16_SHIFT_SIZE},
                                     {0x00128113, IR12_SHIFT_SIZE},
@@ -71,7 +72,7 @@ const ir_shift_size_map ir_map[] = {{0x0E7BB013, IR14_SHIFT_SIZE},
                                     {0x0E7D4113, IR08_SHIFT_SIZE},
                                     {0x0012d113, IR16_SHIFT_SIZE}};
 
-#define MAP_LINE_SIZE 55
+#define MAP_LINE_SIZE 58
 char ir_size_map_str[((sizeof(ir_map)/sizeof(ir_shift_size_map)) + 6) * MAP_LINE_SIZE];
 
 #ifndef UNIT_TEST_MAIN
@@ -328,30 +329,30 @@ void load_ir_size_map_str()
 {
     int arr_size = sizeof(ir_map)/sizeof(ir_shift_size_map);
     sprintf_s(&ir_size_map_str[0], MAP_LINE_SIZE,
-              "                             +------------+---------+\n");
+              "                             +------------+------------+\n");
     sprintf_s(&ir_size_map_str[MAP_LINE_SIZE - 1], MAP_LINE_SIZE,
-              "                             |  ID CODE   | IR-SIZE |\n");
+              "                             |  ID CODE   |IR-SIZE(HEX)|\n");
     sprintf_s(&ir_size_map_str[(MAP_LINE_SIZE - 1) * 2], MAP_LINE_SIZE,
-              "                             +------------+---------+\n");
+              "                             +------------+------------+\n");
 
     for (int i=0; i<arr_size; i++) {
         sprintf_s(&ir_size_map_str[(MAP_LINE_SIZE - 1)*(3 + i)], MAP_LINE_SIZE,
-                  "                             | 0x%08x | %d%s   |\n",
+                  "                             | 0x%08x | 0x%x%s    |\n",
                   ir_map[i].signature,
                   ir_map[i].ir_shift_size,
-                  ir_map[i].ir_shift_size < 10 ? "    ":
-                  ir_map[i].ir_shift_size < 100 ? "   ":
-                  ir_map[i].ir_shift_size < 1000 ? "  ": " ");
+                  ir_map[i].ir_shift_size < 0x10 ? "    ":
+                  ir_map[i].ir_shift_size < 0x100 ? "   ":
+                  ir_map[i].ir_shift_size < 0x1000 ? "  ": " ");
     }
     sprintf_s(&ir_size_map_str[(MAP_LINE_SIZE-1) * (arr_size+3)], MAP_LINE_SIZE,
-              "                             | DEFAULT    | %d%s   |\n",
+              "                             | DEFAULT    | 0x%x%s    |\n",
               DEFAULT_IR_SHIFT_SIZE,
-              DEFAULT_IR_SHIFT_SIZE < 10 ? "    ":
-              DEFAULT_IR_SHIFT_SIZE < 100 ? "   ":
-              DEFAULT_IR_SHIFT_SIZE < 1000 ? "  ": " ");
+              DEFAULT_IR_SHIFT_SIZE < 0x10 ? "    ":
+              DEFAULT_IR_SHIFT_SIZE < 0x100 ? "   ":
+              DEFAULT_IR_SHIFT_SIZE < 0x1000 ? "  ": " ");
 
     sprintf_s(&ir_size_map_str[(MAP_LINE_SIZE-1) * (arr_size+4)], MAP_LINE_SIZE,
-              "                             +------------+---------+\n");
+              "                             +------------+------------+\n");
 
 }
 

@@ -52,7 +52,7 @@ struct i3c_debug_opcode_ccc {
 struct i3c_debug_action_ccc {
     __u8 action;
 };
-#define TIMEOUT_I3C_DEBUG_RX  300   // milliseconds
+#define TIMEOUT_I3C_DEBUG_RX  50   // milliseconds
 
 #define I3C_DEBUG_IOCTL_BASE    0x79
 
@@ -98,7 +98,8 @@ ssize_t receive_i3c(SPP_Handler* state, i3c_cmd *cmd);
 void debug_i3c_rx(i3c_cmd*, int device_index);
 void debug_i3c_tx(i3c_cmd* cmd, int device_index);
 STATUS send_i3c_cmd(SPP_Handler* state, i3c_cmd *cmd);
-STATUS i3c_ibi_handler(int fd, uint8_t* ibi_buffer, size_t* ibi_len);
+STATUS i3c_ibi_handler(int fd, uint8_t* ibi_buffer, size_t* ibi_len,
+                       int device_index);
 
 
 #endif // I3C_DEBUG_HANDLER_H

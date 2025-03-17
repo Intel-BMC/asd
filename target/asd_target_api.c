@@ -33,6 +33,9 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 static STATUS asd_target_process_all_pin_events(const struct pollfd* poll_fds, size_t num_fds);
 static STATUS asd_target_process_pin_event(struct pollfd poll_fd);
+static void send_remote_log_message(ASD_LogLevel asd_level,
+                                    ASD_LogStream asd_stream,
+                                    const char* message);
 
 static STATUS asd_target_version(char* version)
 {
@@ -119,7 +122,7 @@ STATUS asd_target_ioctl(void* input, void* output, unsigned int cmd)
         case IOCTL_TARGET_SEND_REMOTE_LOG_MSG:
             if (input == NULL)
                 break;
-            asd_target_remote_log * remote_log = (struct pollfd *)input;
+            asd_target_remote_log * remote_log = (asd_target_remote_log *)input;
             send_remote_log_message(remote_log->level, remote_log->stream, remote_log->msg);
             status = ST_OK;
             break;
@@ -136,13 +139,28 @@ STATUS asd_target_ioctl(void* input, void* output, unsigned int cmd)
 static STATUS asd_target_process_all_pin_events(const struct pollfd* poll_fds, size_t num_fds)
 {
     STATUS result = ST_OK;
+    int poll_result = 0;
 
-    for (int i = 0; i < num_fds; i++)
+    // This cycle will check and report all pin events before checking the
+    // requests on the network.
+    while(1)
     {
-        result = asd_target_process_pin_event(poll_fds[i]);
-        if (result != ST_OK)
-            break;
+        // Check if there has been a target event.
+        poll_result = poll(poll_fds, num_fds, asd_poll_timeout_ms);
+        if (poll_result <= 0)
+        {
+            asd_poll_timeout_ms = 0;
+            return ST_OK;
+        }
+
+        for (int i = 0; i < num_fds; i++)
+        {
+            result = asd_target_process_pin_event(poll_fds[i]);
+            if (result != ST_OK)
+                return result;
+        }
     }
+
     return result;
 }
 

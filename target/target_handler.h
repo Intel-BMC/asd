@@ -124,11 +124,13 @@ static const Target_Control_GPIOS ASD_PIN_TO_GPIO[] = {
     BMC_TCK_MUX_SEL, // PIN_TCK_MUX_SELECT
 };
 
-typedef STATUS (*TargetReadFunctionPtr)(struct Target_Control_Handle * state,
+typedef struct Target_Control_Handle Target_Control_Handle;
+
+typedef STATUS (*TargetReadFunctionPtr)(Target_Control_Handle* state,
                                         int pin, int * value);
-typedef STATUS (*TargetWriteFunctionPtr)(struct Target_Control_Handle * state,
+typedef STATUS (*TargetWriteFunctionPtr)(Target_Control_Handle* state,
                                          int pin, int value);
-typedef STATUS (*TargetEventFunctionPtr)(struct Target_Control_Handle * state,
+typedef STATUS (*TargetEventFunctionPtr)(Target_Control_Handle* state,
                                          ASD_EVENT*);
 
 #define ALL_PIN_TYPES(FUNC)                                                    \
@@ -160,15 +162,7 @@ typedef struct Target_Control_GPIO
     Pin_Type type;
 } Target_Control_GPIO;
 
-typedef struct ASD_EVENT_DATA
-{
-    uint32_t addr;
-    size_t size;
-    char* buffer;
-} ASD_EVENT_DATA;
-
-
-typedef struct Target_Control_Handle
+struct Target_Control_Handle
 {
     event_configuration event_cfg;
     bool initialized;
@@ -178,7 +172,7 @@ typedef struct Target_Control_Handle
     bool xdp_present;
     int spp_fd;
     SPP_Handler* spp_handler;
-} Target_Control_Handle;
+};
 
 typedef struct data_json_map
 {

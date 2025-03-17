@@ -52,18 +52,19 @@ enum verbose_level
     verbose_debug = 3,
 };
 
-const char *sopts = "d:r:w:o:a:nexvh";
+const char *sopts = "d:r:w:o:a:b:nexvh";
 static const struct option lopts[] = {
-    {"device",  required_argument,  NULL,   'd' },
-    {"read",    required_argument,  NULL,   'r' },
-    {"write",   required_argument,  NULL,   'w' },
-    {"opcode",  required_argument,  NULL,   'o' },
-    {"action",  required_argument,  NULL,   'a' },
-    {"nopoll",  no_argument,        NULL,   'n' },
-    {"event",   no_argument,        NULL,   'e' },
-    {"verbose", no_argument,        NULL,   'x' },
-    {"version", no_argument,        NULL,   'v' },
-    {"help",    no_argument,        NULL,   'h' },
+    {"device",     required_argument,  NULL,   'd' },
+    {"read",       required_argument,  NULL,   'r' },
+    {"write",      required_argument,  NULL,   'w' },
+    {"opcode",     required_argument,  NULL,   'o' },
+    {"action",     required_argument,  NULL,   'a' },
+    {"broadcast",  required_argument,  NULL,   'b' },
+    {"nopoll",     no_argument,        NULL,   'n' },
+    {"event",      no_argument,        NULL,   'e' },
+    {"verbose",    no_argument,        NULL,   'x' },
+    {"version",    no_argument,        NULL,   'v' },
+    {"help",       no_argument,        NULL,   'h' },
     {0, 0, 0, 0}
 };
 
@@ -86,6 +87,7 @@ static void print_help()
     printf("   --write (-w): list of byte to write\n");
     printf("   --opcode (-o): opcode value for Debug Opcode CCC, could be used along with -w and/or -r if additional data shall be write and/or read\n");
     printf("   --action (-a): action value for Debug Action CCC\n");
+    printf("   --broadcast (-b): broadcast value for Broadcast CCC\n");
     printf("   --nopoll (-n): do not run poll() while reading data\n");
     printf("   --event (-e): run get event ioctl and print data if any\n");
     printf("   --verbose (-x): verbosity level, more 'x' - more verbose\n");
@@ -98,6 +100,8 @@ static void print_help()
     printf("   send Debug Opcode CCC and read response: ./debug-over-i3c -d /dev/i3c-debug-0 -o 0x00 -r 4\n");
     printf("   send Debug Opcode CCC with extra data: ./debug-over-i3c -d /dev/i3c-debug-0 -o 0x02 -w 0x00\n");
     printf("   send Debug Action CCC: ./debug-over-i3c -d /dev/i3c-debug-0 -a 0xFD\n");
+    printf("   send Broadcast Action 0xA0: ./debug-over-i3c -xxx -b 10\n");
+
 }
 
 static void print_version()
@@ -150,6 +154,8 @@ int main(int argc, char* argv[])
     int debug_fd = -1;
     int opcode = -1;
     int action = -1;
+    bool do_broadcast = false;
+    uint8_t ba_action = 0;
     bool nopoll = false;
     int opt;
     int ret;
@@ -187,6 +193,10 @@ int main(int argc, char* argv[])
             case 'a':
                 action = (int)strtol(optarg, NULL, 0);
                 break;
+            case 'b':
+                do_broadcast = true;
+                ba_action = (uint8_t)strtol(optarg, NULL, 0);
+                break;
             case 'n':
                 nopoll = true;
                 break;
@@ -207,6 +217,32 @@ int main(int argc, char* argv[])
             print_help();
             return -1;
         }
+    }
+
+    if (do_broadcast)
+    {
+        ssize_t write_ret;
+        /*the i3c-3 might change in future platforms and will need to get updated.*/
+        const char *filepath = "/sys/bus/i3c/devices/i3c-3/dbgaction_broadcast";
+        char dbg_byte[5]={0};
+        int fd = open(filepath, O_WRONLY );
+        if (fd == -1) {
+            trace(verbose_error, "Error opening file %s: %s\n", filepath, strerror(errno));
+            return -1;
+        }
+        trace(verbose_info, "Debug Action Byte = 0x%x\n", ba_action);
+        sprintf(dbg_byte, "%x", ba_action);
+        write_ret = write(fd, dbg_byte, 5);
+        trace(verbose_info, "Write status: %zi, errno=%i\n", write_ret, errno);
+        if (write_ret < 0)
+        {
+            trace(verbose_error, "Failed to send debug action\n");
+        }
+        if (close(fd) == -1) {
+            trace(verbose_error, "Error closing to file: %s\ns", strerror(errno));
+            return -1;
+        }
+        return write_ret;
     }
 
     if (read_len > sizeof(read_buffer) || write_len > sizeof(write_buffer))

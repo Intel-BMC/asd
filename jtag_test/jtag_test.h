@@ -112,7 +112,8 @@ JTAG_Handler* init_jtag(jtag_test_args* args);
 
 unsigned int find_pattern(const unsigned char* haystack,
                           unsigned int haystack_size,
-                          const unsigned char* needle);
+                          const unsigned char* needle,
+                          unsigned int needle_size);
 
 bool reset_jtag_to_RTI(JTAG_Handler* jtag);
 

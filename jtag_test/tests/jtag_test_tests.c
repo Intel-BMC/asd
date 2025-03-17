@@ -258,7 +258,8 @@ static void find_pattern_not_found_returns_0(void** state)
     unsigned char dead_beef[8];
     memcpy(dead_beef, &human_readable, sizeof(human_readable));
     memset(shiftDataOut, 0xff, sizeof(shiftDataOut));
-    assert_int_equal(find_pattern(shiftDataOut, shiftSize, dead_beef), 0);
+    assert_int_equal(find_pattern(shiftDataOut, shiftSize,
+                     dead_beef, sizeof(dead_beef)), 0);
 }
 
 static void find_pattern_found_returns_value(void** state)
@@ -271,7 +272,8 @@ static void find_pattern_found_returns_value(void** state)
     memcpy(dead_beef, &human_readable, sizeof(human_readable));
     memset(shiftDataOut, 0xff, sizeof(shiftDataOut));
     memcpy(shiftDataOut + expected, &human_readable, sizeof(human_readable));
-    assert_int_equal(find_pattern(shiftDataOut, shiftSize, dead_beef),
+    assert_int_equal(find_pattern(shiftDataOut, shiftSize,
+                     dead_beef, sizeof(dead_beef)),
                      expected);
 }
 

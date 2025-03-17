@@ -44,10 +44,11 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #define MAX_WAIT_CYCLES 256
 #define BROADCAST_MESSAGE_ORIGIN_ID 7
 #define MAX_FIELD_NAME_SIZE 40
+#define IDLE_TIMEOUT_MS 600000
 // Two simple rules for the version string are:
 // 1. less than 255 in length (or it will be truncated in the plugin)
 // 2. no dashes, as they are used later up the sw stack between components.
-static char asd_version[] = "ASD_BMC_v1.6.0";
+static char asd_version[] = "ASD_BMC_v1.6.2";
 
 #define TO_ENUM(ENUM) ENUM,
 #define TO_STRING(STRING) #STRING,
@@ -71,6 +72,13 @@ typedef enum
     ASD_EVENT_BPK,
     ASD_EVENT_NONE
 } ASD_EVENT;
+
+typedef struct ASD_EVENT_DATA
+{
+    uint32_t addr;
+    size_t size;
+    char* buffer;
+} ASD_EVENT_DATA;
 
 typedef enum
 {
@@ -250,6 +258,12 @@ typedef struct bus_options
     bus_config_type bus_config_type[MAX_IxC_BUSES + MAX_SPP_BUSES];
     uint8_t bus;
 } bus_options;
+
+typedef struct timeout_config // stack memory
+{
+    bool is_timeout_enabled;
+    long idle_timeout;
+}timeout_config;
 
 //  At Scale Debug Commands
 //

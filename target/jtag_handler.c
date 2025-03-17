@@ -253,6 +253,11 @@ STATUS JTAG_set_tap_state(JTAG_Handler* state, enum jtag_states tap_state)
 #ifdef JTAG_LEGACY_DRIVER
     if (ioctl(state->JTAG_driver_handle, AST_JTAG_SET_TAPSTATE, &params)
 #else
+#ifdef ASPEED_JTAG_DRIVER
+  // Workaround to permit Aspeed Jtag driver to work with HW2 mode
+  if (tap_state_t.reset || state->sw_mode)
+  {
+#endif // ASPEED_JTAG_DRIVER
     if (ioctl(state->JTAG_driver_handle, JTAG_SIOCSTATE, &tap_state_t)
 #endif
         < 0)
@@ -262,6 +267,10 @@ STATUS JTAG_set_tap_state(JTAG_Handler* state, enum jtag_states tap_state)
         return ST_ERR;
     }
 
+    #ifdef ASPEED_JTAG_DRIVER
+    // Workaround to permit Aspeed Jtag driver to work with HW2 mode
+    }
+  #endif // ASPEED_JTAG_DRIVER
     state->active_chain->tap_state = tap_state;
 
     ASD_log(ASD_LogLevel_Info, stream, option, "Goto state: %s (%d)",
@@ -513,6 +522,7 @@ STATUS perform_shift(JTAG_Handler* state, unsigned int number_of_bits,
         (current_tap_state == jtag_shf_ir) ? JTAG_SIR_XFER : JTAG_SDR_XFER;
     xfer.length = number_of_bits;
     xfer.direction = JTAG_READ_WRITE_XFER;
+    xfer.padding = 0;
 
     if (output != NULL)
     {

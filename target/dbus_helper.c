@@ -31,6 +31,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <safe_str_lib.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <unistd.h>
 
 #include "logging.h"
 

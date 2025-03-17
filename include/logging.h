@@ -32,6 +32,10 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <stdlib.h>
 
 #define ENABLE_DEBUG_LOGGING
+#define LOG_TIMESTAMP_LENGTH 17
+#define LOG_MESSAGE_LENGTH 4096
+#define LOG_TIME_MESSAGE_LENGTH (LOG_MESSAGE_LENGTH + LOG_TIMESTAMP_LENGTH)
+#define LOG_TIME_LINE_LENGTH 180
 #define CALLBACK_LOG_MESSAGE_LENGTH 256
 
 typedef enum
@@ -87,6 +91,7 @@ void ASD_log_shift(ASD_LogLevel level, ASD_LogStream stream,
 
 void ASD_initialize_log_settings(ASD_LogLevel level, ASD_LogStream stream,
                                  bool write_to_syslog,
+                                 bool log_timestamp_enable,
                                  ShouldLogFunctionPtr should_log_ptr,
                                  LogFunctionPtr log_ptr);
 
@@ -119,5 +124,7 @@ static inline char* streamtostring(ASD_LogStream stream)
         return "All";
     return "Unknown-Stream";
 }
+
+bool ASD_get_timestamp(char* time_buffer);
 
 #endif // _LOGGING_H_

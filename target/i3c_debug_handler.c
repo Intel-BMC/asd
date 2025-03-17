@@ -32,10 +32,9 @@ void debug_i3c_rx(i3c_cmd* cmd, int device_index)
     if (cmd->read_len > 0 && cmd->rx_buffer != NULL)
     {
         char infoStr[6] = {0};
-        snprintf(&infoStr, sizeof(infoStr), "[RX%d]",device_index);
+        snprintf(infoStr, sizeof(infoStr), "[RX%d]",device_index);
         ASD_log_buffer(ASD_LogLevel_Debug, ASD_LogStream_SPP, ASD_LogOption_None,
                 cmd->rx_buffer, cmd->read_len, infoStr);
-
     }
 }
 
@@ -56,7 +55,7 @@ void debug_i3c_tx(i3c_cmd* cmd, int device_index)
     if (cmd->write_len > 0  && cmd->tx_buffer != NULL)
     {
         char infoStr[6] = {0};
-        snprintf(&infoStr, sizeof(infoStr), "[TX%d]",device_index);
+        snprintf(infoStr, sizeof(infoStr), "[TX%d]",device_index);
         ASD_log_buffer(ASD_LogLevel_Debug, ASD_LogStream_SPP,
                 ASD_LogOption_None, cmd->tx_buffer, cmd->write_len, infoStr);
     }
@@ -141,8 +140,8 @@ ssize_t rx_i3c(int fd, uint8_t* buffer, int16_t read_len)
                 "Read: %i, errno=%i", read_ret, errno);
     if (read_ret < 0)
     {
-        ASD_log(ASD_LogLevel_Error, ASD_LogStream_SPP, ASD_LogOption_None,
-                    "Read: Failed to read data %d", read_ret);
+        ASD_log(ASD_LogLevel_Info, ASD_LogStream_SPP, ASD_LogOption_None,
+                    "Read: read function return %d for fd %d", read_ret, fd);
         return read_ret;
     }
     return read_ret;
@@ -156,62 +155,16 @@ ssize_t receive_i3c(SPP_Handler* state, i3c_cmd *cmd)
     size_t event_size = sizeof(event_buffer);
     debug_poll_fd.events = POLLIN;
     struct i3c_get_event_data event_data;
-    if (state->ibi_handled == false)
-    {
-        for (;;)
-        {
-            int ret = poll(&debug_poll_fd, 1, TIMEOUT_I3C_DEBUG_RX);
-            if (ret < 0)
-            {
-                ASD_log(ASD_LogLevel_Error, ASD_LogStream_SPP, ASD_LogOption_None,
-                        "[/dev/i3c-debug%d] receive_i3c: Error while polling",
-                        state->device_index);
-                return ret;
-            }
-            if (!ret) {
-                //Workaround - In the runcontrol go flow, there is case where openIPC
-                //will issue a LoopTrig command to stop BPK from responding IBIs or
-                //response packets. BPK will continue until a Action or Broadcast Action
-                //0xA0 is seen. For this particular case we have seen that the poll
-                //function will return 0 (timeout) even if there is a valid response from
-                //BPK.  For now in the timeout case we reread and check. if reads fails
-                //we change it to no error.
-                ASD_log(ASD_LogLevel_Error, ASD_LogStream_SPP, ASD_LogOption_None,
-                        "[/dev/i3c-debug%d] receive_i3c: Timeout on read",
-                        state->device_index);
-                read_ret = rx_i3c(state->spp_driver_handle, cmd->rx_buffer, cmd->read_len);
-                cmd->read_len = read_ret;
-                debug_i3c_rx(cmd, state->device_index);
-                if (read_ret == -1)
-                    read_ret = 0;
-                return read_ret;
-            }
-            if ((debug_poll_fd.revents & POLLIN) == POLLIN)
-            {
-                if (i3c_ibi_handler(debug_poll_fd.fd, event_buffer, &event_size) == ST_OK)
-                {
-                    ASD_log_buffer(ASD_LogLevel_Debug, ASD_LogStream_SPP, ASD_LogOption_None,
-                        event_buffer, event_size, "[RIBI]");
-                    //TODO: Do something with event buffer, event size
-                    //      send event back to OpenIPC Plugin
-                    state->ibi_handled = true;
-                }
-                read_ret = rx_i3c(state->spp_driver_handle, cmd->rx_buffer, cmd->read_len);
-                cmd->read_len = read_ret;
-                state->ibi_handled = true;
-                break;
-            }
-        }
-    } else {
-        read_ret = rx_i3c(state->spp_driver_handle, cmd->rx_buffer, cmd->read_len);
-        cmd->read_len = read_ret;
-        state->ibi_handled = false;
-    }
+
+    read_ret = rx_i3c(state->spp_driver_handle, cmd->rx_buffer, cmd->read_len);
+    cmd->read_len = read_ret;
+
     debug_i3c_rx(cmd, state->device_index);
     return read_ret;
 }
 
-STATUS i3c_ibi_handler(int fd, uint8_t* ibi_buffer, size_t* ibi_len)
+STATUS i3c_ibi_handler(int fd, uint8_t* ibi_buffer, size_t* ibi_len,
+                        int device_index)
 {
     struct i3c_get_event_data event_data;
 
@@ -225,18 +178,22 @@ STATUS i3c_ibi_handler(int fd, uint8_t* ibi_buffer, size_t* ibi_len)
     event_data.data_ptr = (uintptr_t)ibi_buffer;
     int ret = ioctl(fd, I3C_DEBUG_IOCTL_GET_EVENT_DATA, (int32_t*)&event_data);
     ASD_log(ASD_LogLevel_Debug, ASD_LogStream_SPP, ASD_LogOption_None,
-            "IBI_handler: Ioctl get event data status: %i, errno=%i", ret, errno);
+            "IBI_handler: Ioctl get event data status: %i, errno=%i, for device=%d",
+            ret, errno, device_index);
     if (ret < 0)
     {
-        ASD_log(ASD_LogLevel_Error, ASD_LogStream_SPP, ASD_LogOption_None,
-            "IBI_handler: Failed to send Get Event Data ioctl");
-        return ST_ERR;
+        ASD_log(ASD_LogLevel_Info, ASD_LogStream_SPP, ASD_LogOption_None,
+            "IBI_handler: Failed to send Get Event Data ioctl for device %d",
+            device_index);
+        return ST_OK;
     }
     else
     {
+        char infoStr[6] = {0};
         *ibi_len = event_data.data_len;
+        snprintf(infoStr, sizeof(infoStr), "[IB%d]",device_index);
         ASD_log_buffer(ASD_LogLevel_Debug, ASD_LogStream_SPP, ASD_LogOption_None,
-            ibi_buffer, event_data.data_len, "[TIBI]");
+                       ibi_buffer, event_data.data_len, infoStr);
     }
     return ST_OK;
 }
@@ -267,47 +224,6 @@ STATUS send_i3c_cmd(SPP_Handler* state, i3c_cmd *cmd)
                 "[/dev/i3c-debug%d] Failed to write data",
                 state->device_index);
         return ST_ERR;
-    }
-
-    // Wait for Data Ready
-    while (data_ready == false)
-    {
-        int ret = poll(&debug_poll_fd, 1, TIMEOUT_I3C_DEBUG_RX);
-        if (ret < 0)
-        {
-            ASD_log(ASD_LogLevel_Error, ASD_LogStream_SPP, ASD_LogOption_None,
-                    "[/dev/i3c-debug%d] send_i3c_cmd: Error while polling",
-                    state->device_index);
-            return ret;
-        }
-        if (!ret) {
-            ASD_log(ASD_LogLevel_Error, ASD_LogStream_SPP, ASD_LogOption_None,
-                    "[/dev/i3c-debug%d] send_i3c_cmd: Timeout wating on data ready",
-                    state->device_index);
-            break;
-        }
-        if ((debug_poll_fd.revents & POLLIN) == POLLIN)
-        {
-            if (i3c_ibi_handler(debug_poll_fd.fd, event_buffer, &event_size) == ST_OK)
-            {
-                ASD_log_buffer(ASD_LogLevel_Debug, ASD_LogStream_SPP, ASD_LogOption_None,
-                               event_buffer, event_size, "[SIBI]");
-                // Check if this is a data ready or another IBI
-                if ((event_size == 2) && (event_buffer[0] == 0x5c) &&
-                    (event_buffer[1] == 0x10)){
-                    data_ready = true;
-                }
-                else {
-                    ASD_log(ASD_LogLevel_Debug, ASD_LogStream_SPP, ASD_LogOption_None,
-                            "[/dev/i3c-debug%d] send_i3c_cmd: Not Data Ready IBI",
-                            state->device_index);
-                    ASD_log_buffer(ASD_LogLevel_Debug, ASD_LogStream_SPP,
-                                   ASD_LogOption_None, event_buffer,
-                                   event_size, "[NIBI]");
-                }
-                state->ibi_handled = true;
-            }
-        }
     }
 
     return ST_OK;

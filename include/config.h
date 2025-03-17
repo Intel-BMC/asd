@@ -60,8 +60,9 @@ typedef struct config
     remote_logging_config remote_logging;
     IPC_LogType ipc_asd_log_map[6];
     bus_config buscfg;
+    timeout_config timecfg;
 } config;
 
-STATUS set_config_defaults(config* config, const bus_options* opt);
+STATUS set_config_defaults(config* config, const bus_options* opt, const timeout_config* tmo_cfg);
 
 #endif // __CONFIG_H_

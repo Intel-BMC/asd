@@ -102,7 +102,7 @@ static const ASD_LogStream stream = ASD_LogStream_Pins;
 static const ASD_LogOption option = ASD_LogOption_None;
 
 #ifdef GPIO_SYSFS_SUPPORT_DEPRECATED
-static STATUS read_gpio_pin(struct Target_Control_Handle * state, int gpio_index, int* value)
+static STATUS read_gpio_pin(Target_Control_Handle* state, int gpio_index, int* value)
 {
     STATUS result = ST_ERR;
     if (state != NULL && value != NULL)
@@ -118,7 +118,7 @@ static STATUS read_gpio_pin(struct Target_Control_Handle * state, int gpio_index
 }
 #endif
 
-static STATUS read_gpiod_pin(struct Target_Control_Handle * state, int gpio_index, int* value)
+static STATUS read_gpiod_pin(Target_Control_Handle* state, int gpio_index, int* value)
 {
     STATUS result = ST_ERR;
     if (state != NULL && value != NULL)
@@ -137,7 +137,7 @@ static STATUS read_gpiod_pin(struct Target_Control_Handle * state, int gpio_inde
     return result;
 }
 
-static STATUS read_pin_none(struct Target_Control_Handle * state, int gpio_index, int* value)
+static STATUS read_pin_none(Target_Control_Handle* state, int gpio_index, int* value)
 {
     STATUS result = ST_ERR;
     if (value != NULL)
@@ -148,7 +148,7 @@ static STATUS read_pin_none(struct Target_Control_Handle * state, int gpio_index
     return ST_OK;
 }
 
-static STATUS read_dbus_pwrgood_pin(struct Target_Control_Handle * state, int gpio_index, int* value)
+static STATUS read_dbus_pwrgood_pin(Target_Control_Handle* state, int gpio_index, int* value)
 {
     STATUS result = ST_ERR;
     if (state != NULL && value != NULL)
@@ -167,7 +167,7 @@ static STATUS read_dbus_pwrgood_pin(struct Target_Control_Handle * state, int gp
 }
 
 #ifdef GPIO_SYSFS_SUPPORT_DEPRECATED
-static STATUS write_gpio_pin(struct Target_Control_Handle * state, int gpio_index, int value)
+static STATUS write_gpio_pin(Target_Control_Handle* state, int gpio_index, int value)
 {
     STATUS result = ST_ERR;
     if (state != NULL)
@@ -184,7 +184,7 @@ static STATUS write_gpio_pin(struct Target_Control_Handle * state, int gpio_inde
 }
 #endif
 
-static STATUS write_gpiod_pin(struct Target_Control_Handle * state, int gpio_index, int value)
+static STATUS write_gpiod_pin(Target_Control_Handle* state, int gpio_index, int value)
 {
     STATUS result = ST_ERR;
     int rv = 0;
@@ -205,13 +205,13 @@ static STATUS write_gpiod_pin(struct Target_Control_Handle * state, int gpio_ind
     return result;
 }
 
-static STATUS write_pin_none(struct Target_Control_Handle * state, int gpio_index, int value)
+static STATUS write_pin_none(Target_Control_Handle* state, int gpio_index, int value)
 {
     ASD_log(ASD_LogLevel_Debug, stream, option, "write_pin_none");
     return ST_OK;
 }
 
-static STATUS write_dbus_power_button(struct Target_Control_Handle * state, int gpio_index, int value)
+static STATUS write_dbus_power_button(Target_Control_Handle* state, int gpio_index, int value)
 {
     STATUS result = ST_OK;
     ASD_log(ASD_LogLevel_Debug, stream, option, "write_dbus_power_button %d", value);
@@ -237,7 +237,7 @@ static STATUS write_dbus_power_button(struct Target_Control_Handle * state, int 
     return result;
 }
 
-static STATUS write_dbus_reset(struct Target_Control_Handle * state, int gpio_index, int value)
+static STATUS write_dbus_reset(Target_Control_Handle* state, int gpio_index, int value)
 {
     STATUS result = ST_ERR;
     ASD_log(ASD_LogLevel_Debug, stream, option, "write_dbus_reset %d", value);
@@ -1134,6 +1134,7 @@ STATUS target_event(Target_Control_Handle* state, struct pollfd poll_fd,
     STATUS result = ST_ERR;
     int i, rv = 0;
     size_t ret;
+    uint16_t auto_cmd_size = 0;
 
     if (state == NULL || !state->initialized || event == NULL)
         return ST_ERR;
@@ -1148,6 +1149,8 @@ STATUS target_event(Target_Control_Handle* state, struct pollfd poll_fd,
         if (event_data == NULL)
             return ST_ERR;
 
+        auto_cmd_size = event_data->size;
+
         result = spp_bus_device_count(state->spp_handler, &count);
         if (result == ST_OK)
         {
@@ -1157,7 +1160,7 @@ STATUS target_event(Target_Control_Handle* state, struct pollfd poll_fd,
                     (poll_fd.revents & POLLIN) == POLLIN)
                 {
                     if (i3c_ibi_handler(poll_fd.fd, event_data->buffer,
-                        &event_data->size) == ST_OK)
+                        &event_data->size, i) == ST_OK)
                     {
                         *event = ASD_EVENT_BPK;
                         event_data->addr = i;
@@ -1623,7 +1626,7 @@ STATUS target_wait_PRDY(Target_Control_Handle* state, const uint8_t log2time)
     STATUS result = ST_OK;
     STATUS platform_result = ST_OK;
     short events = 0;
-    short value = 0;
+    int value = 0;
     if (state == NULL || !state->initialized)
     {
         ASD_log(ASD_LogLevel_Error, stream, option,

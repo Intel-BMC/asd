@@ -38,6 +38,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "ext_network.h"
 #include "logging.h"
 #include "session.h"
+#include "sys/time.h"
 
 // DEFAULTS
 #define DEFAULT_I2C_ENABLE false
@@ -50,6 +51,11 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #define DEFAULT_LOG_LEVEL ASD_LogLevel_Warning
 #define DEFAULT_LOG_STREAMS ASD_LogStream_All
 #define DEFAULT_XDP_FAIL_ENABLE true
+#define IDLE_TIMEOUT_ENABLED false
+#define IDLE_TIMEOUT_MS 600000
+#define MINUTESTOMS 60000 //1000*60
+#define HOURSTOMS 3600000 //1000*60*60
+#define MSTOSEC 1000
 
 typedef struct session_options
 {
@@ -67,7 +73,9 @@ typedef struct asd_args
     bool use_syslog;
     ASD_LogLevel log_level;
     ASD_LogStream log_streams;
+    bool log_timestamp_enable;
     bool xdp_fail_enable;
+    timeout_config timeout;
 } asd_args;
 
 typedef struct asd_state
@@ -106,6 +114,10 @@ void deinit_asd_state(asd_state* state);
 STATUS on_client_disconnect(asd_state* state);
 STATUS on_client_connect(asd_state* state, extnet_conn_t* p_extcon);
 void on_connection_aborted(void);
+void send_warning_message(long idle_timeout_ms, long warning_time_ms);
+bool check_idle_timeout(struct timeval* last_activity_time,
+                        bool* send_idle_warning_message,
+                        long idle_timeout_ms, long warning_time_ms);
 STATUS request_processing_loop(asd_state* state);
 STATUS process_new_client(asd_state* state, struct pollfd* poll_fds,
                           size_t num_fds, int* num_clients, int client_index);

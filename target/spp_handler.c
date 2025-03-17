@@ -33,13 +33,15 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <sys/file.h>
 #include <unistd.h>
 // clang-format on
 
 #include "logging.h"
-
+unsigned int fail_read_counter = 0;
 #define SPP_DEV_FILE_NAME "/dev/i3c-debug"
 #define MAX_SPP_DEV_FILENAME 256
+#define FAILURE_THRESHOLD 0
 
 static const ASD_LogStream stream = ASD_LogStream_SPP;
 static const ASD_LogOption option = ASD_LogOption_None;
@@ -113,7 +115,7 @@ STATUS spp_send(SPP_Handler* state, uint16_t size, uint8_t * write_buffer)
 
 STATUS spp_receive(SPP_Handler* state, uint16_t * size, uint8_t * read_buffer)
 {
-    ASD_log(ASD_LogLevel_Debug, stream, option, "ASD SPP_receive");
+    ASD_log(ASD_LogLevel_Debug, stream, option, "ASD spp_receive");
     i3c_cmd cmd = {0};
     cmd.rx_buffer = read_buffer;
     cmd.read_len = 255;
@@ -121,14 +123,22 @@ STATUS spp_receive(SPP_Handler* state, uint16_t * size, uint8_t * read_buffer)
     if( ret > 0)
     {
         *size = cmd.read_len;
+        if (*size > 255)
+            *size = 255;
         return ST_OK;
     }
-    else if (ret == 0)
+    else
     {
         *size = 0;
+        fail_read_counter++;
+        ASD_log(ASD_LogLevel_Debug, stream, option, "fail_read_counter %d", fail_read_counter);
+        if (fail_read_counter > FAILURE_THRESHOLD)
+        {
+            send_reset_rx(state);
+            fail_read_counter=0;
+        }
         return ST_OK;
     }
-    return ST_ERR;
 }
 
 STATUS spp_send_cmd(SPP_Handler* state, spp_command_t cmd, uint16_t size,
@@ -177,57 +187,42 @@ STATUS spp_send_cmd(SPP_Handler* state, spp_command_t cmd, uint16_t size,
     }
     else if (cmd == BroadcastDebugAction )
     {
-        uint8_t count = 0;
-        uint8_t i = 0;
-        uint8_t device = state->device_index;
-        // TODO: For now we will send the command to each link manually but
-        //       it.go() uses this feature because all cores need to be
-        //       running at the same time (atomic function) to avoid a kernel
-        //       panic.
-        ASD_log(ASD_LogLevel_Debug,stream, option, "BroadcastDebugAction");
-
-        result = spp_bus_device_count(state, &count);
-        if (result == ST_OK)
+        const char *filepath = BROADCASTACTIONFILE;
+        char dbg_byte[5]={0};
+        ssize_t write_len;
+        int broadcast_fd;
+        sprintf(dbg_byte, "%x", write_buffer[0]);
+        broadcast_fd = open(filepath, O_WRONLY);
+        if (broadcast_fd == -1)
         {
-            for(i = 0; i < count; i++)
-            {
-                result = spp_device_select(state, i);
-                if (result == ST_OK)
-                {
-                    ASD_log(ASD_LogLevel_Debug,stream, option,
-                            "BroadcastDebugAction to /dev/i3c-debug%d", i);
-                    result = spp_send_cmd(state, DebugAction, size,
-                                          write_buffer);
-                    if (result != ST_OK)
-                    {
-                        ASD_log(ASD_LogLevel_Debug,stream, option,
-                                "BroadcastDebugAction spp_send_cmd error");
-                        break;
-                    }
-                }
-                else
-                {
-                    ASD_log(ASD_LogLevel_Debug,stream, option,
-                            "BroadcastDebugAction device select error");
-                    return ST_ERR;
-                }
-            }
-            status = spp_device_select(state, device);
-            if (status != ST_OK)
-            {
-                ASD_log(ASD_LogLevel_Debug,stream, option,
-                        "BroadcastDebugAction device select restore error");
-            }
-            if (result == ST_OK)
-            {
-                result = status;
-            }
+            ASD_log(ASD_LogLevel_Error,stream, option,
+                    "Error opening file: %s for broadcast command\n ",
+                    strerror(errno));
+            return ST_ERR;
         }
-        else
+        write_len = write(broadcast_fd, dbg_byte, sizeof(dbg_byte));
+        ASD_log(ASD_LogLevel_Debug,stream, option,
+                "Broadcast Action: Write status: %zi, errno=%i\n",
+                write_len, errno);
+        if (write_len == -1)
         {
-            ASD_log(ASD_LogLevel_Debug,stream, option,
-                    "BroadcastDebugAction device count error");
+             ASD_log(ASD_LogLevel_Error,stream, option,
+                    "Error %s when writing to file %s with payload 0x%x\n",
+                    strerror(errno), filepath, write_buffer[0]);
+            if (close(broadcast_fd) == -1)
+            {
+                ASD_log(ASD_LogLevel_Error,stream, option,
+                            "Error closing file: %s\ns", strerror(errno));
+            }
+            return ST_ERR;
         }
+        if (close(broadcast_fd) == -1)
+        {
+            ASD_log(ASD_LogLevel_Error,stream, option,
+                            "Error closing to file: %s\ns", strerror(errno));
+            return ST_ERR;
+        }
+        result = ST_OK;
     }
     return result;
 }
@@ -458,6 +453,12 @@ STATUS spp_bus_get_device_map(SPP_Handler* state, uint32_t * device_mask)
 
     *device_mask = 0x0;
 
+    if(!state->config->enable_spp)
+    {
+        ASD_log(ASD_LogLevel_Info, stream, option, "SPP is not enabled");
+        return ST_OK;
+    }
+
     // The spp_bus_get_device_map function is called during initial connection,
     // prior to handlers initialization. For that reason spp_dev_handlers are
     // not initialized at this point. We need to open the driver and see how many
@@ -499,11 +500,50 @@ STATUS spp_device_select(SPP_Handler* state, uint8_t device)
     return ST_OK;
 }
 
+STATUS send_reset_rx(SPP_Handler* state)
+{
+    uint8_t count,i;
+    STATUS result;
+    uint8_t write_buffer[2] = {0};
+    uint16_t size = 1;
+    result = spp_bus_device_count(state, &count);
+    if (result == ST_OK)
+    {
+        for (i = 0; i < count; i++)
+        {
+            result = spp_device_select(state, i);
+            if (result == ST_OK)
+            {
+                ASD_log(ASD_LogLevel_Info,stream, option,"send_reset_rx %d", i);
+                i3c_cmd i3ccmd = {0};
+                if (size > 0)
+                {
+                    size = size - 1 ;
+                }
+                write_buffer[0] = CLEAR_ERROR_ACTION;
+                i3ccmd.tx_buffer = write_buffer;
+                i3ccmd.msgType = action;
+                i3ccmd.action = write_buffer[0];
+                i3ccmd.write_len = size;
+                i3ccmd.read_len = 0;
+                result = send_i3c_action(state, &i3ccmd);
+                if (result == ST_ERR)
+                {
+                    ASD_log(ASD_LogLevel_Error,stream, option,"send_reset_rx failed");
+                }
+            }
+        }
+    }
+    return ST_OK;
+}
+
 STATUS disconnect(SPP_Handler* state)
 {
     uint8_t count,i;
     STATUS result;
     uint8_t write_buffer[12] = SPASENCLEAR_CMD;
+    uint16_t read_len;
+    uint8_t read_data[255] = {0};
     ASD_log(ASD_LogLevel_Debug, stream, option, "Disconnect");
     result = spp_bus_device_count(state, &count);
     if (result == ST_OK)
@@ -522,6 +562,11 @@ STATUS disconnect(SPP_Handler* state)
                             "Disconnect spp_send error");
                     break;
                 }
+                result = spp_receive(state, &read_len, read_data);
+                if (read_len > 0)
+                {
+                    ASD_log_buffer(ASD_LogLevel_Debug, stream, option, read_data, read_len, "[RX1]");
+                }
             }
             else
             {
@@ -532,4 +577,17 @@ STATUS disconnect(SPP_Handler* state)
         }
     }
     return ST_OK;
+}
+
+bool check_spp_prdy_event(ASD_EVENT event, ASD_EVENT_DATA event_data)
+{
+    if(event == ASD_EVENT_BPK) {
+        if (event_data.size >= 2 &&
+            (event_data.buffer[0] == SPP_IBI_STATUS_CHANGED) &&
+            ((event_data.buffer[1] == SPP_IBI_SUBREASON_PRDY) ||
+            (event_data.buffer[1] == SPP_IBI_SUBREASON_OVERFLOW))) {
+            return true;
+        }
+    }
+    return false;
 }

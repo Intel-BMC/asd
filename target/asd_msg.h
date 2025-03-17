@@ -118,6 +118,8 @@ typedef enum
     ScanType_ReadWrite
 } ScanType;
 
+extern int asd_poll_timeout_ms;
+
 STATUS asd_msg_init(config* asd_cfg);
 STATUS asd_msg_free(void);
 STATUS asd_msg_on_msg_recv(void);

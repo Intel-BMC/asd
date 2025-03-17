@@ -38,6 +38,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <stdlib.h>
 #include <string.h>
 #include <limits.h>
+#include <sys/file.h>
 #include <sys/ioctl.h>
 #include <unistd.h>
 // Include local copy of unofficial i3cdev header
@@ -354,7 +355,7 @@ STATUS i3c_read_write(I3C_Handler* state, void* msg_set)
     for (int i = 0; i < ioctl_data->nmsgs; i++)
     {
         xfers[i].len = ioctl_data->msgs[i].len;
-        xfers[i].data = ioctl_data->msgs[i].buf;
+        xfers[i].data = (__u64)ioctl_data->msgs[i].buf;
         xfers[i].rnw = (ioctl_data->msgs[i].flags & I2C_M_RD) ? 1 : 0;
         if (handle == UNINITIALIZED_I3C_DRIVER_HANDLE)
         {
@@ -366,7 +367,7 @@ STATUS i3c_read_write(I3C_Handler* state, void* msg_set)
                         "I3C_RDWR ioctl addr 0x%x handle %d len %d rnw %d",
                         addr, handle, xfers[i].len, xfers[i].rnw);
                 ASD_log_buffer(ASD_LogLevel_Debug, stream, option,
-                               xfers[i].data, xfers[i].len, "I3cBuf");
+                               (const unsigned char *)xfers[i].data, xfers[i].len, "I3cBuf");
             }
             else
             {

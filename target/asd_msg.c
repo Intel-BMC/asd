@@ -39,6 +39,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "asd_server_interface.h"
 
 ASD_MSG msg_state;
+int asd_poll_timeout_ms;
 
 static void get_scan_length(unsigned char cmd, uint8_t* num_of_bits,
                             uint8_t* num_of_bytes);
@@ -214,6 +215,7 @@ STATUS asd_msg_init(config* asd_cfg)
             read_openbmc_version();
         }
     }
+    asd_poll_timeout_ms = 0;
     return ST_OK;
 }
 
@@ -339,6 +341,7 @@ STATUS asd_msg_free(void)
     if ((jtag_result != ST_OK) || (i2c_result != ST_OK) || (spp_result != ST_OK) ||
         (i3c_result != ST_OK) || (target_result != ST_OK) || (vprobe_result != ST_OK))
     {
+        asd_msg_state_free();
         return ST_ERR;
     }
     asd_msg_state_free();
@@ -731,7 +734,6 @@ STATUS asd_msg_on_msg_recv(void)
                             "Failed to initialize the spp handler");
                     send_error_message(msg,
                                        ASD_FAILURE_INIT_SPP_HANDLER);
-                    return result;
                 }
             msg_state.target_handler->spp_fd = msg_state.spp_handler->spp_driver_handle;
             msg_state.target_handler->spp_handler = msg_state.spp_handler;
@@ -2734,6 +2736,11 @@ STATUS asd_msg_event(struct pollfd poll_fd)
         }
         if (event == ASD_EVENT_BPK)
         {
+            if(check_spp_prdy_event(event, event_data)) {
+                asd_poll_timeout_ms = SPP_IBI_PRDY_WAIT_TIMEOUT_MS;
+            } else {
+                asd_poll_timeout_ms = 0;
+            }
             result = send_bpk_event(event, event_data);
         }
         else if (event != ASD_EVENT_NONE)
@@ -2803,14 +2810,14 @@ STATUS do_bus_select_command(struct packet_data* packet)
         {
             ASD_log(ASD_LogLevel_Error, ASD_LogStream_SDK, ASD_LogOption_None,
                     "Failed to remove dev lock ");
-            send_error_message( &packet, ASD_FAILURE_REMOVE_I2C_LOCK);
+            send_error_message( (struct asd_message *)&packet, ASD_FAILURE_REMOVE_I2C_LOCK);
         }
         status = dev_flock(bus, LOCK_EX);
         if (status != ST_OK)
         {
             ASD_log(ASD_LogLevel_Error, ASD_LogStream_SDK, ASD_LogOption_None,
                     "Failed to remove dev lock");
-            send_error_message( &packet, ASD_FAILURE_PROCESS_I2C_LOCK);
+            send_error_message( (struct asd_message *)&packet, ASD_FAILURE_PROCESS_I2C_LOCK);
             return ST_ERR;
         }
     }

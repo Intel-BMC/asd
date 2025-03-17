@@ -32,9 +32,9 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "logging.h"
 
-STATUS set_config_defaults(config* config, const bus_options* opt)
+STATUS set_config_defaults(config* config, const bus_options* opt, const timeout_config* tmo_cfg)
 {
-    if (config == NULL || opt == NULL)
+    if (config == NULL || opt == NULL || tmo_cfg== NULL)
     {
         return ST_ERR;
     }
@@ -46,7 +46,8 @@ STATUS set_config_defaults(config* config, const bus_options* opt)
     config->buscfg.enable_i3c = opt->enable_i3c;
     config->buscfg.enable_spp = opt->enable_spp;
     config->buscfg.default_bus = opt->bus;
-
+    config->timecfg.is_timeout_enabled=tmo_cfg->is_timeout_enabled;
+    config->timecfg.idle_timeout=tmo_cfg->idle_timeout;
     for (int i = 0; i < MAX_IxC_BUSES + MAX_SPP_BUSES; i++)
     {
         if (opt->enable_i2c || opt->enable_i3c || opt->enable_spp)

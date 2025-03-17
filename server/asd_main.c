@@ -46,6 +46,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 asd_state main_state = {};
 extnet_conn_t* p_extconn = NULL;
 bool b_data_pending = false;
+bool is_connected = false;
 
 static void send_remote_log_message(ASD_LogLevel asd_level,
                                     ASD_LogStream asd_stream,
@@ -63,7 +64,7 @@ int asd_main(int argc, char** argv)
     STATUS result = ST_ERR;
 
     ASD_initialize_log_settings(DEFAULT_LOG_LEVEL, DEFAULT_LOG_STREAMS, false,
-                                NULL, NULL);
+                                false, NULL, NULL);
 
     if (process_command_line(argc, argv, &main_state.args))
     {
@@ -150,19 +151,25 @@ bool process_command_line(int argc, char** argv, asd_args* args)
     args->session.e_auth_type = AUTH_HDLR_PAM;
     args->xdp_fail_enable = DEFAULT_XDP_FAIL_ENABLE;
     main_state.config.jtag.xdp_fail_enable = DEFAULT_XDP_FAIL_ENABLE;
+    args->timeout.is_timeout_enabled = IDLE_TIMEOUT_ENABLED;
+    args->timeout.idle_timeout = IDLE_TIMEOUT_MS;
 
     enum
     {
         ARG_LOG_LEVEL = 256,
         ARG_LOG_STREAMS,
+        ARG_LOG_TIMESTAMP,
         ARG_HELP,
-        ARG_XDP
+        ARG_XDP,
+        ARG_TIMEOUT
     };
 
     struct option opts[] = {
         {"xdp-ignore", 0, NULL, ARG_XDP},
         {"log-level", 1, NULL, ARG_LOG_LEVEL},
         {"log-streams", 1, NULL, ARG_LOG_STREAMS},
+        {"log-time", 0, NULL, ARG_LOG_TIMESTAMP},
+        {"idle-timeout", 1, NULL, ARG_TIMEOUT},
         {"help", 0, NULL, ARG_HELP},
         {NULL, 0, NULL, 0},
     };
@@ -429,6 +436,38 @@ bool process_command_line(int argc, char** argv, asd_args* args)
                 }
                 break;
             }
+            case ARG_LOG_TIMESTAMP:
+            {
+                args->log_timestamp_enable = true;
+                fprintf(stderr, "Logging timestamp\n");
+                break;
+            }
+            case ARG_TIMEOUT:
+            {
+                char ch = 0;
+                if (validateCharInputs(optarg, &ch, false, false, true, false,
+                                       false, false))
+                {
+                    long input_val = strtol(optarg, NULL, 10);
+                    if(input_val>0 && input_val<=65535){
+                        uint16_t idle_minutes = (uint16_t)input_val;
+                        args->timeout.idle_timeout = idle_minutes * MINUTESTOMS; 
+                        args->timeout.is_timeout_enabled = true;
+                    }else{
+                        fprintf(stderr,"Error value in idle time:%ld",input_val);
+                        showUsage(argv);
+                        return false;
+                    }
+                }
+                else
+                {
+                    fprintf(stderr, "Invalid character in idle time: %c.\n",
+                            ch);
+                    showUsage(argv);
+                    return false;
+                }
+                break;
+            }
             case ARG_HELP:
             default:
             {
@@ -470,6 +509,8 @@ void showUsage(char** argv)
         "                             Warning: Driving signals from both\n"
         "                             ASD and XDP may cause electrical issues\n"
         "                             or lead into a HW damage.\n"
+        "  --idle-timeout=<minutes>   If no transactions within the idle timeout\n"
+        "                             ASD will end the session.\n"
         "  --log-level=<level>        Specify Logging Level (default: %s)\n"
         "                             Levels:\n"
         "                               %s\n"
@@ -491,6 +532,7 @@ void showUsage(char** argv)
         "                               %s\n"
         "                               %s\n"
         "                               %s\n"
+        "  --log-time                 Include timestamps on logs.\n"
         "  --help                     Show this list\n"
         "\n"
         "Examples:\n"
@@ -549,13 +591,17 @@ bool main_should_remote_log(ASD_LogLevel asd_level, ASD_LogStream asd_stream)
 STATUS init_asd_state(void)
 {
 
-    STATUS result = set_config_defaults(&main_state.config, &main_state.args.busopt);
+    STATUS result = set_config_defaults(&main_state.config,
+                                        &main_state.args.busopt,
+                                        &main_state.args.timeout);
 
     if (result == ST_OK)
     {
         ASD_initialize_log_settings(main_state.args.log_level,
                                     main_state.args.log_streams,
-                                    main_state.args.use_syslog, NULL, NULL);
+                                    main_state.args.use_syslog,
+                                    main_state.args.log_timestamp_enable,
+                                    NULL, NULL);
 
         main_state.extnet =
             extnet_init(main_state.args.session.e_extnet_type,
@@ -648,11 +694,69 @@ STATUS send_out_msg_on_socket(unsigned char* buffer, size_t length)
     return result;
 }
 
+void send_warning_message(long idle_timeout_ms, long warning_time_ms) {
+    long remaining_time_ms = idle_timeout_ms - warning_time_ms;
+    long hours = remaining_time_ms / (HOURSTOMS);
+    long minutes = (remaining_time_ms % (HOURSTOMS)) / (MINUTESTOMS);
+    long seconds = (remaining_time_ms % (MINUTESTOMS)) / MSTOSEC;
+
+    char message[100] = {0}; 
+    char *ptr = message;
+
+    if (hours > 0) {
+        ptr += sprintf(ptr, "%ld hour%s, ", hours, (hours == 1) ? "" : "s");
+    }
+    if (minutes > 0 || hours > 0) { 
+        ptr += sprintf(ptr, "%ld minute%s", minutes, (minutes == 1) ? "" : "s");
+    }
+    if (seconds > 0 && hours == 0) { 
+        if (minutes > 0) {
+            ptr += sprintf(ptr, " and ");
+        }
+        ptr += sprintf(ptr, "%ld second%s", seconds, (seconds == 1) ? "" : "s");
+    }
+
+    ASD_log(ASD_LogLevel_Debug, ASD_LogStream_Daemon,
+    ASD_LogOption_None, "The session will expire in %s", message);
+}
+
+
+bool check_idle_timeout(struct timeval* last_activity_time,
+                        bool* send_idle_warning_message, long idle_timeout_ms,
+                        long warning_time_ms)
+{
+    struct timeval current_time;
+    gettimeofday(&current_time, NULL);
+    long elapsed_time_ms =
+        (current_time.tv_sec - last_activity_time->tv_sec) * MSTOSEC;
+    elapsed_time_ms +=
+        (current_time.tv_usec - last_activity_time->tv_usec) / MSTOSEC;
+
+    if (!*send_idle_warning_message && elapsed_time_ms > warning_time_ms)
+    {
+        send_warning_message(idle_timeout_ms, warning_time_ms);
+        *send_idle_warning_message = true;
+    }
+
+    if (elapsed_time_ms > idle_timeout_ms)
+    {
+        ASD_log(ASD_LogLevel_Debug, ASD_LogStream_Daemon, ASD_LogOption_None,
+                "Time limit reached, disconnect");
+        return true; // Idle timeout occurred
+    }
+
+    return false; // No idle timeout
+}
+
 STATUS request_processing_loop(asd_state* state)
 {
     STATUS result = ST_OK;
     struct pollfd poll_fds[MAX_FDS] = {{0}};
 
+    struct timeval last_activity_time;
+    gettimeofday(&last_activity_time, NULL);
+    bool send_idle_warning_message = false;
+    long warning_time = main_state.config.timecfg.idle_timeout * 0.9;
     poll_fds[HOST_FD_INDEX].fd = state->host_fd;
     poll_fds[HOST_FD_INDEX].events = POLLIN;
     while (1)
@@ -666,6 +770,19 @@ STATUS request_processing_loop(asd_state* state)
         int client_fd_index = 0;
         asd_target_interface_events target_events;
 
+        if (is_connected && main_state.config.timecfg.is_timeout_enabled)
+        {
+            if (check_idle_timeout(&last_activity_time,
+                                   &send_idle_warning_message,
+                                   main_state.config.timecfg.idle_timeout,
+                                   warning_time))
+            {
+                close_connection(state);
+                gettimeofday(&last_activity_time, NULL);
+                send_idle_warning_message = false;
+                continue;
+            }
+        }
         if (asd_api_target_ioctl(NULL, &target_events,
                                  IOCTL_TARGET_GET_PIN_FDS) == ST_OK)
         {
@@ -716,6 +833,13 @@ STATUS request_processing_loop(asd_state* state)
                 process_all_client_messages(
                     state, (const struct pollfd*)(&poll_fds[client_fd_index]),
                     (size_t)n_clients);
+
+                if (is_connected)
+                {
+                    gettimeofday(&last_activity_time,
+                                 NULL); // Update last activity time
+                    send_idle_warning_message = false;
+                }
             }
         }
         if (result == ST_OK)
@@ -797,6 +921,11 @@ STATUS process_new_client(asd_state* state, struct pollfd* poll_fds,
                     new_extconn.sockfd);
             extnet_close_client(state->extnet, &new_extconn);
         }
+        else
+        {
+            // Set flag is connected to true for timeout use
+            is_connected = true;
+        }
     }
 
     if (result == ST_OK && state->args.session.e_auth_type == AUTH_HDLR_NONE)
@@ -811,6 +940,8 @@ STATUS process_new_client(asd_state* state, struct pollfd* poll_fds,
             poll_fds[client_index + *num_clients].revents |= POLLIN;
             (*num_clients)++;
         }
+        // Set flag is connected to true for timeout use
+        is_connected = true;
     }
     return result;
 }
@@ -1019,7 +1150,8 @@ STATUS on_client_connect(asd_state* state, extnet_conn_t* p_extcon)
         if (state->args.busopt.enable_i2c || state->args.busopt.enable_i3c ||
             state->args.busopt.enable_spp)
         {
-            result = set_config_defaults(&state->config, &state->args.busopt);
+            result = set_config_defaults(&state->config, &state->args.busopt,
+                                         &state->args.timeout);
         }
         else
         {
@@ -1044,7 +1176,8 @@ STATUS on_client_connect(asd_state* state, extnet_conn_t* p_extcon)
                             target_bus_options.bus_config_map[i]);
                 }
             }
-            result = set_config_defaults(&state->config, &target_bus_options);
+            result = set_config_defaults(&state->config, &target_bus_options,
+                                         &state->args.timeout);
         }
     }
 
@@ -1063,8 +1196,8 @@ STATUS on_client_connect(asd_state* state, extnet_conn_t* p_extcon)
         init_logging_map();
         ASD_initialize_log_settings(
             state->args.log_level, state->args.log_streams,
-            state->args.use_syslog, main_should_remote_log,
-            send_remote_log_message);
+            state->args.use_syslog, state->args.log_timestamp_enable,
+            main_should_remote_log, send_remote_log_message);
     }
 
     return result;
@@ -1122,19 +1255,23 @@ STATUS on_client_disconnect(asd_state* state)
 
     if (result == ST_OK)
     {
+        is_connected = false;
 #ifdef ENABLE_DEBUG_LOGGING
         ASD_log(ASD_LogLevel_Debug, ASD_LogStream_Daemon, ASD_LogOption_None,
                 "Cleaning up after client connection");
 #endif
 
-        result = set_config_defaults(&state->config, &state->args.busopt);
+        result = set_config_defaults(&state->config, &state->args.busopt,
+                                     &state->args.timeout);
     }
 
     if (result == ST_OK)
     {
         ASD_initialize_log_settings(state->args.log_level,
                                     state->args.log_streams,
-                                    state->args.use_syslog, NULL, NULL);
+                                    state->args.use_syslog,
+                                    state->args.log_timestamp_enable,
+                                    NULL, NULL);
 
         if (asd_api_target_deinit() != ST_OK)
         {

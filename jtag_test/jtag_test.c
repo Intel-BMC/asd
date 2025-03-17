@@ -94,12 +94,12 @@ int jtag_test_main(int argc, char** argv)
     signal(SIGINT, interrupt_handler); // catch ctrl-c
 
     ASD_initialize_log_settings(DEFAULT_LOG_LEVEL, DEFAULT_LOG_STREAMS, false,
-                                NULL, NULL);
+                                false, NULL, NULL);
 
     result = parse_arguments(argc, argv, &args);
 
-    ASD_initialize_log_settings(args.log_level, args.log_streams, false, NULL,
-                                NULL);
+    ASD_initialize_log_settings(args.log_level, args.log_streams, false, false,
+                                NULL, NULL);
 
     if (result)
     {
@@ -484,7 +484,8 @@ bool uncore_discovery(JTAG_Handler* jtag, uncore_info* uncore,
 
     // this assumes that the idcodes are byte aligned since the spec says
     // they are 32bits each.
-    index = find_pattern(tdo, shift_size, args->tap_data_pattern) * 8;
+    index = find_pattern(tdo, shift_size, args->tap_data_pattern,
+                        sizeof(args->tap_data_pattern)) * 8;
     if (index > 0)
     {
         ASD_log(ASD_LogLevel_Info, stream, option,
@@ -552,13 +553,13 @@ bool reset_jtag_to_RTI(JTAG_Handler* jtag)
 
 unsigned int find_pattern(const unsigned char* haystack,
                           unsigned int haystack_size,
-                          const unsigned char* needle)
+                          const unsigned char* needle,
+                          unsigned int needle_size)
 {
     int cmp = 0;
-    for (unsigned int i = 0; i < (haystack_size / 8); i++)
+    for (unsigned int i = 0; i <= (haystack_size - needle_size); i++)
     {
-        memcmp_s(&haystack[i], sizeof(haystack), (unsigned char*)needle,
-                 sizeof(haystack), &cmp);
+        memcmp_s(&haystack[i], haystack_size - i, needle, needle_size, &cmp);
         if (cmp == 0)
         {
             return i;

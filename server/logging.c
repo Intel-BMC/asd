@@ -35,8 +35,10 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <stdlib.h>
 #include <string.h>
 #include <syslog.h>
+#include <time.h>
 
 static bool WriteToSyslog = false;
+static bool log_timestamp = false;
 static ShouldLogFunctionPtr shouldLogCallback = NULL;
 static LogFunctionPtr loggingCallback = NULL;
 ASD_LogLevel asd_log_level = ASD_LogLevel_Error;
@@ -50,9 +52,34 @@ bool ShouldLog(ASD_LogLevel level, ASD_LogStream stream)
     return log;
 }
 
+bool ASD_get_timestamp(char* time_buffer)
+{
+    struct timespec ts;
+
+    if (!log_timestamp)
+        return false;
+
+    if(time_buffer == NULL)
+        return false;
+
+    // Get the current time with microseconds
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) == -1)
+    {
+        fprintf(stderr, "clock_gettime error\n");
+        return false;
+    }
+
+    // Format the time as [seconds.microseconds]
+    snprintf(time_buffer, LOG_TIMESTAMP_LENGTH, "[%6jd.%06ld] ",
+             (intmax_t) ts.tv_sec, ts.tv_nsec/ 1000);
+
+    return true;
+}
+
 void ASD_log(ASD_LogLevel level, ASD_LogStream stream, ASD_LogOption options,
              const char* format, ...)
 {
+    char log_buffer[LOG_TIME_MESSAGE_LENGTH];
     bool no_remote =
         (options & (uint8_t)ASD_LogOption_No_Remote) == ASD_LogOption_No_Remote;
     bool local_log = ShouldLog(level, stream);
@@ -61,28 +88,58 @@ void ASD_log(ASD_LogLevel level, ASD_LogStream stream, ASD_LogOption options,
     if (!local_log && !remoteLog)
         return;
 
-    va_list args;
-    va_start(args, format);
-    if (local_log)
+    if (ASD_get_timestamp(log_buffer))
     {
-        if (WriteToSyslog)
+        va_list args;
+        va_start(args, format);
+        if (local_log)
         {
-            vsyslog(LOG_USER, format, args);
+            if (WriteToSyslog)
+            {
+                vsnprintf(&log_buffer[LOG_TIMESTAMP_LENGTH -1],
+                          sizeof(log_buffer) - LOG_TIMESTAMP_LENGTH, format,
+                          args);
+                syslog(LOG_USER, "%s ", log_buffer);
+            }
+            else
+            {
+                fprintf(stderr, "%s", log_buffer);
+                vfprintf(stderr, format, args);
+                fprintf(stderr, "\n");
+            }
         }
-        else
+        if (remoteLog)
         {
-            vfprintf(stderr, format, args);
-            fprintf(stderr, "\n");
+            snprintf(&log_buffer[LOG_TIMESTAMP_LENGTH -1],
+                     CALLBACK_LOG_MESSAGE_LENGTH - LOG_TIMESTAMP_LENGTH,
+                     format, args);
+            loggingCallback(level, stream, log_buffer);
         }
+        va_end(args);
     }
-    if (remoteLog)
+    else
     {
-        char buffer[CALLBACK_LOG_MESSAGE_LENGTH];
-        explicit_bzero(buffer, CALLBACK_LOG_MESSAGE_LENGTH);
-        snprintf(buffer, CALLBACK_LOG_MESSAGE_LENGTH, format, args);
-        loggingCallback(level, stream, buffer);
+        va_list args;
+        va_start(args, format);
+        if (local_log)
+        {
+            if (WriteToSyslog)
+            {
+                vsyslog(LOG_USER, format, args);
+            }
+            else
+            {
+                vfprintf(stderr, format, args);
+                fprintf(stderr, "\n");
+            }
+        }
+        if (remoteLog)
+        {
+            snprintf(log_buffer, CALLBACK_LOG_MESSAGE_LENGTH, format, args);
+            loggingCallback(level, stream, log_buffer);
+        }
+        va_end(args);
     }
-    va_end(args);
 }
 
 void ASD_log_buffer(ASD_LogLevel level, ASD_LogStream stream,
@@ -92,7 +149,8 @@ void ASD_log_buffer(ASD_LogLevel level, ASD_LogStream stream,
     const unsigned char* ubuf = ptr;
     unsigned int i = 0, l = 0;
     unsigned char* h;
-    char line[256];
+    char line_buffer[LOG_TIME_LINE_LENGTH + LOG_TIMESTAMP_LENGTH];
+    char * line = line_buffer;
     static const unsigned char itoh[] = "0123456789abcdef";
 
     bool no_remote =
@@ -103,14 +161,18 @@ void ASD_log_buffer(ASD_LogLevel level, ASD_LogStream stream,
     if (!local_log && !remoteLog)
         return;
 
+    // Combine the timestamp and log message
+    if (ASD_get_timestamp(line_buffer))
+        line = &line_buffer[LOG_TIMESTAMP_LENGTH-1];
+
     /*  0         1         2         3         4         5         6
      *  0123456789012345678901234567890123456789012345678901234567890123456789
      *  PREFIX: 0000000: 0000 0000 0000 0000 0000 0000 0000 0000
      */
     while (i < len)
     {
-        explicit_bzero(line, sizeof(line));
-        snprintf(line, sizeof(line), "%-6.6s: %07x: ", prefixPtr, i);
+        explicit_bzero(line, LOG_TIME_LINE_LENGTH);
+        snprintf(line, LOG_TIME_LINE_LENGTH, "%-6.6s: %07x: ", prefixPtr, i);
         h = (unsigned char*)&line[17];
         for (l = 0; l < 16 && (l + i) < len; l++)
         {
@@ -129,9 +191,9 @@ void ASD_log_buffer(ASD_LogLevel level, ASD_LogStream stream,
         if (local_log)
         {
             if (WriteToSyslog)
-                syslog(LOG_USER, "%s", line);
+                syslog(LOG_USER, "%s", line_buffer);
             else
-                fprintf(stderr, "%s", line);
+                fprintf(stderr, "%s", line_buffer);
         }
     }
 }
@@ -202,12 +264,14 @@ void ASD_log_shift(ASD_LogLevel level, ASD_LogStream stream,
 
 void ASD_initialize_log_settings(ASD_LogLevel level, ASD_LogStream stream,
                                  bool write_to_syslog,
+                                 bool log_timestamp_enable,
                                  ShouldLogFunctionPtr should_log_ptr,
                                  LogFunctionPtr log_ptr)
 {
     WriteToSyslog = write_to_syslog;
     shouldLogCallback = should_log_ptr;
     loggingCallback = log_ptr;
+    log_timestamp = log_timestamp_enable;
 
     asd_log_level = level;
     asd_log_streams = stream;

@@ -92,7 +92,7 @@ STATUS spp_test_main(int argc, char** argv)
     signal(SIGINT, interrupt_handler); // catch ctrl-c
 
     ASD_initialize_log_settings(DEFAULT_LOG_LEVEL, DEFAULT_LOG_STREAMS, false,
-                                NULL, NULL);
+                                false, NULL, NULL);
 
     result = parse_arguments(argc, argv, &args);
 
@@ -101,8 +101,8 @@ STATUS spp_test_main(int argc, char** argv)
         return ST_ERR;
     }
 
-    ASD_initialize_log_settings(args.log_level, args.log_streams, false, NULL,
-                                NULL);
+    ASD_initialize_log_settings(args.log_level, args.log_streams, false, false,
+                                NULL, NULL);
     SPP_Handler* state = SPPHandler(&args.buscfg);
 
     if(spp_initialize(state) == ST_OK)
@@ -609,10 +609,9 @@ unsigned int find_pattern(const unsigned char* haystack,
                           unsigned int needle_size)
 {
     int cmp = 0;
-    for (unsigned int i = 0; i < (haystack_size / 8); i++)
+    for (unsigned int i = 0; i <= (haystack_size - needle_size); i++)
     {
-        memcmp_s(&haystack[i], needle_size, (unsigned char*)needle,
-                 needle_size, &cmp);
+        memcmp_s(&haystack[i], haystack_size - i, needle, needle_size, &cmp);
         if (cmp == 0)
         {
             return i;
@@ -677,7 +676,7 @@ STATUS discovery(SPP_Handler* state, uncore_info* uncore, spp_test_args* args)
     for (int i = 0; i < uncore->numUncores; i++)
     {
         ia[0] = i;
-        sprintf_s(prefix, sizeof(prefix), "Device %d", ia, 1);
+        sprintf_s(prefix, sizeof(prefix), "Device %d", i, 1);
         ASD_log_shift(ASD_LogLevel_Info, stream, option, 32, 4, &tdo[i * 4],
                       prefix);
     }
@@ -902,7 +901,7 @@ STATUS capabilities_ccc(SPP_Handler* state)
     uint8_t output[BUFFER_SIZE_MAX] = {0};
     uint16_t write_len = 1;
     write_buffer[0] = 0x0;
-    uint8_t read_len = 4;
+    uint16_t read_len = 4;
     if (spp_send_receive_cmd(state, BpkOpcode, write_len,
                             write_buffer, &read_len, output) == ST_OK)
     {
@@ -928,7 +927,7 @@ STATUS start_ccc(SPP_Handler* state, uint8_t comportIndex)
     {
         write_len = 1;
         write_buffer[0] = 0x2;
-        uint8_t read_len = 4;
+        uint16_t read_len = 4;
         if (spp_send_receive_cmd(state, BpkOpcode, write_len,
                                 write_buffer, &read_len, output) == ST_OK)
         {
@@ -971,7 +970,7 @@ STATUS select_ccc(SPP_Handler* state, uint8_t comportIndex)
     {
         write_len = 1;
         write_buffer[0] = 0x6;
-        uint8_t read_len = 1;
+        uint16_t read_len = 1;
         if (spp_send_receive_cmd(state, BpkOpcode, write_len,
                                 write_buffer, &read_len, output) == ST_OK)
         {
@@ -1055,7 +1054,7 @@ STATUS read_sp_config_cmd(SPP_Handler* state, uint32_t address,
     uint8_t payload_size = spp_generate_payload(bpk_cmd, (uint8_t*)&payload);
     if(spp_send(state, payload_size, payload) == ST_OK)
     {
-        if(spp_receive(state, read_len, read_data) == ST_OK)
+        if(spp_receive(state, (uint16_t *)read_len, read_data) == ST_OK)
         {
             if(spp_packet_check(*read_len, read_data, payload_size, payload) == ST_OK)
             {
@@ -1084,7 +1083,7 @@ STATUS write_sp_config_cmd(SPP_Handler* state, uint32_t address,
     uint8_t payload_size = spp_generate_payload(bpk_cmd, (uint8_t*)&payload);
     if(spp_send(state, payload_size, payload) == ST_OK)
     {
-        if(spp_receive(state, read_len, read_data) == ST_OK)
+        if(spp_receive(state, (uint16_t *)read_len, read_data) == ST_OK)
         {
             if(spp_packet_check(*read_len, read_data,
                                 payload_size, payload) == ST_OK)
@@ -1119,7 +1118,7 @@ STATUS write_system_cmd(SPP_Handler* state, struct jtag_cmd jtag,
     uint8_t payload_size = spp_generate_payload(bpk_cmd, (uint8_t*)&payload);
     if(spp_send(state, payload_size, payload) == ST_OK)
     {
-        if(spp_receive(state, read_len, read_data) == ST_OK)
+        if(spp_receive(state, (uint16_t *)read_len, read_data) == ST_OK)
         {
             if(spp_packet_check(*read_len, read_data, payload_size, payload) == ST_OK)
             {
@@ -1153,7 +1152,7 @@ STATUS write_read_system_cmd(SPP_Handler* state, struct jtag_cmd jtag,
     uint8_t payload_size = spp_generate_payload(bpk_cmd, (uint8_t*)&payload);
     if(spp_send(state, payload_size, payload) == ST_OK)
     {
-        if(spp_receive(state, read_len, read_data) == ST_OK)
+        if(spp_receive(state, (uint16_t *)read_len, read_data) == ST_OK)
         {
             if(spp_packet_check(*read_len, read_data, payload_size, payload) == ST_OK)
             {
@@ -1170,7 +1169,7 @@ STATUS write_read_system_cmd(SPP_Handler* state, struct jtag_cmd jtag,
 STATUS reset_jtag_to_rti_spp(SPP_Handler* state)
 {
     struct jtag_cmd jtag = {0};
-    uint32_t output[BUFFER_SIZE_MAX] = {0};
+    uint8_t output[BUFFER_SIZE_MAX] = {0};
     uint8_t num_bytes;
     jtag.next_state =jtag_tlr;
     jtag.shift = 0xa;
@@ -1209,7 +1208,7 @@ STATUS jtag_shift_spp(SPP_Handler* state, enum jtag_states next_state,
     jtag.tif = data_for_tdi;
     jtag.bfc = 0;
     jtag.gtu = 0;
-    jtag.payload = input;
+    jtag.payload = (uint32_t *)input;
     jtag.payload8 = input;
     uint8_t num_bytes;
     if(write_read_system_cmd(state, jtag, output, &num_bytes) == ST_OK)
@@ -1369,7 +1368,7 @@ struct tinySppCommandPacket tiny_spp_header_builder(enum bpk_opcode op,
 
 uint8_t spp_generate_payload(struct bpk_cmd bpk_cmd, uint8_t* payload)
 {
-    ssize_t header_size = 0;
+    uint8_t header_size = 0;
     struct tinySppCommandPacket sppCmdTX = {0};
     sppCmdTX = tiny_spp_header_builder(bpk_cmd.bpk_opcode, &header_size,
                     bpk_cmd.tranByteCount);

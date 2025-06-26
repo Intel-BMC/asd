@@ -39,6 +39,8 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "logging.h"
 unsigned int fail_read_counter = 0;
+bool spp_threshold_status[MAX_SPP_BUS_DEVICES] = { false };
+
 #define SPP_DEV_FILE_NAME "/dev/i3c-debug"
 #define MAX_SPP_DEV_FILENAME 256
 #define FAILURE_THRESHOLD 0
@@ -71,6 +73,7 @@ SPP_Handler* SPPHandler(bus_config* config)
         for (int i = 0; i < MAX_SPP_BUS_DEVICES; i++)
         {
             state->spp_dev_handlers[i] = UNINITIALIZED_SPP_DEBUG_DRIVER_HANDLE;
+            spp_threshold_status[i] = false;
         }
         state->spp_device_count = 0;
         state->device_index = 0;
@@ -105,17 +108,21 @@ STATUS spp_deinitialize(SPP_Handler* state)
 
 STATUS spp_send(SPP_Handler* state, uint16_t size, uint8_t * write_buffer)
 {
-    ASD_log(ASD_LogLevel_Debug, stream, option, "ASD SPP_send");
+    uint8_t send_data = write_buffer[0];
+    ASD_log(ASD_LogLevel_Info, stream, option, "ASD spp_send[%d] - 0x%x",
+            state->device_index, send_data);
     i3c_cmd cmd = {0};
     cmd.msgType = sppPayload;
     cmd.tx_buffer = write_buffer;
     cmd.write_len = size;
+    spp_threshold_status[state->device_index] = true;
     return send_i3c_cmd(state, &cmd);
 }
 
 STATUS spp_receive(SPP_Handler* state, uint16_t * size, uint8_t * read_buffer)
 {
-    ASD_log(ASD_LogLevel_Debug, stream, option, "ASD spp_receive");
+    ASD_log(ASD_LogLevel_Info, stream, option, "ASD spp_receive[%d]",
+            state->device_index);
     i3c_cmd cmd = {0};
     cmd.rx_buffer = read_buffer;
     cmd.read_len = 255;
@@ -147,7 +154,12 @@ STATUS spp_send_cmd(SPP_Handler* state, spp_command_t cmd, uint16_t size,
     STATUS result = ST_ERR;
     STATUS status = ST_ERR;
 
-    ASD_log(ASD_LogLevel_Debug, stream, option, "ASD SPP_send_cmd");
+    ASD_log(ASD_LogLevel_Info, stream, option, "ASD spp_send_cmd[%d] 0x%x",
+            state->device_index, cmd);
+
+    ASD_log_buffer(ASD_LogLevel_Info, stream, option, write_buffer, size,
+                   "SndCmd");
+
     if (cmd == BroadcastResetAction)
     {
         ASD_log(ASD_LogLevel_Debug, stream, option, "BroadcastResetAction");
@@ -230,7 +242,8 @@ STATUS spp_send_cmd(SPP_Handler* state, spp_command_t cmd, uint16_t size,
 STATUS spp_send_receive_cmd(SPP_Handler* state, spp_command_t cmd, uint16_t  wsize,
                             uint8_t * write_buffer, const uint16_t* rsize, uint8_t * read_buffer)
 {
-    ASD_log(ASD_LogLevel_Debug,stream, option,"ASD SPP_send_receive_cmd");
+    ASD_log(ASD_LogLevel_Info,stream, option,"ASD spp_send_receive_cmd[%d] 0x%x",
+            state->device_index, cmd);
     if (cmd == BroadcastResetAction)
     {
         ASD_log(ASD_LogLevel_Debug,stream, option,"BroadcastResetAction");
@@ -562,7 +575,7 @@ STATUS disconnect(SPP_Handler* state)
                             "Disconnect spp_send error");
                     break;
                 }
-                result = spp_receive(state, &read_len, read_data);
+                spp_receive(state, &read_len, read_data);
                 if (read_len > 0)
                 {
                     ASD_log_buffer(ASD_LogLevel_Debug, stream, option, read_data, read_len, "[RX1]");

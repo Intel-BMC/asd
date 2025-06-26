@@ -146,5 +146,7 @@ void* get_packet_data(struct packet_data* packet, int bytes_wanted);
 void process_message();
 STATUS read_openbmc_version(void);
 static STATUS send_pin_event(ASD_EVENT value);
+STATUS send_bpk_event(ASD_EVENT value, ASD_EVENT_DATA event_data);
+STATUS asd_msg_check_spp_ibi(uint8_t address);
 
 #endif // ASD_ASD_MSG_H

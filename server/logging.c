@@ -262,6 +262,40 @@ void ASD_log_shift(ASD_LogLevel level, ASD_LogStream stream,
     free(result);
 }
 
+void ASD_log_shift_to_from(ASD_LogLevel level, ASD_LogStream stream,
+    ASD_LogOption options, unsigned int number_of_bits,
+    unsigned int size_bytes, unsigned char* buffer,
+    const char* prefixPtr, unsigned int from, unsigned int to)
+{
+    unsigned char* result;
+    size_t result_size = size_bytes * 2;
+    bool no_remote = (options & ASD_LogOption_No_Remote) == ASD_LogOption_No_Remote;
+    bool local_log = ShouldLog(level, stream);
+    bool remoteLog = (!no_remote && shouldLogCallback && loggingCallback &&
+                    shouldLogCallback(level, stream));
+    if (!local_log && !remoteLog)
+        return;
+    if (!buffer || size_bytes == 0 || number_of_bits == 0 || from >= to || to > number_of_bits)
+        return;
+
+    unsigned int number_of_bytes = (to - from + 7) / 8;
+    if (number_of_bytes > size_bytes)
+    {
+        number_of_bytes = size_bytes;
+        number_of_bits = (number_of_bytes * 8);
+    }
+
+    result = (unsigned char*)malloc(result_size + 1);
+    if (!result)
+    {
+        return;
+    }
+    explicit_bzero(result, result_size + 1);
+    buffer_to_hex(to - from, number_of_bytes, buffer + (from / 8), result);
+    ASD_log(level, stream, options, "%s: [%db] 0x%s", prefixPtr, to - from, result);
+    free(result);
+}
+
 void ASD_initialize_log_settings(ASD_LogLevel level, ASD_LogStream stream,
                                  bool write_to_syslog,
                                  bool log_timestamp_enable,

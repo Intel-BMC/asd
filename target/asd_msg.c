@@ -651,10 +651,10 @@ STATUS asd_msg_on_msg_recv(void)
                         crc_data_calc ^= (msg_out->buffer[index] & 0xff);
                     }
                 }
-                read_crc = ((msg_out->buffer[1] << 24) & 0xff) |
-                    ((msg_out->buffer[2] << 16) & 0xff) |
-                    ((msg_out->buffer[3] << 8) & 0xff) |
-                    ((msg_out->buffer[4]) & 0xff);
+                read_crc = ((msg_out->buffer[1] & 0xff) << 24) |
+                           ((msg_out->buffer[2] & 0xff) << 16) |
+                           ((msg_out->buffer[3] & 0xff) << 8) |
+                           (msg_out->buffer[4] & 0xff);
                 ASD_log(ASD_LogLevel_Trace, ASD_LogStream_Network,
                         ASD_LogOption_None,
                         "CRC in payload: 0x%x, CRC calulated: 0x%x.",
@@ -1196,12 +1196,14 @@ STATUS process_jtag_message(struct asd_message* s_message)
                     explicit_bzero(line, sizeof(line));
                     for (int i = chain_bytes_length - 1; i >= 0; i--)
                     {
-                        snprintf(&line[pos], sizeof(line), "%02X",
+                        size_t remaining_size = sizeof(line) - pos;
+                        snprintf(&line[pos], remaining_size, "%02X",
                                  chain_bytes[i]);
                         pos = pos + 2;
                         if (i % 2 == 0 && i != 0)
                         {
-                            snprintf(&line[pos], sizeof(line), " ");
+                            remaining_size = sizeof(line) - pos;
+                            snprintf(&line[pos], remaining_size, " ");
                             pos++;
                         }
                     }
@@ -1517,6 +1519,9 @@ STATUS process_spp_message(struct asd_message* s_message)
     struct packet_data packet;
     unsigned char* data_ptr;
     uint8_t cmd = 0;
+    bool spp_bulk_mode = false;
+    struct asd_message bulk_out_msg;
+    uint8_t bulk_address = 0;
 
     if (size == -1)
     {
@@ -1556,7 +1561,7 @@ STATUS process_spp_message(struct asd_message* s_message)
             cmd = *data_ptr;
         }
 
-        if (cmd >= SPP_CFG_MIN && cmd <= SPP_CFG_MAX)
+        if (cmd <= SPP_CFG_MAX)
         {
             // For future enhacements
             ASD_log(ASD_LogLevel_Debug, ASD_LogStream_SPP, ASD_LogOption_None,
@@ -1579,6 +1584,10 @@ STATUS process_spp_message(struct asd_message* s_message)
                 break;
             }
             address = *data_ptr;
+
+            if (spp_bulk_mode) {
+                bulk_address = address;
+            }
 
             data_ptr = get_packet_data(&packet, 1);
             if (data_ptr == NULL)
@@ -1621,6 +1630,13 @@ STATUS process_spp_message(struct asd_message* s_message)
                 ASD_log(ASD_LogLevel_Error, ASD_LogStream_SPP, ASD_LogOption_None,
                         "asd_msg failed to select device: %d", address);
                 break;
+            }
+
+            if (spp_threshold_status[address]) {
+                ASD_log(ASD_LogLevel_Info, ASD_LogStream_SPP,
+                        ASD_LogOption_None,
+                        "spp_send handshake not ready");
+                asd_msg_check_spp_ibi(address);
             }
 
             status = spp_send(msg_state.spp_handler, num_of_bytes, data_ptr);
@@ -1794,6 +1810,14 @@ STATUS process_spp_message(struct asd_message* s_message)
                 break;
             }
 
+
+            if (spp_threshold_status[address]) {
+                ASD_log(ASD_LogLevel_Info, ASD_LogStream_SPP,
+                        ASD_LogOption_None,
+                        "spp_send_cmd handshake not ready");
+                asd_msg_check_spp_ibi(address);
+            }
+
             status = spp_send_cmd(msg_state.spp_handler, spp_command,
                                   num_of_bytes, data_ptr);
             if (status == ST_OK)
@@ -1917,6 +1941,13 @@ STATUS process_spp_message(struct asd_message* s_message)
                 break;
             }
 
+            if (spp_threshold_status[address]) {
+                ASD_log(ASD_LogLevel_Info, ASD_LogStream_SPP,
+                        ASD_LogOption_None,
+                        "spp_send_receive_cmd handshake not ready");
+                asd_msg_check_spp_ibi(address);
+            }
+
             status = spp_send_receive_cmd(msg_state.spp_handler, spp_command,
                                           num_of_write_bytes, data_ptr,
                                           &num_of_read_bytes,
@@ -2016,6 +2047,72 @@ STATUS process_spp_message(struct asd_message* s_message)
                 break;
             }
         }
+        else if (cmd == SPP_BULK)
+        {
+            uint16_t num_of_bytes = 0;
+            uint8_t msb_length = 0;
+            uint8_t lsb_length = 0;
+            uint8_t spp_bulk_count = 0;
+
+            data_ptr = get_packet_data(&packet, 1);
+            if (data_ptr == NULL)
+            {
+                ASD_log(ASD_LogLevel_Error, ASD_LogStream_SPP,
+                        ASD_LogOption_None,
+                        "Failed to read bulk spp count, short packet");
+                status = ST_ERR;
+                break;
+            }
+            spp_bulk_count = *data_ptr;
+
+            ASD_log(ASD_LogLevel_Info, ASD_LogStream_SPP,
+                    ASD_LogOption_None,
+                    "Processing %d SPP commands in Bulk mode with %d bytes",
+                    spp_bulk_count, packet.total);
+
+           ASD_log_buffer(ASD_LogLevel_Debug, ASD_LogStream_SPP,
+                          ASD_LogOption_No_Remote,
+                          s_message->buffer, (size_t)size,
+                          "Bulk");
+
+            explicit_bzero(&bulk_out_msg.header, sizeof(struct message_header));
+            explicit_bzero(&bulk_out_msg.buffer, MAX_DATA_SIZE);
+
+            if (memcpy_s(&bulk_out_msg.header, sizeof(struct message_header),
+                         &s_message->header, sizeof(struct message_header)))
+            {
+                ASD_log(ASD_LogLevel_Error, ASD_LogStream_SPP, ASD_LogOption_None,
+                        "memcpy_s: bulk message header to out msg header copy failed.");
+                return ST_ERR;
+            }
+
+            bulk_out_msg.buffer[response_cnt++] = cmd;
+            bulk_out_msg.buffer[response_cnt++] = spp_bulk_count;
+
+            if (memcpy_s(&bulk_out_msg.header, sizeof(struct message_header),
+                         &s_message->header, sizeof(struct message_header)))
+            {
+                ASD_log(ASD_LogLevel_Error, ASD_LogStream_SPP, ASD_LogOption_None,
+                        "memcpy_s: message header to out msg header copy failed.");
+                return ST_ERR;
+            }
+
+            bulk_out_msg.header.size_lsb = lsb_from_msg_size(response_cnt);
+            bulk_out_msg.header.size_msb = msb_from_msg_size(response_cnt);
+            bulk_out_msg.header.cmd_stat = ASD_SUCCESS;
+
+            ASD_log(ASD_LogLevel_Info, ASD_LogStream_SPP, ASD_LogOption_None,
+                    "Sending bulk response");
+            status = send_response(&bulk_out_msg);
+            if (status != ST_OK)
+            {
+                ASD_log(ASD_LogLevel_Error, ASD_LogStream_SPP,
+                        ASD_LogOption_No_Remote,
+                        "Failed to send message back on the socket");
+                return ST_ERR;
+            }
+            spp_bulk_mode = true;
+        }
         else
         {
             // Unknown Command
@@ -2024,6 +2121,20 @@ STATUS process_spp_message(struct asd_message* s_message)
             status = ST_ERR;
             break;
         }
+    }
+
+    // For bulk operations, halt further response processing as the response
+    // has already been sent.
+    if (spp_bulk_mode) {
+        // Check if we have processed the last send in bulk
+        if (spp_threshold_status[bulk_address]) {
+            ASD_log(ASD_LogLevel_Info, ASD_LogStream_SPP,
+                    ASD_LogOption_None,
+                    "spp_send bulk handshake not ready");
+            asd_msg_check_spp_ibi(bulk_address);
+        }
+        spp_bulk_mode = false;
+        return status;
     }
 
     if (status == ST_OK)
@@ -2059,13 +2170,12 @@ STATUS write_cfg(const writeCfg cmd, struct packet_data* packet)
     if (cmd == JTAG_FREQ)
     {
         // JTAG_FREQ (Index 1, Size: 1 Byte)
-        //  Bit 7:6 � Prescale Value (b'00 � 1, b'01 � 2, b'10 � 4, b'11
-        //  � 8) Bit 5:0 � Divisor (1-64, 64 is expressed as value 0)
-        //  The TAP clock frequency is determined by dividing the system
-        //  clock of the TAP Controller first through the prescale value
-        //  (1,2,4,8) and then through the divisor (1-64).
+        // Bit 7:6 Prescale Value (b'00 - 1, b'01 - 2, b'10 - 4, b'11 - 8)
+        // Bit 5:0  Divisor (1-64, 64 is expressed as value 0)
+        // The TAP clock frequency is determined by dividing the system
+        // clock of the TAP Controller first through the prescale value
+        // (1,2,4,8) and then through the divisor (1-64).
         // e.g. system clock/(prescale * divisor)
-        uint8_t prescaleVal = 0, divisorVal = 0, tCLK = 0;
         data = get_packet_data(packet, 1);
         if (data == NULL)
         {
@@ -2075,6 +2185,9 @@ STATUS write_cfg(const writeCfg cmd, struct packet_data* packet)
         }
         else
         {
+            uint32_t tCLK = 0;
+            uint8_t divisorVal = 0;
+            uint8_t prescaleVal = 0;
             prescaleVal = data[0] >> (uint8_t)5;
             divisorVal = data[0] & (uint8_t)0x1f;
 
@@ -2431,8 +2544,8 @@ STATUS asd_msg_read(void)
         }
         case READ_STATE_HEADER:
         {
-            void* buffer =
-                (void*)(&(msg->header) + msg_state.in_msg.read_index);
+            void* buffer = (void*)((uint8_t*)&msg->header +
+                msg_state.in_msg.read_index);
             size_t num_to_read =
                 sizeof(msg->header) - msg_state.in_msg.read_index;
 
@@ -2702,6 +2815,83 @@ STATUS send_bpk_event(ASD_EVENT value, ASD_EVENT_DATA event_data)
     {
         ASD_log(ASD_LogLevel_Error, ASD_LogStream_SDK, ASD_LogOption_No_Remote,
                 "Failed to send an event message to client");
+    }
+    return result;
+}
+
+STATUS asd_msg_check_spp_ibi(uint8_t address)
+{
+    STATUS result = ST_OK;
+    struct pollfd poll_fds[NUM_GPIOS + NUM_DBUS_FDS + 8] = {{0}};
+    int num_fds = 0;
+    int poll_timeout_ms = SPP_IBI_BUFFER_HANDSHAKE_TIMEOUT_MS;
+    bool exit_on_handshake = true;
+    ASD_EVENT event;
+    ASD_EVENT_DATA event_data;
+    uint8_t event_buffer[512] = {0};
+    int poll_result = 0;
+
+    if (msg_state.target_handler == NULL || !msg_state.target_handler->initialized)
+    {
+        return ST_ERR;
+    }
+
+    result = target_get_spp_fds(msg_state.target_handler, poll_fds, &num_fds);
+
+    if (result != ST_OK)
+    {
+        ASD_log(ASD_LogLevel_Error, ASD_LogStream_SPP,
+                ASD_LogOption_None, "Failed to get spp fds");
+        return result;
+    }
+
+    while(1)
+    {
+        // Check if there has been a target event.
+        poll_result = poll(poll_fds, num_fds, poll_timeout_ms);
+        if (poll_result <= 0)
+        {
+            ASD_log(ASD_LogLevel_Info, ASD_LogStream_All,
+                    ASD_LogOption_None,
+                    "asd_msg_check_spp_ibi[%d] waited for %d ms",
+                    address, poll_timeout_ms);
+            return ST_OK;
+        }
+
+        for (int i = 0; i < num_fds; i++)
+        {
+            // This loop will exit when BPK handshake event appears(0x5C00).
+            // We do not need to wait for auto command data(AD00).
+            event_data.buffer = event_buffer;
+            event_data.size = sizeof(event_buffer);
+            result = target_event(msg_state.target_handler, poll_fds[i],
+                                  &event, &event_data);
+
+            if (result == ST_OK && event == ASD_EVENT_BPK)
+            {
+                // If there is a PRDY, do not exit and process all PRDY events
+                if(check_spp_prdy_event(event, event_data)) {
+                    exit_on_handshake = false;
+                }
+                if (spp_threshold_status[address] == false)
+                {
+                   ASD_log(ASD_LogLevel_Debug, ASD_LogStream_SPP,
+                           ASD_LogOption_None,
+                           "threshold event occured, continue processing...");
+
+                   // if we are in the middle of the PRDY trail, do not return
+                   // to send, process all PRDY events first
+                   if (exit_on_handshake) {
+                       result = send_bpk_event(event, event_data);
+                       return result;
+                   }
+                }
+                result = send_bpk_event(event, event_data);
+            }
+
+            if (result != ST_OK)
+                return result;
+        }
     }
     return result;
 }

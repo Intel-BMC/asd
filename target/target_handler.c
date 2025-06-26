@@ -1707,6 +1707,39 @@ STATUS target_wait_PRDY(Target_Control_Handle* state, const uint8_t log2time)
     return result;
 }
 
+STATUS target_get_spp_fds(Target_Control_Handle* state, struct pollfd * fds,
+                          int* num_fds)
+{
+    short events = 0;
+    STATUS result = ST_ERR;
+    uint8_t count = 0;
+
+    if (state == NULL || !state->initialized || fds == NULL || num_fds == NULL)
+    {
+#ifdef ENABLE_DEBUG_LOGGING
+        ASD_log(ASD_LogLevel_Error, stream, option,
+                "target_get_fds, null or uninitialized state");
+#endif
+        return ST_ERR;
+    }
+
+    if (state->spp_handler != NULL)
+    {
+        int i = 0;
+        result = spp_bus_device_count(state->spp_handler, &count);
+        if (result == ST_OK)
+        {
+            for(i = 0; i < count; i++)
+            {
+                fds[i].fd = state->spp_handler->spp_dev_handlers[i];
+                fds[i].events = POLLIN;
+            }
+        }
+    }
+    *num_fds = count;
+
+    return ST_OK;
+}
 STATUS target_get_fds(Target_Control_Handle* state, target_fdarr_t* fds,
                       int* num_fds)
 {

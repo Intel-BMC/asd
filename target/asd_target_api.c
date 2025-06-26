@@ -149,6 +149,12 @@ static STATUS asd_target_process_all_pin_events(const struct pollfd* poll_fds, s
         poll_result = poll(poll_fds, num_fds, asd_poll_timeout_ms);
         if (poll_result <= 0)
         {
+            if(asd_poll_timeout_ms) {
+                ASD_log(ASD_LogLevel_Info, ASD_LogStream_All,
+                        ASD_LogOption_None,
+                        "asd_target_process_all_pin_events waited for %d ms",
+                        asd_poll_timeout_ms);
+            }
             asd_poll_timeout_ms = 0;
             return ST_OK;
         }

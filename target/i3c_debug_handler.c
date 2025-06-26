@@ -194,6 +194,11 @@ STATUS i3c_ibi_handler(int fd, uint8_t* ibi_buffer, size_t* ibi_len,
         snprintf(infoStr, sizeof(infoStr), "[IB%d]",device_index);
         ASD_log_buffer(ASD_LogLevel_Debug, ASD_LogStream_SPP, ASD_LogOption_None,
                        ibi_buffer, event_data.data_len, infoStr);
+        if (*ibi_len >= 2 &&
+            (ibi_buffer[0] == SPP_IBI_STATUS_CHANGED) &&
+            (ibi_buffer[1] == SPP_IBI_SUBREASON_BUFFER_THRESHOLD)) {
+            spp_threshold_status[device_index] = false;
+        }
     }
     return ST_OK;
 }

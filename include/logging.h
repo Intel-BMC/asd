@@ -89,6 +89,11 @@ void ASD_log_shift(ASD_LogLevel level, ASD_LogStream stream,
                    unsigned int size_bytes, unsigned char* buffer,
                    const char* prefixPtr);
 
+void ASD_log_shift_to_from(ASD_LogLevel level, ASD_LogStream stream,
+                    ASD_LogOption options, unsigned int number_of_bits,
+                    unsigned int size_bytes, unsigned char* buffer,
+                    const char* prefixPtr, unsigned int from, unsigned int to);
+
 void ASD_initialize_log_settings(ASD_LogLevel level, ASD_LogStream stream,
                                  bool write_to_syslog,
                                  bool log_timestamp_enable,

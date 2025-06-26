@@ -52,12 +52,14 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #define IR16_SHIFT_SIZE 16       // 16 bits per uncore
 #define MAX_IR_SHIFT_SIZE 0x400
 #define DEFAULT_NUMBER_TEST_ITERATIONS 11500
+#define DEFAULT_RUNTIME 1
 #define DEFAULT_IR_VALUE 2
+#define DEFAULT_ERROR_INJECTION_POS 0
+#define DEFAULT_TEST_SIZE 12
+#define MINIMUM_TEST_SIZE 12
 #define DEFAULT_DR_SHIFT_SIZE 32
 #define MAX_DR_SHIFT_SIZE 0x20000
 #define DEFAULT_TO_MANUAL_MODE false
-#define DEFAULT_JTAG_CONTROLLER_MODE SW_MODE
-#define DEFAULT_JTAG_TCK 1
 #define SIZEOF_ID_CODE 4
 #define UNCORE_DISCOVERY_SHIFT_SIZE_IN_BITS                                    \
     (((MAX_TAPS_SUPPORTED * SIZEOF_ID_CODE) + SIZEOF_TAP_DATA_PATTERN) * 8)
@@ -203,7 +205,14 @@ typedef struct spp_test_args
     bool count_mode;
     bool random_mode;
     bus_config buscfg;
-    unsigned char tap_data_pattern[12]; // Used for tap data comparison
+    unsigned char tap_data_pattern[12];
+    unsigned int seed;
+    unsigned test_size;
+    char* pattern;
+    bool pattern_mode;
+    bool inject_error;
+    unsigned int inject_error_byte;
+    unsigned int runTime;
     ASD_LogLevel log_level;
     ASD_LogStream log_streams;
 } spp_test_args;
@@ -254,12 +263,12 @@ typedef struct bpk_cmd
     uint8_t gtu;
     uint32_t shift;
     uint8_t tranByteCount;
-};
-
+}bpk_cmd;
+STATUS clean_previous_read(SPP_Handler* state);
 STATUS spp_test_main(int argc, char** argv);
 STATUS spp_test(SPP_Handler* state, uncore_info* uncore, spp_test_args* args);
 void print_test_results(uint64_t iterations, uint64_t micro_seconds,
-                        uint64_t total_bits, uint64_t failures);
+                        uint64_t total_bits);
 void interrupt_handler(int dummy);
 STATUS parse_arguments(int argc, char** argv, spp_test_args* args);
 void showUsage(char** argv);

@@ -90,6 +90,7 @@ int jtag_test_main(int argc, char** argv)
     uncore.numUncores = 0;
     jtag_test_args args;
     bool result;
+    bool print_results = false;
 
     signal(SIGINT, interrupt_handler); // catch ctrl-c
 
@@ -169,15 +170,18 @@ bool parse_arguments(int argc, char** argv, jtag_test_args* args)
     args->ir_shift_size = 0;
     args->loop_forever = false;
     args->numIterations = DEFAULT_NUMBER_TEST_ITERATIONS;
+    args->runTime = DEFAULT_RUNTIME;
     args->ir_value = DEFAULT_IR_VALUE;           // overridden in manual mode
     args->dr_shift_size = DEFAULT_DR_SHIFT_SIZE; // overridden in manual mode
     args->manual_mode = DEFAULT_TO_MANUAL_MODE;
     args->count_mode = false;
-    args->random_mode = false;
+    args->pattern_mode = false;
+    args->inject_error = false;
     args->mode = DEFAULT_JTAG_CONTROLLER_MODE;
     args->tck = DEFAULT_JTAG_TCK;
     args->log_level = DEFAULT_LOG_LEVEL;
     args->log_streams = DEFAULT_LOG_STREAMS;
+    args->inject_error_byte = DEFAULT_ERROR_INJECTION_POS;
 
     enum
     {
@@ -187,6 +191,10 @@ bool parse_arguments(int argc, char** argv, jtag_test_args* args)
         ARG_DR_OVERSHIFT,
         ARG_LOG_LEVEL,
         ARG_LOG_STREAMS,
+        ARG_SEED,
+        ARG_PATTERN,
+        ARG_RUNTIME,
+        ARG_INJECT,
         ARG_HELP
     };
 
@@ -197,29 +205,28 @@ bool parse_arguments(int argc, char** argv, jtag_test_args* args)
         {"dr-overshift", 1, NULL, ARG_DR_OVERSHIFT},
         {"log-level", 1, NULL, ARG_LOG_LEVEL},
         {"log-streams", 1, NULL, ARG_LOG_STREAMS},
+        {"seed", 1, NULL, ARG_SEED},
+        {"pattern", 1, NULL, ARG_PATTERN},
+        {"runtime", 1, NULL, ARG_RUNTIME},
+        {"injecterror", 1, NULL, ARG_INJECT},
         {"help", 0, NULL, ARG_HELP},
         {NULL, 0, NULL, 0},
     };
 
     load_ir_size_map_str();
 
-    while ((c = getopt_long(argc, argv, "fcri:ht:?", opts, NULL)) != -1)
+    while ((c = getopt_long(argc, argv, "fci:ht:?", opts, NULL)) != -1)
     {
         switch (c)
         {
             case 'f':
                 args->loop_forever = true;
                 break;
-
             case 'c':
                 args->count_mode = true;
                 break;
-
-            case 'r':
-                args->random_mode = true;
-                break;
-
             case 'i':
+                args->loop_forever = false;
                 if ((args->numIterations = (int)strtol(optarg, NULL, 10)) <= 0)
                 {
                     showUsage(argv);
@@ -289,6 +296,21 @@ bool parse_arguments(int argc, char** argv, jtag_test_args* args)
                 }
                 break;
 
+            case ARG_SEED:
+                args->seed = (unsigned int)strtol(optarg, NULL, 10);
+                break;
+            case ARG_PATTERN:
+                args->pattern = optarg;
+                args->pattern_mode = true;
+                break;
+            case ARG_RUNTIME:
+                args->loop_forever = true;
+                args->runTime = (unsigned int)strtol(optarg, NULL, 10);
+                break;
+            case ARG_INJECT:
+                args->inject_error = true;
+                args->inject_error_byte = (unsigned int)strtol(optarg, NULL, 10);
+                break;
             case '?':
             case ARG_HELP:
             default:
@@ -364,7 +386,6 @@ void showUsage(char** argv)
         "Usage: %s [option]\n\n"
         "  -f          Run endlessly until ctrl-c is used\n"
         "  -c          Complete all iterations and count failing cases\n"
-        "  -r          Use random pattern\n"
         "  -i <number> Run [number] of iterations (default: %d)\n"
         "  -h          Run in Hardware JTAG mode (default: %s)\n"
         "  -t <number> JTAG tck divisor (default: %d)\n"
@@ -396,6 +417,11 @@ void showUsage(char** argv)
         "                               %s\n"
         "                               %s\n"
         "                               %s\n"
+        "  --seed=<value>             Specify seed for random mode: (default: time seed), <value> (0 - 2147483647)\n"
+        "  --pattern=<type>           Specify pattern type (Default:(Random (RN)), Static (ST) [dr-overshift value]\n"
+        "                             Checkerboard (CB),Walkingzero (WZ) , Walkingone (WO))\n"
+        "  --runtime=<number>         Specify time in seconds jtag_test will run. (disables iterations) (Default: 1s)\n"
+        "  --injecterror=<byte>       Inject Error to test bit flip at position byte (Default: byte = 0)\n"
         "  --help                     Show this list\n"
         "\n"
         "Examples:\n"
@@ -518,7 +544,7 @@ bool uncore_discovery(JTAG_Handler* jtag, uncore_info* uncore,
                       prefix);
     }
     ASD_log_shift(ASD_LogLevel_Info, stream, option, 64, 8,
-                  &tdo[uncore->numUncores * 4], "Overshift");
+                  &tdo[uncore->numUncores * 4], "Discovery Overshift");
 
     // save the idcodes for later comparison
     if (memcpy_s(uncore->idcode, sizeof(uncore->idcode), tdo,
@@ -579,19 +605,123 @@ bool count_jtag_failure(jtag_test_args* args, unsigned int iteration)
         return false;
 }
 
+bool apply_pattern(bool pattern_mode, unsigned char* buffer, size_t size, const char* pattern,
+                unsigned int iteration, unsigned long long int fixedpattern) {
+    unsigned int bit_position = iteration % (size * 8);
+    if (!pattern_mode)  //Random Default
+    {
+        for (size_t i = 0; i < size; i += 4) {
+            unsigned int random_value = random();
+            for (size_t j = 0; j < 4 && (i + j) < size; j++)
+            {
+                buffer[i + j] = (random_value >> (j * 8)) & 0xFF;
+            }
+        }
+    }
+    else
+    {
+        if (strcmp(pattern, "Checkerboard") == 0 || strcmp(pattern, "CB") == 0) {
+            for (size_t i = 0; i < size; i++) {
+                buffer[i] = (i % 2 == 0) ? 0xAA : 0x55;
+            }
+            return true;
+        } else if (strcmp(pattern, "WalkingZero") == 0 || strcmp(pattern, "WZ") == 0) {
+            memset(buffer, 0xFF, size);
+            buffer[bit_position / 8] &= ~(1 << (7 - (bit_position % 8)));
+            return true;
+        } else if (strcmp(pattern, "WalkingOne") == 0 || strcmp(pattern, "WO") == 0) {
+            memset(buffer, 0x00, size);
+            buffer[bit_position / 8] = 1 << (7 - (bit_position % 8));
+            return true;
+        } else if (strcmp(pattern, "Random") == 0 || strcmp(pattern, "RN") == 0) {
+            for (size_t i = 0; i < size; i += 4) {
+                unsigned int random_value = rand();
+                for (size_t j = 0; j < 4 && (i + j) < size; j++)
+                {
+                    buffer[i + j] = (random_value >> (j * 8)) & 0xFF;
+                }
+            }
+            return true;
+        } else if (strcmp(pattern, "Static") == 0 || strcmp(pattern, "ST") == 0) {
+            if (memcpy_s(buffer, size, &fixedpattern, sizeof(fixedpattern)))
+            {
+                ASD_log(ASD_LogLevel_Error, ASD_LogStream_JTAG, ASD_LogOption_None,
+                "memcpy_s: human_readable to tap_data_pattern copy failed.");
+                return false;
+            }
+            return true;
+        }
+        else
+        {
+            ASD_log(ASD_LogLevel_Error, stream, option,
+                "Unknown Pattern!!");
+                return false;
+        }
+    }
+    return true;
+}
+
+void inject_error(unsigned char* buffer, size_t size, unsigned int byte_position, unsigned int bit_position) {
+    unsigned int bit_index = bit_position % 8;
+    char value_before;
+    if (byte_position < size)
+    {
+        value_before = buffer[byte_position];
+        buffer[byte_position] ^= (1 << (7 - bit_index));
+        ASD_log(ASD_LogLevel_Debug, ASD_LogStream_JTAG, ASD_LogOption_None,
+            "Byte at position (idcodes) + %d,  with value %x,  after error injection %x\n",
+                    byte_position, value_before, buffer[byte_position]);
+    }
+    else
+    {
+        ASD_log(ASD_LogLevel_Error, ASD_LogStream_JTAG, ASD_LogOption_None,
+            "Could not inject error!");
+    }
+}
+
+bool validate_data(unsigned char* buffer1, unsigned int size_buffer1, unsigned char* buffer2,
+                unsigned int size_buffer2, unsigned int number_of_bits, unsigned int iterations)
+{
+    int cmp = 0, to, from;
+    memcmp_s(buffer1, size_buffer1, buffer2, (number_of_bits + 7) / 8, &cmp);
+    if (cmp != 0)
+    {
+        ASD_log(ASD_LogLevel_Error, stream, option,
+            "TAP results comparison failed on iteration %d",
+            iterations);
+            for (int u = 0; u < number_of_bits; u += 256)
+            {
+                from = u;
+                to = u + 256;
+                if (to > number_of_bits) {
+                    to = number_of_bits;
+                }
+                ASD_log(ASD_LogLevel_Error, stream, option,
+                    "From: %d, To: %d", from, to);
+                ASD_log_shift_to_from(ASD_LogLevel_Error, stream, option,
+                              number_of_bits, size_buffer2, buffer2, "Actual  ", from, to);
+                ASD_log_shift_to_from(ASD_LogLevel_Error, stream, option,
+                              number_of_bits, size_buffer1, buffer1, "Expected", from, to);
+            }
+        return false;
+    }
+    return true;
+}
+
 bool jtag_test(JTAG_Handler* jtag, uncore_info* uncore, jtag_test_args* args)
 {
-    unsigned char compare_data[MAX_TAPS_SUPPORTED * SIZEOF_ID_CODE + 8];
+    unsigned char expected_data[128];
+    unsigned char shift_in_data[128];
     unsigned int number_of_bits = 0;
-    struct timeval tval_before, tval_after, tval_result;
+    struct timeval tval_before, tval_after, tval_result, tval_after_loop;
     unsigned int i = 0, j = 0, iterations = 0;
-    uint64_t micro_seconds;
+    uint64_t micro_seconds, runtime_seconds;
     unsigned int total_bits = 0;
     unsigned char tdo[MAX_TDO_SIZE];
     size_t ir_size = ((uncore->numUncores * args->ir_shift_size) + 7) / 8;
     unsigned char ir_command[MAX_TDO_SIZE];
-    int cmp = 0;
-    int* random_pattern;
+    time_t seed = 0;
+    bool print_results;
     explicit_bzero(&ir_command, ir_size);
 
     // set IR command for each uncore found
@@ -604,34 +734,25 @@ bool jtag_test(JTAG_Handler* jtag, uncore_info* uncore, jtag_test_args* args)
     }
 
     // build compare data, which we will use to test each iterations success
-    explicit_bzero(compare_data, sizeof(compare_data));
-    if (memcpy_s(compare_data, sizeof(compare_data), uncore->idcode,
+    explicit_bzero(expected_data, sizeof(expected_data));
+    if (memcpy_s(expected_data, sizeof(expected_data), uncore->idcode,
                  4 * uncore->numUncores))
     {
         ASD_log(ASD_LogLevel_Error, ASD_LogStream_JTAG, ASD_LogOption_None,
-                "memcpy_s: uncore->idcode to compare_data copy failed.");
+                "memcpy_s: uncore->idcode to expected_data copy failed.");
         return false;
     }
 
-    // Init random engine
-    if (args->random_mode)
-    {
-        srand(time(NULL));
+    if (args->seed != 0) {
+        seed = args->seed;
+    } else {
+         seed = time(NULL);
     }
-    else
-    {
-        if (memcpy_s(&compare_data[(4 * uncore->numUncores)],
-                     sizeof(compare_data) - (4 * uncore->numUncores),
-                     args->tap_data_pattern, sizeof(args->tap_data_pattern)))
-        {
-            ASD_log(ASD_LogLevel_Error, ASD_LogStream_JTAG, ASD_LogOption_None,
-                    "memcpy_s: tap_data_pattern to compare_data copy failed.");
-            return false;
-        }
-    }
+    srand(seed);
+    ASD_log(ASD_LogLevel_Info, stream, option,
+        "Using Initial Seed Value of %ld for random patterns", seed);
 
     gettimeofday(&tval_before, NULL);
-
     for (iterations = 0; args->loop_forever || iterations < args->numIterations;
          iterations++)
     {
@@ -639,10 +760,10 @@ bool jtag_test(JTAG_Handler* jtag, uncore_info* uncore, jtag_test_args* args)
         {
             ASD_log(ASD_LogLevel_Error, stream, option,
                     "Unable to set the tap state to jtag_shf_ir.");
-            if (count_jtag_failure(args, iterations))
-                continue;
-            else
+            if (!count_jtag_failure(args, iterations))
+            {
                 return false;
+            }
         }
 
         number_of_bits = args->ir_shift_size * uncore->numUncores;
@@ -655,10 +776,10 @@ bool jtag_test(JTAG_Handler* jtag, uncore_info* uncore, jtag_test_args* args)
         {
             ASD_log(ASD_LogLevel_Error, stream, option,
                     "Unable to write IR for idcode.");
-            if (count_jtag_failure(args, iterations))
-                continue;
-            else
+            if (!count_jtag_failure(args, iterations))
+            {
                 return false;
+            }
         }
         total_bits += number_of_bits;
 
@@ -666,45 +787,63 @@ bool jtag_test(JTAG_Handler* jtag, uncore_info* uncore, jtag_test_args* args)
         {
             ASD_log(ASD_LogLevel_Error, stream, option,
                     "Unable to set the tap state to jtag_shf_dr.");
-            if (count_jtag_failure(args, iterations))
-                continue;
-            else
-                return false;
-        }
-
-        explicit_bzero(tdo, sizeof(tdo));
-
-        number_of_bits = (uncore->numUncores * args->dr_shift_size) +
-                         (sizeof(args->tap_data_pattern) * 8);
-
-        // Generate a pattern in random mode
-        if (args->random_mode)
-        {
-            random_pattern = (int*)args->tap_data_pattern;
-            random_pattern[0] = rand();
-            random_pattern[1] = rand();
-            if (memcpy_s(&compare_data[(4 * uncore->numUncores)],
-                         sizeof(compare_data) - (4 * uncore->numUncores),
-                         args->tap_data_pattern,
-                         sizeof(args->tap_data_pattern)))
+            if (!count_jtag_failure(args, iterations))
             {
-                ASD_log(ASD_LogLevel_Error, ASD_LogStream_JTAG,
-                        ASD_LogOption_None,
-                        "memcpy_s: random data to compare_data copy failed.");
                 return false;
             }
         }
 
-        if (JTAG_shift(jtag, number_of_bits, sizeof(args->tap_data_pattern),
-                       (unsigned char*)args->tap_data_pattern, sizeof(tdo),
+        explicit_bzero(tdo, sizeof(tdo));
+        //number_of_bits = (uncore->numUncores * args->dr_shift_size) +
+        //                 (sizeof(args->tap_data_pattern) * 8);
+
+        if(!apply_pattern(args->pattern_mode, args->tap_data_pattern, sizeof(args->tap_data_pattern),
+                        args->pattern, iterations, args->human_readable))
+        {
+            ASD_log(ASD_LogLevel_Error, stream, option,
+                "Stopping Execution!");
+            print_results = false;
+            break;
+        }
+        memset(shift_in_data, 0x00, sizeof(shift_in_data));
+        for (int u = 0; u < sizeof(expected_data); u += 8)
+        {
+            if ((sizeof(expected_data) - ((4 * uncore->numUncores) + u)) <= 4)
+                break;
+            if (memcpy_s(&expected_data[(4 * uncore->numUncores)+ u],
+                        sizeof(expected_data) - ((4 * uncore->numUncores) + u),
+                        args->tap_data_pattern, sizeof(args->tap_data_pattern)))
+            {
+                ASD_log(ASD_LogLevel_Error, ASD_LogStream_JTAG, ASD_LogOption_None,
+                        "memcpy_s: tap_data_pattern to expected_data copy failed.");
+                return false;
+            }
+            if (memcpy_s(&shift_in_data[u], sizeof(shift_in_data) - u,
+                        args->tap_data_pattern, sizeof(args->tap_data_pattern)))
+            {
+                ASD_log(ASD_LogLevel_Error, ASD_LogStream_JTAG, ASD_LogOption_None,
+                        "memcpy_s: tap_data_pattern to shift_in_data copy failed.");
+                return false;
+            }   
+        }
+
+        if (args->inject_error == true)
+        {
+            inject_error(shift_in_data, sizeof(shift_in_data), args->inject_error_byte, 5);  //bit 5 fixed
+        }
+
+        number_of_bits = sizeof(shift_in_data)*8; //1024 bits
+
+        if (JTAG_shift(jtag, number_of_bits, sizeof(shift_in_data),
+                       (unsigned char*)shift_in_data, sizeof(tdo),
                        (unsigned char*)&tdo, jtag_rti) != ST_OK)
         {
             ASD_log(ASD_LogLevel_Error, stream, option,
                     "Unable to read DR shift data.");
-            if (count_jtag_failure(args, iterations))
-                continue;
-            else
+            if (!count_jtag_failure(args, iterations))
+            {
                 return false;
+            }
         }
         total_bits += number_of_bits;
 
@@ -727,34 +866,38 @@ bool jtag_test(JTAG_Handler* jtag, uncore_info* uncore, jtag_test_args* args)
         }
         else
         {
-            memcmp_s(compare_data, sizeof(compare_data), tdo,
-                     (number_of_bits + 7) / 8, &cmp);
-            if (cmp != 0)
+            bool result = validate_data(expected_data, sizeof(expected_data),
+                            tdo, sizeof(tdo), number_of_bits, iterations);
+            if (!result)
             {
-                ASD_log(ASD_LogLevel_Error, stream, option,
-                        "TAP results comparison failed on iteration %d",
-                        iterations);
-                ASD_log_shift(ASD_LogLevel_Error, stream, option,
-                              number_of_bits, sizeof(tdo), tdo, "Actual");
-                ASD_log_shift(ASD_LogLevel_Error, stream, option,
-                              number_of_bits, sizeof(compare_data),
-                              compare_data, "Expected");
-                if (count_jtag_failure(args, iterations))
-                    continue;
-                else
+                if (!count_jtag_failure(args, iterations))
+                {
                     return false;
+                }
             }
         }
+        print_results = true;
         if (continue_loop == false)
             break;
+        gettimeofday(&tval_after_loop, NULL);
+        timersub(&tval_after_loop, &tval_before, &tval_result);
+        runtime_seconds = (double)tval_result.tv_sec + (double)tval_result.tv_usec / 1000000.0;
+        if (runtime_seconds == args->runTime && args->loop_forever)
+        {
+            break;
+        }
+        
     } // end iterations loop
-
+    if (!print_results)
+        return false;
+    ASD_log_shift(ASD_LogLevel_Info, stream, option, 64, 8,
+        &tdo[uncore->numUncores * 4], "jtag test Overshift");
     gettimeofday(&tval_after, NULL);
     timersub(&tval_after, &tval_before, &tval_result);
     micro_seconds = ((uint64_t)tval_result.tv_sec * (uint64_t)1000000) +
                     (uint64_t)tval_result.tv_usec;
 
-    print_test_results(iterations, micro_seconds, total_bits, failures);
+    print_test_results(iterations, micro_seconds, total_bits);
 
     return true;
 }
@@ -784,7 +927,7 @@ void shift_right(unsigned char* buffer, size_t buffer_size)
 }
 
 void print_test_results(uint64_t iterations, uint64_t micro_seconds,
-                        uint64_t total_bits, uint64_t failures)
+                        uint64_t total_bits)
 {
     ASD_log(ASD_LogLevel_Info, stream, option, "Total bits: %llu", total_bits);
     ASD_log(ASD_LogLevel_Info, stream, option, "Seconds elapsed: %f",
@@ -801,12 +944,12 @@ void print_test_results(uint64_t iterations, uint64_t micro_seconds,
 
     if (failures == 0)
         ASD_log(ASD_LogLevel_Info, stream, option,
-                "Successfully finished %llu iteration%s of idcode with 64 "
+                "Successfully finished %llu iteration%s of idcode with %llu "
                 "bits of over-shifted data.",
-                iterations, iterations > 1 ? "s" : "");
+                iterations, iterations > 1 ? "s" : "", total_bits);
     else
         ASD_log(ASD_LogLevel_Info, stream, option,
-                "Finished %llu iteration%s of idcode with 64 bits of "
+                "Finished %llu iteration%s of idcode with %llu bits of "
                 "over-shifted data. A total of %llu failed",
-                iterations, iterations > 1 ? "s" : "", failures);
+                iterations, iterations > 1 ? "s" : "", failures, total_bits);
 }

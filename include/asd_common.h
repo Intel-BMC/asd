@@ -48,7 +48,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 // Two simple rules for the version string are:
 // 1. less than 255 in length (or it will be truncated in the plugin)
 // 2. no dashes, as they are used later up the sw stack between components.
-static char asd_version[] = "ASD_BMC_v1.6.2";
+static char asd_version[] = "ASD_BMC_v1.6.3";
 
 #define TO_ENUM(ENUM) ENUM,
 #define TO_STRING(STRING) #STRING,
@@ -426,6 +426,12 @@ typedef struct asd_i2c_msg
 //  Used in stub mode to receive simulation data from the plugin.
 #define SPP_SET_SIM_DATA_CMD 0x50
 #define SPP_SET_SIM_DATA_CMD_COMMAND_SIZE 3
+
+#define SPP_BULK 0x60
+#define SPP_BULK_COMMAND_SIZE 2
+
+//  SPPBulk         01100000        SPP_BULK ID code
+//                  ssssssss        Bulk SPP packets count
 
 #define SPP_XFER_LENGTH_MSB_MASK 0x0F
 #define SPP_XFER_LENGTH_LSB_MASK 0xFF

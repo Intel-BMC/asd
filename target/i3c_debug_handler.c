@@ -157,14 +157,19 @@ ssize_t receive_i3c(SPP_Handler* state, i3c_cmd *cmd)
     struct i3c_get_event_data event_data;
 
     read_ret = rx_i3c(state->spp_driver_handle, cmd->rx_buffer, cmd->read_len);
-    cmd->read_len = read_ret;
 
-    debug_i3c_rx(cmd, state->device_index);
+    if (read_ret >= 0) {
+        cmd->read_len = read_ret;
+        debug_i3c_rx(cmd, state->device_index);
+    } else {
+        cmd->read_len = 0;
+    }
+
     return read_ret;
 }
 
-STATUS i3c_ibi_handler(int fd, uint8_t* ibi_buffer, size_t* ibi_len,
-                        int device_index)
+STATUS i3c_ibi_handler(SPP_Handler* state, int fd, uint8_t* ibi_buffer,
+                       size_t* ibi_len, int device_index)
 {
     struct i3c_get_event_data event_data;
 
@@ -196,8 +201,14 @@ STATUS i3c_ibi_handler(int fd, uint8_t* ibi_buffer, size_t* ibi_len,
                        ibi_buffer, event_data.data_len, infoStr);
         if (*ibi_len >= 2 &&
             (ibi_buffer[0] == SPP_IBI_STATUS_CHANGED) &&
+            (ibi_buffer[1] == SPP_IBI_SUBREASON_BUFFER_THRESHOLD))
+        {
+            state->threshold_status[device_index] = false;
+        }
+        else if (*ibi_len >= 2 && state->bulk_mode &&
+            (ibi_buffer[0] == SPP_IBI_DATA_READY) &&
             (ibi_buffer[1] == SPP_IBI_SUBREASON_BUFFER_THRESHOLD)) {
-            spp_threshold_status[device_index] = false;
+            state->bulk_autocmd_count[state->device_index]--;
         }
     }
     return ST_OK;

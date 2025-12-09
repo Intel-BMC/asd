@@ -46,8 +46,8 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #define SPP_IBI_SUBREASON_OVERFLOW 0xFF
 #define SPP_IBI_PRDY_WAIT_TIMEOUT_MS 10
 #define SPP_IBI_BUFFER_HANDSHAKE_TIMEOUT_MS 10
-
-extern bool spp_threshold_status[MAX_SPP_BUS_DEVICES];
+#define SPP_BULK_RESPONSE_IBI_MAX_COUNT 255
+#define BUFFER_SIZE_MAX 255
 
 typedef uint16_t __u16;
 typedef uint8_t __u8;
@@ -72,6 +72,9 @@ typedef struct SPP_Handler
     uint8_t device_index;
     int spp_driver_handle;
     bool ibi_handled;
+    bool threshold_status[MAX_SPP_BUS_DEVICES];
+    bool bulk_mode;
+    uint8_t bulk_autocmd_count[MAX_SPP_BUS_DEVICES];
 } SPP_Handler;
 
 SPP_Handler* SPPHandler(bus_config* config);
@@ -85,6 +88,7 @@ STATUS spp_bus_device_count(SPP_Handler* state, uint8_t * count);
 STATUS spp_bus_get_device_map(SPP_Handler* state, uint32_t * device_mask);
 STATUS spp_device_select(SPP_Handler* state, uint8_t device);
 STATUS spp_send(SPP_Handler* state, uint16_t size, uint8_t * write_buffer);
+STATUS spp_receive_autocommand(SPP_Handler* state, uint16_t* size, uint8_t* read_buffer);
 STATUS spp_receive(SPP_Handler* state, uint16_t * size, uint8_t * read_buffer);
 STATUS spp_send_cmd(SPP_Handler* state, spp_command_t cmd, uint16_t size, 
                     uint8_t * write_buffer);
@@ -94,4 +98,5 @@ STATUS spp_send_receive_cmd(SPP_Handler* state, spp_command_t cmd,
                             const uint16_t * rsize, uint8_t * read_buffer);
 STATUS spp_set_sim_data_cmd(SPP_Handler* state, uint16_t size, uint8_t * read_buffer);
 bool check_spp_prdy_event(ASD_EVENT event, ASD_EVENT_DATA event_data);
+bool check_spp_auto_cmd_event(ASD_EVENT event, ASD_EVENT_DATA event_data);
 #endif // _SPP_HANDLER_H_

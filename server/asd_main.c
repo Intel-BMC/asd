@@ -52,6 +52,16 @@ static void send_remote_log_message(ASD_LogLevel asd_level,
                                     ASD_LogStream asd_stream,
                                     const char* message);
 
+bool is_auto_sync_remote_logging_enabled(void)
+{
+    return main_state.args.auto_sync_remote_logging;
+}
+
+ASD_LogStream get_auto_sync_remote_logging_streams(void)
+{
+    return main_state.args.auto_sync_remote_logging_streams;
+}
+
 #ifndef UNIT_TEST_MAIN
 int main(int argc, char** argv)
 {
@@ -117,6 +127,10 @@ bool validateCharInputs(char* input, char* bad_char, bool alphabetUpper,
             {
                 goodValues = true;
             }
+            else if (dash && (input[i] == '_'))
+            {
+                goodValues = true;
+            }
             else
             {
                 *bad_char = input[i];
@@ -144,6 +158,8 @@ bool process_command_line(int argc, char** argv, asd_args* args)
     args->use_syslog = DEFAULT_LOG_TO_SYSLOG;
     args->log_level = DEFAULT_LOG_LEVEL;
     args->log_streams = DEFAULT_LOG_STREAMS;
+    args->auto_sync_remote_logging = false;
+    args->auto_sync_remote_logging_streams = ASD_LogStream_All;
     args->session.n_port_number = DEFAULT_PORT;
     args->session.cp_certkeyfile = DEFAULT_CERT_FILE;
     args->session.cp_net_bind_device = NULL;
@@ -161,7 +177,8 @@ bool process_command_line(int argc, char** argv, asd_args* args)
         ARG_LOG_TIMESTAMP,
         ARG_HELP,
         ARG_XDP,
-        ARG_TIMEOUT
+        ARG_TIMEOUT,
+        ARG_AUTO_SYNC_REMOTE_LOG
     };
 
     struct option opts[] = {
@@ -170,6 +187,7 @@ bool process_command_line(int argc, char** argv, asd_args* args)
         {"log-streams", 1, NULL, ARG_LOG_STREAMS},
         {"log-time", 0, NULL, ARG_LOG_TIMESTAMP},
         {"idle-timeout", 1, NULL, ARG_TIMEOUT},
+        {"auto-sync-log", 1, NULL, ARG_AUTO_SYNC_REMOTE_LOG},
         {"help", 0, NULL, ARG_HELP},
         {NULL, 0, NULL, 0},
     };
@@ -354,7 +372,7 @@ bool process_command_line(int argc, char** argv, asd_args* args)
                                         true, false))
                 {
                     fprintf(stderr,
-                            "Invalid character in spp bus list: %c.\n",
+                            "Invalid character in i3c_dbg bus list: %c.\n",
                             ch);
                     showUsage(argv);
                     return false;
@@ -366,12 +384,12 @@ bool process_command_line(int argc, char** argv, asd_args* args)
                     bus = (uint8_t)strtol(pch, &endptr, 10);
                     if ((errno == ERANGE) || (endptr == pch))
                     {
-                        fprintf(stderr, "Wrong SPP bus list arguments(-d)\n");
+                        fprintf(stderr, "Wrong i3c_dbg bus list arguments(-d)\n");
                         break;
                     }
                     if (spp_counter >= MAX_SPP_BUSES)
                     {
-                        fprintf(stderr, "Discard SPP bus: %d\n", bus);
+                        fprintf(stderr, "Discard i3c_dbg bus: %d\n", bus);
                     }
                     else
                     {
@@ -380,7 +398,7 @@ bool process_command_line(int argc, char** argv, asd_args* args)
                             args->busopt.bus = bus;
                             first_spp = false;
                         }
-                        fprintf(stderr, "Enabling I3C(SPP) bus: %d\n", bus);
+                        fprintf(stderr, "Enabling i3c_dbg bus: %d\n", bus);
                         spp_bus_index = MAX_IxC_BUSES + spp_counter;
                         args->busopt.bus_config_type[spp_bus_index] =
                             BUS_CONFIG_SPP;
@@ -420,7 +438,7 @@ bool process_command_line(int argc, char** argv, asd_args* args)
             case ARG_LOG_STREAMS:
             {
                 char ch = 0;
-                if(!validateCharInputs(optarg, &ch, true, true, false, false,
+                if(!validateCharInputs(optarg, &ch, true, true, true, false,
                                         true, true))
                 {
                     fprintf(stderr,
@@ -440,6 +458,21 @@ bool process_command_line(int argc, char** argv, asd_args* args)
             {
                 args->log_timestamp_enable = true;
                 fprintf(stderr, "Logging timestamp\n");
+                break;
+            }
+            case ARG_AUTO_SYNC_REMOTE_LOG:
+            {
+                args->auto_sync_remote_logging = true;
+                if (strtostreams(optarg, &args->auto_sync_remote_logging_streams))
+                {
+                    fprintf(stderr, "Auto-sync remote logging enabled for streams: %s\n", optarg);
+                }
+                else
+                {
+                    fprintf(stderr, "Error: Invalid stream provided: %s\n", optarg);
+                    showUsage(argv);
+                    return false;
+                }
                 break;
             }
             case ARG_TIMEOUT:
@@ -500,7 +533,7 @@ void showUsage(char** argv)
         "              The first bus will be used as default bus.\n"
         "              The total number of i2c/i3c bus assignments cannot\n"
         "              exceed %d buses.\n"
-        "  -d <buses>  Decimal i3c debug(SPP) allowed bus list(default: none)\n"
+        "  -d <buses>  Decimal i3c_dbg allowed bus list(default: none)\n"
         "              Use comma to enable multiple i3c buses: -d 0,1,2,3\n"
         "              The first bus will be used as default bus.\n"
         "              The total number of i3c bus assignments cannot exceed\n"
@@ -521,7 +554,7 @@ void showUsage(char** argv)
         "                               %s\n"
         "  --log-streams=<streams>    Specify Logging Streams (default: %s)\n"
         "                             Multiple streams can be comma "
-        "separated.\n"
+        "                             separated.\n"
         "                             Streams:\n"
         "                               %s\n"
         "                               %s\n"
@@ -533,6 +566,11 @@ void showUsage(char** argv)
         "                               %s\n"
         "                               %s\n"
         "  --log-time                 Include timestamps on logs.\n"
+        "  --auto-sync-log=STREAMS    Auto-sync local logging with remote logging\n"
+        "                             settings for specified streams.\n"
+        "                             STREAMS is a comma-separated list.\n"
+        "                             Available: network,jtag,pins,i2c,test,daemon,\n"
+        "                             sdk,i3c_dbg,all\n"
         "  --help                     Show this list\n"
         "\n"
         "Examples:\n"
@@ -541,6 +579,9 @@ void showUsage(char** argv)
         "     asd --log-level=trace --log-streams=daemon,jtag\n"
         "Enable i2c bus 2 and bus 9.\n"
         "     asd -i 2,9\n"
+        "\n"
+        "Enable auto-sync for network and jtag streams only.\n"
+        "     asd --auto-sync-log=network,jtag\n"
         "\n"
         "Default logging, only listen on eth0.\n"
         "     asd -n eth0\n"
@@ -1172,7 +1213,7 @@ STATUS on_client_connect(asd_state* state, extnet_conn_t* p_extcon)
                 if (target_bus_options.bus_config_type[i] == BUS_CONFIG_SPP)
                 {
                     ASD_log(ASD_LogLevel_Error, ASD_LogStream_Daemon,
-                            ASD_LogOption_No_Remote, "Enabling SPP bus: %d",
+                            ASD_LogOption_No_Remote, "Enabling i3c_dbg bus: %d",
                             target_bus_options.bus_config_map[i]);
                 }
             }

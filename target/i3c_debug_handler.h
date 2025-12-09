@@ -98,8 +98,8 @@ ssize_t receive_i3c(SPP_Handler* state, i3c_cmd *cmd);
 void debug_i3c_rx(i3c_cmd*, int device_index);
 void debug_i3c_tx(i3c_cmd* cmd, int device_index);
 STATUS send_i3c_cmd(SPP_Handler* state, i3c_cmd *cmd);
-STATUS i3c_ibi_handler(int fd, uint8_t* ibi_buffer, size_t* ibi_len,
-                       int device_index);
+STATUS i3c_ibi_handler(SPP_Handler* state, int fd, uint8_t* ibi_buffer,
+                       size_t* ibi_len, int device_index);
 
 
 #endif // I3C_DEBUG_HANDLER_H

@@ -311,6 +311,32 @@ void ASD_initialize_log_settings(ASD_LogLevel level, ASD_LogStream stream,
     asd_log_streams = stream;
 }
 
+void ASD_update_log_settings(ASD_LogLevel level, ASD_LogStream stream)
+{
+    asd_log_level = level;
+    asd_log_streams = stream;
+}
+
+
+ASD_LogLevel convert_remote_log_level(uint8_t remote_level)
+{
+    switch (remote_level)
+    {
+        case 0: return ASD_LogLevel_Trace;
+        case 1: return ASD_LogLevel_Debug;
+        case 2: return ASD_LogLevel_Info;
+        case 3: return ASD_LogLevel_Warning;
+        case 4: return ASD_LogLevel_Error;
+        case 5: return ASD_LogLevel_Off;
+        default: return ASD_LogLevel_Error;
+    }
+}
+
+ASD_LogStream convert_remote_log_stream(uint8_t remote_stream)
+{
+    return ASD_LogStream_All;
+}
+
 #define STRTOLEVELMAX 10
 bool strtolevel(char* input, ASD_LogLevel* output)
 {
@@ -441,7 +467,7 @@ bool strtostreams(char* input, ASD_LogStream* output)
                         result = true;
                         break;
                     }
-                    strcmp_s(temp, STRTOSTREAMMAX, "spp", &cmp);
+                    strcmp_s(temp, STRTOSTREAMMAX, "i3c_dbg", &cmp);
                     if (cmp == 0)
                     {
                         *output |= ASD_LogStream_SPP;

@@ -15,10 +15,6 @@ include_directories (${SAFEC_INCLUDE_DIRS})
 link_directories (${SAFEC_LIBRARY_DIRS})
 
 #
-# Enable Cmake Tests
-enable_testing()
-
-#
 # Include code coverage
 set(CMAKE_MODULE_PATH ${CMAKE_SOURCE_DIR}/cmake)
 include(CodeCoverage)
@@ -50,17 +46,18 @@ add_executable(jtag_test_tests
 set_property(TARGET jtag_test_tests PROPERTY C_STANDARD 99)
 target_link_libraries(
   jtag_test_tests ${CMOCKA_LIBRARIES} pthread -fprofile-arcs -ftest-coverage -lm ${SAFEC_LIBRARIES})
-add_test(jtag_test_tests jtag_test_tests)
+add_test(NAME jtag_test_tests COMMAND jtag_test_tests WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 set_target_properties(
   jtag_test_tests
   PROPERTIES
     LINK_FLAGS
-    " -Wl,--wrap=ASD_log -Wl,--wrap=ASD_log_buffer -Wl,--wrap=ASD_log_shift \
-        -Wl,--wrap=strtolevel -Wl,--wrap=strtostreams -Wl,--wrap=JTAGHandler \
-        -Wl,--wrap=JTAG_initialize -Wl,--wrap=JTAG_deinitialize -Wl,--wrap=JTAG_set_tap_state \
-        -Wl,--wrap=JTAG_shift -Wl,--wrap=JTAG_set_jtag_tck \
-        -Wl,--wrap=_memcpy_s_chk \
-        -Wl,--wrap=ASD_initialize_log_settings"
+      "-Wl,--wrap=ASD_log -Wl,--wrap=ASD_log_buffer -Wl,--wrap=ASD_log_shift \
+      -Wl,--wrap=ASD_log_shift_to_from -Wl,--wrap=strtolevel \
+      -Wl,--wrap=strtostreams -Wl,--wrap=JTAGHandler \
+      -Wl,--wrap=JTAG_initialize -Wl,--wrap=JTAG_deinitialize \
+      -Wl,--wrap=JTAG_set_tap_state -Wl,--wrap=JTAG_shift \
+      -Wl,--wrap=JTAG_set_jtag_tck -Wl,--wrap=_memcpy_s_chk \
+      -Wl,--wrap=ASD_initialize_log_settings"
   )
 
 #

@@ -24,8 +24,8 @@ CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
-#ifndef _SPP_TEST_H_
-#define _SPP_TEST_H_
+#ifndef _I3C_DBG_TEST_H_
+#define _I3C_DBG_TEST_H_
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -82,7 +82,8 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #define Opcode_LoopTrigSystem 9
 
 #define bpk_engine 0
-#define use_interrupt 1
+#define use_polling 1
+#define use_interrupt 3
 #define SP_VERSIONS 0x0
 #define SP_IDCODE 0x4
 #define SP_PROD_ID 0x20
@@ -192,8 +193,9 @@ typedef struct jtag_cmd
     uint32_t size_of_payload;
 } jtag_cmd;
 
-typedef struct spp_test_args
+typedef struct i3c_dbg_test_args
 {
+    bool autocmd_mode;
     unsigned long long int human_readable;
     unsigned int ir_shift_size;
     bool loop_forever;
@@ -215,7 +217,7 @@ typedef struct spp_test_args
     unsigned int runTime;
     ASD_LogLevel log_level;
     ASD_LogStream log_streams;
-} spp_test_args;
+} i3c_dbg_test_args;
 
 typedef struct uncore_info
 {
@@ -265,38 +267,39 @@ typedef struct bpk_cmd
     uint8_t tranByteCount;
 }bpk_cmd;
 STATUS clean_previous_read(SPP_Handler* state);
-STATUS spp_test_main(int argc, char** argv);
-STATUS spp_test(SPP_Handler* state, uncore_info* uncore, spp_test_args* args);
+STATUS i3c_dbg_test_main(int argc, char** argv);
+STATUS i3c_dbg_test(SPP_Handler* state, uncore_info* uncore, i3c_dbg_test_args* args);
 void print_test_results(uint64_t iterations, uint64_t micro_seconds,
                         uint64_t total_bits);
 void interrupt_handler(int dummy);
-STATUS parse_arguments(int argc, char** argv, spp_test_args* args);
+STATUS parse_arguments(int argc, char** argv, i3c_dbg_test_args* args);
 void showUsage(char** argv);
-STATUS initialize_bpk(SPP_Handler* state);
-STATUS disconnect_bpk(SPP_Handler* state);
-STATUS configure_bpk(SPP_Handler* state, spp_test_args* args);
+STATUS initialize_bpk(SPP_Handler* state, i3c_dbg_test_args* args);
+STATUS disconnect_bpk(SPP_Handler* state, i3c_dbg_test_args* args);
+STATUS configure_bpk(SPP_Handler* state, i3c_dbg_test_args* args);
 unsigned int find_pattern(const unsigned char* haystack,
                           unsigned int haystack_size,
                           const unsigned char* needle,
                           unsigned int needle_size);
-STATUS discovery(SPP_Handler* state, uncore_info* uncore, spp_test_args* args);
+STATUS discovery(SPP_Handler* state, uncore_info* uncore, i3c_dbg_test_args* args);
 STATUS capabilities_ccc( SPP_Handler* state);
 STATUS start_ccc(SPP_Handler* state, uint8_t comportIndex);
 STATUS start_debugAction(SPP_Handler* state);
 STATUS select_ccc(SPP_Handler* state, uint8_t comportIndex);
 STATUS cfg_ccc(SPP_Handler* state, uint8_t int_type);
-STATUS initialize_sp_engine(SPP_Handler* state);
-STATUS read_sp_config_cmd(SPP_Handler* state, uint32_t address, uint8_t* output, uint8_t* read_len);
-STATUS write_sp_config_cmd(SPP_Handler* state, uint32_t address, uint32_t write_value, uint8_t* output, uint8_t* read_len);
-STATUS write_system_cmd(SPP_Handler* state, struct jtag_cmd jtag, uint8_t* output, uint8_t* read_len);
-STATUS write_read_system_cmd(SPP_Handler* state, struct jtag_cmd jtag, uint8_t* output, uint8_t* read_len);
-STATUS reset_jtag_to_rti_spp(SPP_Handler* state);
+STATUS initialize_sp_engine(SPP_Handler* state, i3c_dbg_test_args* args);
+STATUS read_sp_config_cmd(SPP_Handler* state, uint32_t address, uint8_t* output, uint16_t* read_len, i3c_dbg_test_args* args);
+STATUS write_sp_config_cmd(SPP_Handler* state, uint32_t address, uint32_t write_value, uint8_t* output,
+                            uint16_t* read_len, i3c_dbg_test_args* args);
+STATUS write_system_cmd(SPP_Handler* state, struct jtag_cmd jtag, uint8_t* output, uint16_t* read_len, i3c_dbg_test_args* args);
+STATUS write_read_system_cmd(SPP_Handler* state, struct jtag_cmd jtag, uint8_t* output, uint16_t* read_len, i3c_dbg_test_args* args);
+STATUS reset_jtag_to_rti_spp(SPP_Handler* state, i3c_dbg_test_args* args);
 STATUS jtag_shift_spp(SPP_Handler* state, enum jtag_states next_state,
                       unsigned int number_of_bits,
                       unsigned int input_bytes, unsigned char* input,
                       unsigned int output_bytes, unsigned char* output,
-                      enum jtag_states end_tap_state);
+                      enum jtag_states end_tap_state, i3c_dbg_test_args* args);
 uint8_t spp_generate_payload(struct bpk_cmd bpk_cmd, uint8_t* payload);
 uint16_t decode_rx_packet(ssize_t payload_size, uint8_t* payload, uint8_t* output);
 int32_t array_into_value(uint8_t* buffer);
-#endif // _SPP_TEST_H_
+#endif // _I3C_DBG_TEST_H_

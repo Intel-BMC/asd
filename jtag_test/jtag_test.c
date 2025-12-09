@@ -70,7 +70,8 @@ const ir_shift_size_map ir_map[] = {{0x0E7BB013, IR14_SHIFT_SIZE},
                                     {0x00125113, IR16_SHIFT_SIZE},
                                     {0x00138113, IR12_SHIFT_SIZE},
                                     {0x0E7D4113, IR08_SHIFT_SIZE},
-                                    {0x0012d113, IR16_SHIFT_SIZE}};
+                                    {0x0012d113, IR16_SHIFT_SIZE},
+                                    {0x00168113, IR12_SHIFT_SIZE}};
 
 #define MAP_LINE_SIZE 58
 char ir_size_map_str[((sizeof(ir_map)/sizeof(ir_shift_size_map)) + 6) * MAP_LINE_SIZE];

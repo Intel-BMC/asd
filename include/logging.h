@@ -29,6 +29,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #define _LOGGING_H_
 
 #include <stdbool.h>
+#include <stdint.h>
 #include <stdlib.h>
 
 #define ENABLE_DEBUG_LOGGING
@@ -100,6 +101,12 @@ void ASD_initialize_log_settings(ASD_LogLevel level, ASD_LogStream stream,
                                  ShouldLogFunctionPtr should_log_ptr,
                                  LogFunctionPtr log_ptr);
 
+void ASD_update_log_settings(ASD_LogLevel level, ASD_LogStream stream);
+
+ASD_LogLevel convert_remote_log_level(uint8_t remote_level);
+
+ASD_LogStream convert_remote_log_stream(uint8_t remote_stream);
+
 bool strtolevel(char* input, ASD_LogLevel* output);
 
 bool strtostreams(char* input, ASD_LogStream* output);
@@ -124,7 +131,7 @@ static inline char* streamtostring(ASD_LogStream stream)
     if (stream == ASD_LogStream_SDK)
         return "SDK";
     if (stream == ASD_LogStream_SPP)
-        return "SPP";
+        return "I3C_DBG";
     if (stream == ASD_LogStream_All)
         return "All";
     return "Unknown-Stream";

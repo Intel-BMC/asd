@@ -44,6 +44,12 @@ typedef struct jtag_config
     bool xdp_fail_enable;
 } jtag_config;
 
+typedef struct spp_config
+{
+    bool bulk_send_enable;
+    bool bulk_response_enable;
+} spp_config;
+
 typedef struct bus_config
 {
     bool enable_i2c;
@@ -57,6 +63,7 @@ typedef struct bus_config
 typedef struct config
 {
     jtag_config jtag;
+    spp_config spp;
     remote_logging_config remote_logging;
     IPC_LogType ipc_asd_log_map[6];
     bus_config buscfg;

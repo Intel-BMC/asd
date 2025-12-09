@@ -809,7 +809,7 @@ STATUS dbus_get_platform_bus_config(const Dbus_Handle* state,
     static char interface[MAX_PLATFORM_PATH_SIZE] = {0};
     explicit_bzero(interface, sizeof(interface));
 
-    // Read i2c/i3c/spp bus config from BusConfig entry inside ASD object
+    // Read i2c/i3c/i3c_dbg bus config from BusConfig entry inside ASD object
     for (int i = 0, j = 0, k = 0; i < MAX_IxC_BUSES + MAX_SPP_BUSES; i++)
     {
         str = NULL;
@@ -904,10 +904,23 @@ STATUS dbus_get_platform_bus_config(const Dbus_Handle* state,
                     }
                     else
                     {
-                        ASD_log(ASD_LogLevel_Debug, stream, option,
-                                "Unknown bus config type");
-                        status = ST_ERR;
-                        break;
+                        strcmp_s(str, MAX_FIELD_NAME_SIZE,
+                             BUS_CONFIG_TYPE_STRINGS[BUS_CONFIG_I3C_DBG], &cmp);
+                        if (cmp == 0)
+                        {
+                            busopt->bus_config_map[MAX_IxC_BUSES + k] = (uint8_t)bus;
+                            busopt->bus_config_type[MAX_IxC_BUSES + k++] = BUS_CONFIG_SPP;
+                            if (!busopt->enable_spp)
+                            {
+                                busopt->enable_spp = true;
+                                busopt->bus = (uint8_t)bus;
+                            }
+                        } else {
+                            ASD_log(ASD_LogLevel_Error, stream, option,
+                                    "Unknown bus config type");
+                            status = ST_ERR;
+                            break;
+                        }
                     }
                 }
             }

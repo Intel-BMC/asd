@@ -1,5 +1,5 @@
 /*
-Copyright (c) 2023, Intel Corporation
+Copyright (c) 2025, Intel Corporation
 
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are met:
@@ -25,44 +25,10 @@ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
-#include "config.h"
 
-#include <stdint.h>
-#include <stdlib.h>
+#ifndef SPP_MOCK_H
+#define SPP_MOCK_H
+void prepare_buffer_read(uint8_t *read_buffer, size_t size, int index);
+void reset_mock_data();
+#endif //SPP_MOCK_H
 
-#include "logging.h"
-
-STATUS set_config_defaults(config* config, const bus_options* opt, const timeout_config* tmo_cfg)
-{
-    if (config == NULL || opt == NULL || tmo_cfg== NULL)
-    {
-        return ST_ERR;
-    }
-    config->jtag.mode = JTAG_DRIVER_MODE_SOFTWARE;
-    config->jtag.chain_mode = JTAG_CHAIN_SELECT_MODE_SINGLE;
-    config->remote_logging.logging_level = IPC_LogType_Off;
-    config->remote_logging.logging_stream = 0;
-    config->buscfg.enable_i2c = opt->enable_i2c;
-    config->buscfg.enable_i3c = opt->enable_i3c;
-    config->buscfg.enable_spp = opt->enable_spp;
-    config->buscfg.default_bus = opt->bus;
-    config->timecfg.is_timeout_enabled=tmo_cfg->is_timeout_enabled;
-    config->timecfg.idle_timeout=tmo_cfg->idle_timeout;
-    for (int i = 0; i < MAX_IxC_BUSES + MAX_SPP_BUSES; i++)
-    {
-        if (opt->enable_i2c || opt->enable_i3c || opt->enable_spp)
-        {
-            config->buscfg.bus_config_type[i] = opt->bus_config_type[i];
-            config->buscfg.bus_config_map[i] = opt->bus_config_map[i];
-        }
-        else
-        {
-            config->buscfg.bus_config_type[i] = BUS_CONFIG_NOT_ALLOWED;
-            config->buscfg.bus_config_map[i] = 0;
-        }
-    }
-    config->spp.bulk_send_enable = false;
-    config->spp.bulk_response_enable = false;
-
-    return ST_OK;
-}

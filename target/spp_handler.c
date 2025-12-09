@@ -39,7 +39,6 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "logging.h"
 unsigned int fail_read_counter = 0;
-bool spp_threshold_status[MAX_SPP_BUS_DEVICES] = { false };
 
 #define SPP_DEV_FILE_NAME "/dev/i3c-debug"
 #define MAX_SPP_DEV_FILENAME 256
@@ -73,8 +72,10 @@ SPP_Handler* SPPHandler(bus_config* config)
         for (int i = 0; i < MAX_SPP_BUS_DEVICES; i++)
         {
             state->spp_dev_handlers[i] = UNINITIALIZED_SPP_DEBUG_DRIVER_HANDLE;
-            spp_threshold_status[i] = false;
+            state->threshold_status[i] = false;
+            state->bulk_autocmd_count[i] = 0;
         }
+        state->bulk_mode = false;
         state->spp_device_count = 0;
         state->device_index = 0;
         state->config = config;
@@ -115,11 +116,101 @@ STATUS spp_send(SPP_Handler* state, uint16_t size, uint8_t * write_buffer)
     cmd.msgType = sppPayload;
     cmd.tx_buffer = write_buffer;
     cmd.write_len = size;
-    spp_threshold_status[state->device_index] = true;
+    state->threshold_status[state->device_index] = true;
+
+    if (state->bulk_mode)
+    {
+        state->bulk_autocmd_count[state->device_index]++;
+    }
+
     return send_i3c_cmd(state, &cmd);
 }
 
-STATUS spp_receive(SPP_Handler* state, uint16_t * size, uint8_t * read_buffer)
+
+STATUS spp_receive_autocommand(SPP_Handler* state, uint16_t* size, uint8_t* read_buffer)
+{
+    ASD_log(ASD_LogLevel_Info, stream, option, "ASD spp_receive_autocommand[%d]",
+            state->device_index);
+    struct pollfd debug_poll_fd;
+    uint8_t event_buffer[64] = {0};
+    debug_poll_fd.fd = state->spp_driver_handle;
+    debug_poll_fd.events = POLLIN;
+    struct i3c_get_event_data event_data;
+    for (;;)
+    {
+        int ret = poll(&debug_poll_fd, 1, 1000);
+        if (ret < 0)
+        {
+            ASD_log(ASD_LogLevel_Error, stream, option,
+                    "Error while polling");
+            return ST_ERR;
+        }
+        if (ret == 0)
+        {
+            ASD_log(ASD_LogLevel_Error, stream, option,
+                    "Timeout waiting for IBI");
+            return ST_ERR;
+        }
+        if ((debug_poll_fd.revents & POLLIN) == POLLIN)
+        {
+            event_data.data_len = (uint16_t)(sizeof(event_buffer));
+            event_data.data_ptr = (uintptr_t)event_buffer;
+            ret = ioctl(state->spp_driver_handle, I3C_DEBUG_IOCTL_GET_EVENT_DATA,
+                            (int32_t*)&event_data);
+            ASD_log(ASD_LogLevel_Info, stream, option,
+                    "Ioctl get event data status: %i, errno=%i", ret,errno);
+            if (ret < 0)
+            {
+                ASD_log(ASD_LogLevel_Error, stream, option,
+                    "Failed to send Get Event Data ioctl");
+                return ST_ERR;
+            }
+            else
+            {
+                *size = event_data.data_len;
+                ASD_log(ASD_LogLevel_Debug, stream, option, "*size %d", *size);
+                if (*size > BUFFER_SIZE_MAX)
+                {
+                    ASD_log(ASD_LogLevel_Error, stream, option,
+                            "Received data size exceeds buffer size");
+                    *size = BUFFER_SIZE_MAX;
+                }
+                else if (
+                    (event_buffer[0] == SPP_IBI_STATUS_CHANGED) &&
+                    (event_buffer[1] == SPP_IBI_SUBREASON_BUFFER_THRESHOLD))
+                {
+                    ASD_log(ASD_LogLevel_Debug, stream, option, "IBI with Status Changed");
+                }
+                else if (*size > 2 &&
+                    (event_buffer[0] == SPP_IBI_DATA_READY) &&
+                    (event_buffer[1] == SPP_IBI_SUBREASON_BUFFER_THRESHOLD))
+                    {
+                        *size = *size - 2;
+                        ASD_log(ASD_LogLevel_Debug, stream, option, "IBI with Data Ready");
+                        if(memcpy_s(read_buffer, BUFFER_SIZE_MAX, event_buffer + 2, *size))
+                        {
+                            ASD_log(ASD_LogLevel_Error, stream, option,
+                                    "memcpy_s: uncore->idcode to compare_data copy failed.");
+                            return ST_ERR;
+                        }
+                        ASD_log_buffer(ASD_LogLevel_Debug, ASD_LogStream_SPP, ASD_LogOption_None,
+                                        read_buffer, *size, "[IBI]");
+                    }
+                else
+                {
+                    ASD_log(ASD_LogLevel_Debug, stream, option, "Unknown IBI with size %d", *size);
+                    ASD_log_buffer(ASD_LogLevel_Debug, ASD_LogStream_SPP, ASD_LogOption_None,
+                                    read_buffer, *size, "[IBI]");
+                    return ST_ERR;
+                }
+            }
+            break;
+        }
+    }
+    return ST_OK;
+}
+
+STATUS spp_receive(SPP_Handler* state, uint16_t* size, uint8_t* read_buffer)
 {
     ASD_log(ASD_LogLevel_Info, stream, option, "ASD spp_receive[%d]",
             state->device_index);
@@ -316,7 +407,7 @@ STATUS spp_bus_flock(SPP_Handler* state, uint8_t bus, int op)
                 {
                     ASD_log(ASD_LogLevel_Debug, ASD_LogStream_SPP,
                             ASD_LogOption_None,
-                            "spp flock for bus %d device %d failed",
+                            "i3c_dbg flock for bus %d device %d failed",
                             bus, i);
                     break;
                 }
@@ -329,7 +420,7 @@ STATUS spp_bus_flock(SPP_Handler* state, uint8_t bus, int op)
         if (flock_count != state->spp_device_count)
         {
             ASD_log(ASD_LogLevel_Debug, ASD_LogStream_SPP, ASD_LogOption_None,
-                    "spp flock for bus %d failed", bus);
+                    "i3c_dbg flock for bus %d failed", bus);
             status = ST_ERR;
         }
     }
@@ -374,7 +465,7 @@ static STATUS spp_open_driver(SPP_Handler* state, uint8_t bus)
         else
         {
             ASD_log(ASD_LogLevel_Info, stream, option,
-                    "Open %s spp device with fd: %d", spp_dev,
+                    "Open %s i3c_dbg device with fd: %d", spp_dev,
                     state->spp_dev_handlers[i]);
             state->spp_device_count++;
             status = ST_OK;
@@ -599,6 +690,19 @@ bool check_spp_prdy_event(ASD_EVENT event, ASD_EVENT_DATA event_data)
             (event_data.buffer[0] == SPP_IBI_STATUS_CHANGED) &&
             ((event_data.buffer[1] == SPP_IBI_SUBREASON_PRDY) ||
             (event_data.buffer[1] == SPP_IBI_SUBREASON_OVERFLOW))) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool check_spp_auto_cmd_event(ASD_EVENT event, ASD_EVENT_DATA event_data)
+{
+    if(event == ASD_EVENT_BPK) {
+        if (event_data.size >= 2 &&
+            ((event_data.buffer[0] == SPP_IBI_DATA_READY) ||
+            (event_data.buffer[0] == SPP_IBI_STATUS_CHANGED))  &&
+            (event_data.buffer[1] == SPP_IBI_SUBREASON_BUFFER_THRESHOLD)) {
             return true;
         }
     }

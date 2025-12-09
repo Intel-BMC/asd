@@ -35,10 +35,10 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <stdlib.h>
 #include <string.h>
 
-#include "jtag_handler.h"
 #include "../jtag_test.h"
-#include "logging.h"
 #include "cmocka.h"
+#include "jtag_handler.h"
+#include "logging.h"
 
 // static char temporary_log_buffer[512];
 void __wrap_ASD_log(ASD_LogLevel level, ASD_LogStream stream,
@@ -81,6 +81,23 @@ void __wrap_ASD_log_shift(ASD_LogLevel level, ASD_LogStream stream,
     (void)size_bytes;
     (void)buffer;
     (void)prefixPtr;
+}
+
+void __wrap_ASD_log_shift_to_from(ASD_LogLevel level, ASD_LogStream stream,
+                                  ASD_LogOption options,
+                                  unsigned int number_of_bits,
+                                  unsigned int size_bytes,
+                                  unsigned char* buffer, const char* prefixPtr,
+                                  unsigned int from, unsigned int to)
+{
+    (void)level;
+    (void)stream;
+    (void)number_of_bits;
+    (void)size_bytes;
+    (void)buffer;
+    (void)prefixPtr;
+    (void)from;
+    (void)to;
 }
 
 void __wrap_ASD_initialize_log_settings(ASD_LogLevel level,
@@ -150,7 +167,7 @@ STATUS __wrap_JTAG_set_tap_state(JTAG_Handler* state,
 
 int MEMCPY_SAFE_RESULT = 0;
 int __wrap__memcpy_s_chk(void* dest, size_t destsize, const void* src,
-                       size_t count)
+                         size_t count)
 {
     if (MEMCPY_SAFE_RESULT == 1)
         return MEMCPY_SAFE_RESULT;
@@ -258,8 +275,8 @@ static void find_pattern_not_found_returns_0(void** state)
     unsigned char dead_beef[8];
     memcpy(dead_beef, &human_readable, sizeof(human_readable));
     memset(shiftDataOut, 0xff, sizeof(shiftDataOut));
-    assert_int_equal(find_pattern(shiftDataOut, shiftSize,
-                     dead_beef, sizeof(dead_beef)), 0);
+    assert_int_equal(
+        find_pattern(shiftDataOut, shiftSize, dead_beef, sizeof(dead_beef)), 0);
 }
 
 static void find_pattern_found_returns_value(void** state)
@@ -272,9 +289,9 @@ static void find_pattern_found_returns_value(void** state)
     memcpy(dead_beef, &human_readable, sizeof(human_readable));
     memset(shiftDataOut, 0xff, sizeof(shiftDataOut));
     memcpy(shiftDataOut + expected, &human_readable, sizeof(human_readable));
-    assert_int_equal(find_pattern(shiftDataOut, shiftSize,
-                     dead_beef, sizeof(dead_beef)),
-                     expected);
+    assert_int_equal(
+        find_pattern(shiftDataOut, shiftSize, dead_beef, sizeof(dead_beef)),
+        expected);
 }
 
 static void shift_right_test(void** state)
@@ -581,8 +598,7 @@ int main(void)
         cmocka_unit_test_setup_teardown(uncore_discovery_pattern_not_found_test,
                                         setup, teardown),
         cmocka_unit_test_setup_teardown(uncore_discovery_success_test, setup,
-                                        teardown)
-    };
+                                        teardown)};
 
     return cmocka_run_group_tests(tests, NULL, NULL);
 }

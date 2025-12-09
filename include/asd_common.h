@@ -48,7 +48,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 // Two simple rules for the version string are:
 // 1. less than 255 in length (or it will be truncated in the plugin)
 // 2. no dashes, as they are used later up the sw stack between components.
-static char asd_version[] = "ASD_BMC_v1.6.3";
+static char asd_version[] = "ASD_BMC_v1.6.5";
 
 #define TO_ENUM(ENUM) ENUM,
 #define TO_STRING(STRING) #STRING,
@@ -70,6 +70,7 @@ typedef enum
     ASD_EVENT_RSV1,
     ASD_EVENT_RSV2,
     ASD_EVENT_BPK,
+    ASD_EVENT_BULK_BPK,
     ASD_EVENT_NONE
 } ASD_EVENT;
 
@@ -135,11 +136,13 @@ typedef enum
 #define REMOTE_PROBES_CONFIG_CMD 17
 #define LOOPBACK_CMD 18
 #define REMOTE_SPP_CONFIG_CMD 19
+#define SUPPORTED_SPP_BULK_MODE_CMD 20
 
 // AGENT_CONFIGURATION_CMD types
 #define AGENT_CONFIG_TYPE_LOGGING 1
 #define AGENT_CONFIG_TYPE_GPIO 2
 #define AGENT_CONFIG_TYPE_JTAG_SETTINGS 3
+#define AGENT_CONFIG_TYPE_SPP_BULK_MODE 4
 
 // This mask is used for extracting jtag driver mode from a command byte
 #define JTAG_DRIVER_MODE_MASK 0x01
@@ -239,7 +242,8 @@ typedef struct remote_logging_config
     FUNC(BUS_CONFIG_NOT_ALLOWED)                                               \
     FUNC(BUS_CONFIG_I2C)                                                       \
     FUNC(BUS_CONFIG_I3C)                                                       \
-    FUNC(BUS_CONFIG_SPP)
+    FUNC(BUS_CONFIG_SPP)                                                       \
+    FUNC(BUS_CONFIG_I3C_DBG)
 
 typedef enum
 {
@@ -426,6 +430,9 @@ typedef struct asd_i2c_msg
 //  Used in stub mode to receive simulation data from the plugin.
 #define SPP_SET_SIM_DATA_CMD 0x50
 #define SPP_SET_SIM_DATA_CMD_COMMAND_SIZE 3
+
+#define SPP_BULK_SEND_SUPPORT_MASK 0x1
+#define SPP_BULK_RESPONSE_SUPPORT_MASK 0x2
 
 #define SPP_BULK 0x60
 #define SPP_BULK_COMMAND_SIZE 2

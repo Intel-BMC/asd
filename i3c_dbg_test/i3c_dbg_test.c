@@ -24,7 +24,7 @@ CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
-#include "spp_test.h"
+#include "i3c_dbg_test.h"
 #include <getopt.h>
 #include <safe_mem_lib.h>
 #include <safe_str_lib.h>
@@ -74,14 +74,14 @@ char ir_size_map_str[((sizeof(ir_map)/sizeof(ir_shift_size_map)) + 6) * MAP_LINE
 #ifndef UNIT_TEST_MAIN
 int main(int argc, char** argv)
 {
-    return spp_test_main(argc, argv);
+    return i3c_dbg_test_main(argc, argv);
 }
 #endif
 
-STATUS spp_test_main(int argc, char** argv)
+STATUS i3c_dbg_test_main(int argc, char** argv)
 {
     uncore_info uncore[MAX_SPP_BUS_DEVICES];
-    spp_test_args args;
+    i3c_dbg_test_args args;
     STATUS result;
     int i3c_fd = -1;
     for (int i = 0; i < MAX_SPP_BUS_DEVICES; i++)
@@ -112,13 +112,13 @@ STATUS spp_test_main(int argc, char** argv)
         if (result == ST_OK)
         {
             ASD_log(ASD_LogLevel_Error, stream, option,
-                    "spp_test found %d possible bpk link%s on bus: %d", count,
+                    "i3c_dbg_test found %d possible bpk link%s on bus: %d", count,
                     count == 1 ? "" : "s", state->spp_bus);
         }
         else
         {
             ASD_log(ASD_LogLevel_Error, stream, option,
-                    "spp_test fail to read spp device count");
+                    "i3c_dbg_test fail to read i3c_dbg device count");
         }
 
         if (result == ST_OK)
@@ -129,23 +129,23 @@ STATUS spp_test_main(int argc, char** argv)
                 if (result != ST_OK)
                 {
                     ASD_log(ASD_LogLevel_Error, stream, option,
-                            "spp_test failed to select device: %d", i);
+                            "i3c_dbg_test failed to select device: %d", i);
                     break;
                 }
 
                 ASD_log(ASD_LogLevel_Error, stream, option,
-                        "spp_test running on bus: %d bpk link: %d",
+                        "i3c_dbg_test running on bus: %d bpk link: %d",
                         state->spp_bus, i);
 
-                if (initialize_bpk(state) == ST_OK)
+                if (initialize_bpk(state, &args) == ST_OK)
                 {
                     if (configure_bpk(state, &args) == ST_OK)
                     {
                         if (discovery(state, &uncore[i], &args) == ST_OK)
                         {
-                            if (reset_jtag_to_rti_spp(state) == ST_OK)
+                            if (reset_jtag_to_rti_spp(state, &args) == ST_OK)
                             {
-                                if (spp_test(state, &uncore[i], &args) == ST_OK)
+                                if (i3c_dbg_test(state, &uncore[i], &args) == ST_OK)
                                 {
                                     result = ST_OK;
                                 }
@@ -153,7 +153,7 @@ STATUS spp_test_main(int argc, char** argv)
                         }
                     }
                 }
-                if (disconnect_bpk(state) == ST_ERR)
+                if (disconnect_bpk(state, &args) == ST_ERR)
                 {
                     ASD_log(ASD_LogLevel_Error, stream, option,
                             "Failed to disconnect.");
@@ -164,7 +164,7 @@ STATUS spp_test_main(int argc, char** argv)
     }
     else
     {
-        ASD_log(ASD_LogLevel_Error, stream, option,"spp_test failure!");
+        ASD_log(ASD_LogLevel_Error, stream, option,"i3c_dbg_test failure!");
         result = ST_ERR;
     }
     spp_deinitialize(state);
@@ -179,13 +179,14 @@ void interrupt_handler(int dummy)
     continue_loop = false;
 }
 
-STATUS parse_arguments(int argc, char** argv, spp_test_args* args)
+STATUS parse_arguments(int argc, char** argv, i3c_dbg_test_args* args)
 {
     int c = 0;
     opterr = 0; // prevent getopt_long from printing shell messages
     failures = 0;
     uint8_t spp_counter = 0; // Up to 8 buses
     // Set Default argument values.
+    args->autocmd_mode = false;
     args->log_level = DEFAULT_LOG_LEVEL;
     args->log_streams = DEFAULT_LOG_STREAMS;
     args->human_readable = DEFAULT_TAP_DATA_PATTERN;
@@ -235,10 +236,14 @@ STATUS parse_arguments(int argc, char** argv, spp_test_args* args)
             {NULL, 0, NULL, 0},
     };
 
-    while ((c = getopt_long(argc, argv, "fcbi:d:?", opts, NULL)) != -1)
+    while ((c = getopt_long(argc, argv, "afcbi:d:?", opts, NULL)) != -1)
     {
         switch (c)
         {
+            case 'a':
+                args->autocmd_mode = true;
+                break;
+
             case 'f':
                 args->loop_forever = true;
                 break;
@@ -273,12 +278,12 @@ STATUS parse_arguments(int argc, char** argv, spp_test_args* args)
                     bus = (uint8_t)strtol(pch, &endptr, 10);
                     if ((errno == ERANGE) || (endptr == pch))
                     {
-                        fprintf(stderr, "Wrong SPP bus list arguments(-d)\n");
+                        fprintf(stderr, "Wrong i3c_dbg bus list arguments(-d)\n");
                         break;
                     }
                     if (spp_counter >= MAX_SPP_BUSES)
                     {
-                        fprintf(stderr, "Discard SPP bus: %d\n", bus);
+                        fprintf(stderr, "Discard i3c_dbg bus: %d\n", bus);
                     }
                     else
                     {
@@ -287,15 +292,10 @@ STATUS parse_arguments(int argc, char** argv, spp_test_args* args)
                             args->buscfg.default_bus = bus;
                             first_spp = false;
                         }
-                        fprintf(stderr, "Enabling I3C(SPP) bus: %d\n", bus);
-                        if ((uint16_t)(MAX_IxC_BUSES + spp_counter) <= UINT8_MAX)
-                        {
-                            spp_bus_index = MAX_IxC_BUSES + spp_counter;
-                        } else {
-                            fprintf(stderr, "Overflow detected in SPP bus index calculation\n");
-                            showUsage(argv);
-                            return ST_ERR;
-                        }
+                        fprintf(stderr, "Enabling i3c_dbg bus: %d\n", bus);
+                        spp_bus_index = MAX_IxC_BUSES + spp_counter;
+                        // Coverity: Safe: spp_counter < MAX_SPP_BUSES,
+                        //so spp_bus_index < MAX_IxC_BUSES + MAX_SPP_BUSES
                         args->buscfg.bus_config_type[spp_bus_index] =
                             BUS_CONFIG_SPP;
                         args->buscfg.bus_config_map[spp_bus_index] = bus;
@@ -419,12 +419,13 @@ void showUsage(char** argv)
             ASD_LogLevel_Error, stream, option,
             "\nVersion: %s \n"
             "\nUsage: %s [option]\n\n"
+            "  -a          Run in auto-command mode\n"
             "  -f          Run endlessly until ctrl-c is used\n"
             "  -c          Complete all iterations and count failing cases\n"
             "  -r          Use random pattern\n"
             "  -b          Read BPK information valus\n"
             "  -i <number> Run [number] of iterations (default: %d)\n"
-            "  -d <bus >  Decimal i3c debug(SPP) allowed bus (default: none)\n"
+            "  -d <bus >  Decimal i3c_dbg allowed bus (default: none)\n"
             "\n"
             "  --dr-overshift=<hex value> Specify 64bit overscan (default: "
             "0x%llx)\n"
@@ -453,10 +454,11 @@ void showUsage(char** argv)
             "                               %s\n"
             "                               %s\n"
             "                               %s\n"
+            "                               %s\n"
             "  --seed=<value>             Specify seed for random mode: (default: time seed), <value> (0 - 2147483647)\n"
             "  --pattern=<type>           Specify pattern type (Default:(Random (RN)), Static (ST) [dr-overshift value]\n"
             "                             Checkerboard (CB),Walkingzero (WZ) , Walkingone (WO))\n"
-            "  --runtime=<number>         Specify time in seconds spp_test will run. (disables iterations) (Default: 1s)\n"
+            "  --runtime=<number>         Specify time in seconds i3c_dbg_test will run. (disables iterations) (Default: 1s)\n"
             "  --injecterror=<byte>       Inject Error to test bit flip at position byte (Default: byte = 0)\n"
             "  --test-size                Number of bytes to shift in (Minimum %d, Default: %d)\n"
             "  --help                     Show this list\n"
@@ -464,10 +466,10 @@ void showUsage(char** argv)
             "Examples:\n"
             "\n"
             "Log from the test app and jtag at trace level.\n"
-            "     spp_test --log-level=trace --log-streams=test,jtag\n"
+            "     i3c_dbg_test --log-level=trace --log-streams=test,jtag\n"
             "\n"
             "Read a register, such as SA_TAP_LR_UNIQUEID_CHAIN.\n"
-            "     spp_test --ir-value=0x22 --dr-size=0x40\n"
+            "     i3c_dbg_test --ir-value=0x22 --dr-size=0x40\n"
             "\n",
             asd_version,
             argv[0], DEFAULT_NUMBER_TEST_ITERATIONS,
@@ -483,13 +485,14 @@ void showUsage(char** argv)
             streamtostring(DEFAULT_LOG_STREAMS), streamtostring(ASD_LogStream_All),
             streamtostring(ASD_LogStream_Test), streamtostring(ASD_LogStream_I2C),
             streamtostring(ASD_LogStream_Pins), streamtostring(ASD_LogStream_JTAG),
-            streamtostring(ASD_LogStream_Network),
+            streamtostring(ASD_LogStream_Network), streamtostring(ASD_LogStream_SPP),
             MINIMUM_TEST_SIZE,
             DEFAULT_TEST_SIZE);
 }
 
-STATUS initialize_bpk(SPP_Handler* state)
+STATUS initialize_bpk(SPP_Handler* state, i3c_dbg_test_args* args)
 {
+    int mode;
     clean_previous_read(state);
     if(capabilities_ccc(state) == ST_OK)
     {
@@ -499,10 +502,19 @@ STATUS initialize_bpk(SPP_Handler* state)
             {
                 if(select_ccc(state, bpk_engine) == ST_OK)
                 {
-                    if (cfg_ccc(state, use_interrupt) == ST_OK)
+                    if (args->autocmd_mode)
+                    {
+                        mode = use_interrupt;
+                    }
+                    else
+                    {
+                        mode = use_polling;
+                    }
+                    if (cfg_ccc(state, mode) == ST_OK)
                     {
                         ASD_log(ASD_LogLevel_Info, stream, option,
-                                "Baltic Peak is found and initialized.");
+                                "Baltic Peak is found and initialized to use: %s",
+                                mode == use_interrupt ? "auto-command." : "sending receive command.");
                         return ST_OK;
                     }
                 }
@@ -514,18 +526,19 @@ STATUS initialize_bpk(SPP_Handler* state)
     return ST_ERR;
 }
 
-STATUS configure_bpk(SPP_Handler* state, spp_test_args* args)
+STATUS configure_bpk(SPP_Handler* state, i3c_dbg_test_args* args)
 {
     uint8_t output[BUFFER_SIZE_MAX];
-    uint8_t num_bytes;
-    if(initialize_sp_engine(state) == ST_ERR)
+    uint16_t num_bytes;
+    if(initialize_sp_engine(state, args) == ST_ERR)
     {
         return ST_ERR;
     }
     if (args->bpk_values)
         ASD_log(ASD_LogLevel_Info, stream, option,
             "Baltic Peak Information.");
-    if(read_sp_config_cmd(state, SP_VERSIONS, output, &num_bytes) == ST_OK)
+
+    if(read_sp_config_cmd(state, SP_VERSIONS, output, &num_bytes, args) == ST_OK)
     {
         if ((num_bytes == 0x4) && (args->bpk_values))
         {
@@ -537,7 +550,7 @@ STATUS configure_bpk(SPP_Handler* state, spp_test_args* args)
                     "Baltic Peak using Tiny1 SPP.");
         }
     }
-    if(read_sp_config_cmd(state, SP_SESSION_MGMT_0, output, &num_bytes) == ST_OK)
+    if(read_sp_config_cmd(state, SP_SESSION_MGMT_0, output, &num_bytes, args) == ST_OK)
     {
         if ((num_bytes == 0x4) && (args->bpk_values))
         {
@@ -545,7 +558,7 @@ STATUS configure_bpk(SPP_Handler* state, spp_test_args* args)
                 "Session Management ID : %d.", output[0]);
         }
     }
-    if(read_sp_config_cmd(state, SP_SESSION_MGMT_1, output, &num_bytes) == ST_OK)
+    if(read_sp_config_cmd(state, SP_SESSION_MGMT_1, output, &num_bytes, args) == ST_OK)
     {
         if ((num_bytes == 0x4) && (args->bpk_values))
         {
@@ -559,7 +572,7 @@ STATUS configure_bpk(SPP_Handler* state, spp_test_args* args)
                 (output[2] & 0x2) ? "true" : "false");
         }
     }
-    if(read_sp_config_cmd(state, SP_IDCODE, output, &num_bytes) == ST_OK)
+    if(read_sp_config_cmd(state, SP_IDCODE, output, &num_bytes, args) == ST_OK)
     {
         if ((num_bytes == 0x4) && (args->bpk_values))
         {
@@ -568,7 +581,7 @@ STATUS configure_bpk(SPP_Handler* state, spp_test_args* args)
                 "Manufacturing ID: 0x%x", manuf_id);
         }
     }
-    if(read_sp_config_cmd(state, SP_PROD_ID, output, &num_bytes) == ST_OK)
+    if(read_sp_config_cmd(state, SP_PROD_ID, output, &num_bytes, args) == ST_OK)
     {
         if ((num_bytes == 0x4) && (args->bpk_values))
         {
@@ -577,7 +590,7 @@ STATUS configure_bpk(SPP_Handler* state, spp_test_args* args)
                 "Product ID: 0x%x", product_id);
         }
     }
-    if(read_sp_config_cmd(state, SP_CAP_AS_PRESENT, output, &num_bytes) == ST_OK)
+    if(read_sp_config_cmd(state, SP_CAP_AS_PRESENT, output, &num_bytes, args) == ST_OK)
     {
         if ((num_bytes == 0x4) && (args->bpk_values))
         {
@@ -588,13 +601,13 @@ STATUS configure_bpk(SPP_Handler* state, spp_test_args* args)
         }
     }
     if(write_sp_config_cmd(state, SP_AS_AVAIL_REQ_SET, JTAG_SET, output,
-        &num_bytes) == ST_ERR)
+        &num_bytes, args) == ST_ERR)
     {
         ASD_log(ASD_LogLevel_Info, stream, option,
                 "Failure Requesting Jtag Space");
         return ST_ERR;
     }
-    if(read_sp_config_cmd(state, SP_AS_AVAIL_STAT, output, &num_bytes) == ST_OK)
+    if(read_sp_config_cmd(state, SP_AS_AVAIL_STAT, output, &num_bytes, args) == ST_OK)
     {
         if ((num_bytes == 0x4) && (args->bpk_values))
         {
@@ -605,13 +618,13 @@ STATUS configure_bpk(SPP_Handler* state, spp_test_args* args)
         }
     }
     if(write_sp_config_cmd(state, SP_AS_EN_SET, JTAG_SET, output,
-        &num_bytes) == ST_ERR)
+        &num_bytes, args) == ST_ERR)
     {
         ASD_log(ASD_LogLevel_Info, stream, option,
                 "Failure Enabling Jtag Space");
         return ST_ERR;
     }
-    if(read_sp_config_cmd(state, SP_AS_EN_STAT, output, &num_bytes) == ST_OK)
+    if(read_sp_config_cmd(state, SP_AS_EN_STAT, output, &num_bytes, args) == ST_OK)
     {
         if ((num_bytes == 0x4) && (args->bpk_values))
         {
@@ -624,18 +637,18 @@ STATUS configure_bpk(SPP_Handler* state, spp_test_args* args)
     return ST_OK;
 }
 
-STATUS disconnect_bpk(SPP_Handler* state)
+STATUS disconnect_bpk(SPP_Handler* state, i3c_dbg_test_args* args)
 {
     uint8_t output[BUFFER_SIZE_MAX];
-    uint8_t num_bytes;
+    uint16_t num_bytes;
     if(write_sp_config_cmd(state, SP_AS_EN_CLEAR, CLEAR_ALL, output,
-                            &num_bytes) == ST_ERR)
+                            &num_bytes, args) == ST_ERR)
     {
         ASD_log(ASD_LogLevel_Error, stream, option,
                 "Failure writing to configuration space");
         return ST_ERR;
     }
-    if(read_sp_config_cmd(state, SP_AS_EN_STAT, output, &num_bytes) == ST_OK)
+    if(read_sp_config_cmd(state, SP_AS_EN_STAT, output, &num_bytes, args) == ST_OK)
     {
         if (num_bytes == 0x4)
         {
@@ -665,7 +678,7 @@ unsigned int find_pattern(const unsigned char* haystack,
     return 0;
 }
 
-STATUS discovery(SPP_Handler* state, uncore_info* uncore, spp_test_args* args)
+STATUS discovery(SPP_Handler* state, uncore_info* uncore, i3c_dbg_test_args* args)
 {
     unsigned int shift_size = UNCORE_DISCOVERY_SHIFT_SIZE_IN_BITS;
     char prefix[32];
@@ -680,7 +693,7 @@ STATUS discovery(SPP_Handler* state, uncore_info* uncore, spp_test_args* args)
                 "memcpy_s: human_readable to tap_data_pattern copy failed.");
         return ST_ERR;
     }
-    if(reset_jtag_to_rti_spp(state) == ST_ERR)
+    if(reset_jtag_to_rti_spp(state, args) == ST_ERR)
     {
         ASD_log(ASD_LogLevel_Error, stream, option,
             "Uncore discovery shift failed.");
@@ -692,7 +705,7 @@ STATUS discovery(SPP_Handler* state, uncore_info* uncore, spp_test_args* args)
     // read out all of the idcodes on the target system
     if (jtag_shift_spp(state, jtag_shf_dr, shift_size, sizeof(args->tap_data_pattern),
                        (unsigned char*)&args->tap_data_pattern, sizeof(tdo),
-                       (unsigned char*)&tdo, jtag_rti) != ST_OK)
+                       (unsigned char*)&tdo, jtag_rti, args) != ST_OK)
     {
         ASD_log(ASD_LogLevel_Error, stream, option,
                 "Uncore discovery shift failed.");
@@ -869,7 +882,7 @@ bool validate_data(unsigned char* buffer1, unsigned int size_buffer1, unsigned c
     return true;
 }
 
-STATUS spp_test(SPP_Handler* state, uncore_info* uncore, spp_test_args* args)
+STATUS i3c_dbg_test(SPP_Handler* state, uncore_info* uncore, i3c_dbg_test_args* args)
 {
     unsigned char expected_data[128];
     unsigned char shift_in_data[128];
@@ -931,7 +944,7 @@ STATUS spp_test(SPP_Handler* state, uncore_info* uncore, spp_test_args* args)
         // directly.
         if (jtag_shift_spp(state, jtag_shf_ir, number_of_bits, (unsigned int)ir_size,
                            (unsigned char*)&ir_command, sizeof(tdo),
-                           (unsigned char*)&tdo, jtag_rti) != ST_OK)
+                           (unsigned char*)&tdo, jtag_rti, args) != ST_OK)
         {
             ASD_log(ASD_LogLevel_Error, stream, option,
                     "Unable to write IR for idcode.");
@@ -979,7 +992,7 @@ STATUS spp_test(SPP_Handler* state, uncore_info* uncore, spp_test_args* args)
         if (jtag_shift_spp(state, jtag_shf_dr, number_of_bits,
                            args->test_size,
                            shift_in_data, sizeof(tdo),
-                           (unsigned char*)&tdo, jtag_rti) != ST_OK)
+                           (unsigned char*)&tdo, jtag_rti, args) != ST_OK)
         {
             ASD_log(ASD_LogLevel_Error, stream, option,
                     "Unable to read DR shift data.");
@@ -1090,7 +1103,8 @@ STATUS capabilities_ccc(SPP_Handler* state)
                             write_buffer, &read_len, output) == ST_OK)
     {
         if (output[0] == 0x10 && output[1] == 0x10
-            && output[2] == 0x31 && output[3] == 0x42)
+            && output[2] == 0x31 &&
+            (output[3] == 0x00 || output[3] == 0x42))
         {
             return ST_OK;
         }
@@ -1115,7 +1129,8 @@ STATUS start_ccc(SPP_Handler* state, uint8_t comportIndex)
         if (spp_send_receive_cmd(state, BpkOpcode, write_len,
                                 write_buffer, &read_len, output) == ST_OK)
         {
-            if (output[0] == 0x2b && output[1] == 0x0
+            if ((output[0] == 0x0b || output[0] == 0x2b)
+                && output[1] == 0x0
                 && output[2] == 0x0 && output[3] == 0x0)
             {
                 return ST_OK;
@@ -1195,7 +1210,7 @@ STATUS clean_previous_read(SPP_Handler* state)
     return ST_OK;
 }
 
-STATUS initialize_sp_engine(SPP_Handler* state)
+STATUS initialize_sp_engine(SPP_Handler* state, i3c_dbg_test_args* args)
 {
     uint8_t payload[BUFFER_SIZE_MAX] = {0};
     uint8_t read_data[BUFFER_SIZE_MAX] = {0};
@@ -1206,7 +1221,11 @@ STATUS initialize_sp_engine(SPP_Handler* state)
     uint8_t payload_size = spp_generate_payload(bpk_cmd, (uint8_t*)&payload);
     if(spp_send(state, payload_size, payload) == ST_OK)
     {
-        if(spp_receive(state, &read_len, read_data) == ST_OK)
+        STATUS receive_status = args->autocmd_mode ?
+            spp_receive_autocommand(state, &read_len, read_data) :
+            spp_receive(state, &read_len, read_data);
+
+        if (receive_status == ST_OK)
         {
             if(spp_packet_check(read_len, read_data,
                                 payload_size, payload) == ST_OK)
@@ -1236,7 +1255,8 @@ STATUS initialize_sp_engine(SPP_Handler* state)
 }
 
 STATUS read_sp_config_cmd(SPP_Handler* state, uint32_t address,
-                            uint8_t* output, uint8_t* read_len)
+                            uint8_t* output, uint16_t* read_len,
+                            i3c_dbg_test_args* args)
 {
     uint8_t payload[BUFFER_SIZE_MAX] = {0};
     uint8_t read_data[BUFFER_SIZE_MAX] = {0};
@@ -1246,7 +1266,10 @@ STATUS read_sp_config_cmd(SPP_Handler* state, uint32_t address,
     uint8_t payload_size = spp_generate_payload(bpk_cmd, (uint8_t*)&payload);
     if(spp_send(state, payload_size, payload) == ST_OK)
     {
-        if(spp_receive(state, (uint16_t *)read_len, read_data) == ST_OK)
+        STATUS receive_status = args->autocmd_mode ?
+            spp_receive_autocommand(state, read_len, read_data) :
+            spp_receive(state, read_len, read_data);
+        if (receive_status == ST_OK)
         {
             if(spp_packet_check(*read_len, read_data, payload_size, payload) == ST_OK)
             {
@@ -1261,7 +1284,8 @@ STATUS read_sp_config_cmd(SPP_Handler* state, uint32_t address,
 }
 
 STATUS write_sp_config_cmd(SPP_Handler* state, uint32_t address,
-                        uint32_t write_value, uint8_t* output, uint8_t* read_len)
+                        uint32_t write_value, uint8_t* output, uint16_t* read_len,
+                        i3c_dbg_test_args* args)
 {
     uint8_t payload[BUFFER_SIZE_MAX] = {0};
     uint8_t read_data[BUFFER_SIZE_MAX] = {0};
@@ -1275,7 +1299,10 @@ STATUS write_sp_config_cmd(SPP_Handler* state, uint32_t address,
     uint8_t payload_size = spp_generate_payload(bpk_cmd, (uint8_t*)&payload);
     if(spp_send(state, payload_size, payload) == ST_OK)
     {
-        if(spp_receive(state, (uint16_t *)read_len, read_data) == ST_OK)
+        STATUS receive_status = args->autocmd_mode ?
+            spp_receive_autocommand(state, read_len, read_data) :
+            spp_receive(state, read_len, read_data);
+        if (receive_status == ST_OK)
         {
             if(spp_packet_check(*read_len, read_data,
                                 payload_size, payload) == ST_OK)
@@ -1291,7 +1318,8 @@ STATUS write_sp_config_cmd(SPP_Handler* state, uint32_t address,
 }
 
 STATUS write_system_cmd(SPP_Handler* state, struct jtag_cmd jtag,
-                        uint8_t* output, uint8_t* read_len)
+                        uint8_t* output, uint16_t* read_len,
+                        i3c_dbg_test_args* args)
 {
     uint8_t payload[BUFFER_SIZE_MAX] = {0};
     uint8_t read_data[BUFFER_SIZE_MAX] = {0};
@@ -1310,7 +1338,10 @@ STATUS write_system_cmd(SPP_Handler* state, struct jtag_cmd jtag,
     uint8_t payload_size = spp_generate_payload(bpk_cmd, (uint8_t*)&payload);
     if(spp_send(state, payload_size, payload) == ST_OK)
     {
-        if(spp_receive(state, (uint16_t *)read_len, read_data) == ST_OK)
+        STATUS receive_status = args->autocmd_mode ?
+            spp_receive_autocommand(state, read_len, read_data) :
+            spp_receive(state, read_len, read_data);
+        if (receive_status == ST_OK)
         {
             if(spp_packet_check(*read_len, read_data, payload_size, payload) == ST_OK)
             {
@@ -1325,7 +1356,8 @@ STATUS write_system_cmd(SPP_Handler* state, struct jtag_cmd jtag,
 }
 
 STATUS write_read_system_cmd(SPP_Handler* state, struct jtag_cmd jtag,
-                            uint8_t* output, uint8_t* read_len)
+                            uint8_t* output, uint16_t* read_len,
+                            i3c_dbg_test_args* args)
 {
     uint8_t payload[BUFFER_SIZE_MAX] = {0};
     uint8_t read_data[BUFFER_SIZE_MAX] = {0};
@@ -1344,7 +1376,10 @@ STATUS write_read_system_cmd(SPP_Handler* state, struct jtag_cmd jtag,
     uint8_t payload_size = spp_generate_payload(bpk_cmd, (uint8_t*)&payload);
     if(spp_send(state, payload_size, payload) == ST_OK)
     {
-        if(spp_receive(state, (uint16_t *)read_len, read_data) == ST_OK)
+        STATUS receive_status = args->autocmd_mode ?
+            spp_receive_autocommand(state, read_len, read_data) :
+            spp_receive(state, read_len, read_data);
+        if (receive_status == ST_OK)
         {
             if(spp_packet_check(*read_len, read_data, payload_size, payload) == ST_OK)
             {
@@ -1358,18 +1393,18 @@ STATUS write_read_system_cmd(SPP_Handler* state, struct jtag_cmd jtag,
     return ST_ERR;
 }
 
-STATUS reset_jtag_to_rti_spp(SPP_Handler* state)
+STATUS reset_jtag_to_rti_spp(SPP_Handler* state, i3c_dbg_test_args* args)
 {
     struct jtag_cmd jtag = {0};
     uint8_t output[BUFFER_SIZE_MAX] = {0};
-    uint8_t num_bytes;
+    uint16_t num_bytes;
     jtag.next_state =jtag_tlr;
     jtag.shift = 0xa;
     jtag.size_of_payload = 0;
     jtag.tif = fill_tdi_zero;
     jtag.bfc = 0;
     jtag.gtu = 0;
-    if (write_system_cmd(state, jtag, output, &num_bytes) == ST_OK)
+    if (write_system_cmd(state, jtag, output, &num_bytes, args) == ST_OK)
     {
         jtag.next_state =jtag_rti;
         jtag.shift = 0x6;
@@ -1377,7 +1412,7 @@ STATUS reset_jtag_to_rti_spp(SPP_Handler* state)
         jtag.tif = fill_tdi_zero;
         jtag.bfc = 0;
         jtag.gtu = 0;
-        if (write_system_cmd(state,  jtag, output, &num_bytes) == ST_OK)
+        if (write_system_cmd(state,  jtag, output, &num_bytes, args) == ST_OK)
         {
             return ST_OK;
         }
@@ -1391,7 +1426,7 @@ STATUS jtag_shift_spp(SPP_Handler* state, enum jtag_states next_state,
                       unsigned int number_of_bits,
                       unsigned int input_bytes, unsigned char* input,
                       unsigned int output_bytes, unsigned char* output,
-                      enum jtag_states end_tap_state)
+                      enum jtag_states end_tap_state, i3c_dbg_test_args* args)
 {
     struct jtag_cmd jtag = {0};
     jtag.next_state =next_state;
@@ -1402,8 +1437,8 @@ STATUS jtag_shift_spp(SPP_Handler* state, enum jtag_states next_state,
     jtag.gtu = 0;
     jtag.payload = (uint32_t *)input;
     jtag.payload8 = input;
-    uint8_t num_bytes;
-    if(write_read_system_cmd(state, jtag, output, &num_bytes) == ST_OK)
+    uint16_t num_bytes;
+    if(write_read_system_cmd(state, jtag, output, &num_bytes, args) == ST_OK)
     {
         output_bytes = num_bytes;
         return ST_OK;

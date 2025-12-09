@@ -1159,8 +1159,8 @@ STATUS target_event(Target_Control_Handle* state, struct pollfd poll_fd,
                 if (state->spp_handler->spp_dev_handlers[i] == poll_fd.fd &&
                     (poll_fd.revents & POLLIN) == POLLIN)
                 {
-                    if (i3c_ibi_handler(poll_fd.fd, event_data->buffer,
-                        &event_data->size, i) == ST_OK)
+                    if (i3c_ibi_handler(state->spp_handler, poll_fd.fd,
+                        event_data->buffer, &event_data->size, i) == ST_OK)
                     {
                         *event = ASD_EVENT_BPK;
                         event_data->addr = i;

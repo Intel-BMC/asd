@@ -75,6 +75,8 @@ typedef struct asd_args
     ASD_LogStream log_streams;
     bool log_timestamp_enable;
     bool xdp_fail_enable;
+    bool auto_sync_remote_logging;
+    ASD_LogStream auto_sync_remote_logging_streams;
     timeout_config timeout;
 } asd_args;
 
@@ -131,6 +133,8 @@ STATUS ensure_client_authenticated(asd_state* state, extnet_conn_t* p_extconn);
 
 size_t read_data(void* buffer, size_t length);
 bool is_data_pending(void);
+bool is_auto_sync_remote_logging_enabled(void);
+ASD_LogStream get_auto_sync_remote_logging_streams(void);
 
 STATUS close_connection(asd_state* state);
 void log_client_address(const extnet_conn_t* p_extcon);

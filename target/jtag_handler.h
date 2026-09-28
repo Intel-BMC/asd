@@ -32,17 +32,36 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "asd_common.h"
 
-typedef uint8_t __u8;
-typedef uint32_t __u32;
-
 // contains common ioctl command numbers for accessing jtag driver and structs
 // jtag_states enum is defined here
 //#define JTAG_LEGACY_DRIVER
 #ifdef JTAG_LEGACY_DRIVER
+typedef uint8_t __u8;
+typedef uint32_t __u32;
 #include "tests/jtag_drv.h"
 #else
+#ifdef ASD_USE_LOCAL_JTAG_HEADER
+typedef uint8_t __u8;
+typedef uint32_t __u32;
 typedef unsigned long long __u64;
 #include "tests/jtag.h"
+#else
+#if defined(__has_include)
+#if __has_include(<linux/jtag.h>)
+#include <linux/jtag.h>
+#else
+typedef uint8_t __u8;
+typedef uint32_t __u32;
+typedef unsigned long long __u64;
+#include "tests/jtag.h"
+#endif
+#else
+typedef uint8_t __u8;
+typedef uint32_t __u32;
+typedef unsigned long long __u64;
+#include "tests/jtag.h"
+#endif
+#endif
 #endif
 
 #ifndef JTAG_LEGACY_DRIVER

@@ -1154,6 +1154,41 @@ void asd_msg_on_msg_recv_process_jtag_failed_test(void** state)
     assert_int_equal(msg_sent.header.cmd_stat, ASD_FAILURE_PROCESS_JTAG_MSG);
 }
 
+void asd_msg_on_msg_recv_jtag_unavailable_test(void** state)
+{
+    ASD_MSG* sdk = (*state);
+    get_fake_message(JTAG_TYPE, &sdk->in_msg.msg);
+    sdk->jtag_handler->JTAG_driver_handle = -1;
+
+    asd_msg_on_msg_recv();
+
+    assert_int_equal(msg_sent.header.size_lsb, 0);
+    assert_int_equal(msg_sent.header.size_msb, 0);
+    assert_int_equal(msg_sent.header.cmd_stat, ASD_FAILURE_PROCESS_JTAG_MSG);
+}
+
+void asd_msg_on_msg_recv_jtag_init_failed_continues_with_spp_test(void** state)
+{
+    ASD_MSG* sdk = (*state);
+    get_fake_message(JTAG_TYPE, &sdk->in_msg.msg);
+    sdk->handlers_initialized = false;
+    sdk->buscfg->enable_spp = true;
+    command_index = 0;
+    command_result[0] = ST_ERR; // JTAG_initialize fails
+    command_result[1] = ST_OK;  // target_initialize succeeds
+    expect_any(__wrap_JTAG_initialize, state);
+    expect_any(__wrap_JTAG_initialize, sw_mode);
+    expect_any(__wrap_target_initialize, state);
+
+    expect_check_shift_state();
+    asd_msg_on_msg_recv();
+
+    // Init continues despite JTAG failure since i3c_dbg (SPP) is enabled.
+    assert_int_equal(msg_sent.header.size_lsb, 0);
+    assert_int_equal(msg_sent.header.size_msb, 0);
+    assert_int_equal(msg_sent.header.cmd_stat, ASD_SUCCESS);
+}
+
 void asd_msg_on_msg_recv_write_event_cfg_no_data_test(void** state)
 {
     ASD_MSG* sdk = (*state);
@@ -4012,6 +4047,11 @@ int main()
             asd_msg_on_msg_recv_unsupported_cmd_stat_test, setup, teardown),
         cmocka_unit_test_setup_teardown(
             asd_msg_on_msg_recv_process_jtag_failed_test, setup, teardown),
+        cmocka_unit_test_setup_teardown(
+            asd_msg_on_msg_recv_jtag_unavailable_test, setup, teardown),
+        cmocka_unit_test_setup_teardown(
+            asd_msg_on_msg_recv_jtag_init_failed_continues_with_spp_test,
+            setup, teardown),
         cmocka_unit_test_setup_teardown(
             asd_msg_on_msg_recv_write_event_cfg_no_data_test, setup, teardown),
         cmocka_unit_test_setup_teardown(

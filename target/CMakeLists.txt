@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 2.8.10 FATAL_ERROR)
+cmake_minimum_required(VERSION 3.5 FATAL_ERROR)
 project(at-scale-debug-target C)
 
 find_package (PkgConfig REQUIRED)
@@ -8,6 +8,10 @@ pkg_check_modules (SAFEC REQUIRED libsafec)
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DHAVE_C99")
 include_directories (${SAFEC_INCLUDE_DIRS})
 include_directories (${ASD_DIR}/include)
+
+if (EXISTS ${ASD_DIR}/../kernel-source/include/uapi/linux/jtag.h)
+    include_directories(BEFORE ${ASD_DIR}/../kernel-source/include/uapi)
+endif()
 
 # Set APB_FREQ to EXTRA_OECMAKE on bb recipe to modify JTAG frequency
 if(${APB_FREQ})

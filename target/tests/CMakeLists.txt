@@ -2,7 +2,7 @@ project(at-scale-debug-target-tests C)
 
 #
 # CMake options
-cmake_minimum_required(VERSION 2.8)
+cmake_minimum_required(VERSION 3.5)
 
 #
 # import cmocka
@@ -41,6 +41,7 @@ include_directories("${CMAKE_CURRENT_SOURCE_DIR}/../../include")
 #
 # For Unit Test specific code
 add_definitions(-DUNIT_TEST_MAIN)
+add_definitions(-DASD_USE_LOCAL_JTAG_HEADER)
 
 #
 # jtag_handler tests

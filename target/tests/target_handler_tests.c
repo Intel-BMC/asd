@@ -588,12 +588,16 @@ STATUS __wrap_dbus_process_event(Dbus_Handle* state)
     return DBUS_PROCESS_EVENT_RESULT;
 }
 
+// Global control for SPP stub behavior in tests
+static uint8_t SPP_DEVICE_COUNT = 0;
+static SPP_Handler mock_spp_handler;
+
 // Stubs for functions referenced by target_handler.c but not under test
 STATUS spp_bus_device_count(SPP_Handler* state, uint8_t* count)
 {
     (void)state;
     if (count)
-        *count = 0;
+        *count = SPP_DEVICE_COUNT;
     return ST_OK;
 }
 
@@ -1947,6 +1951,76 @@ void target_get_fds_success_test(void** state)
     assert_int_equal(4, num_fds);
 }
 
+void target_get_fds_spp_handler_test(void** state)
+{
+    (void)state; /* unused */
+    Target_Control_Handle handle;
+    memset(&handle, 0, sizeof(handle));
+    handle.initialized = true;
+    // Set up GPIO pins
+    handle.gpios[BMC_CPU_PWRGD].type = PIN_GPIO;
+    handle.gpios[BMC_PRDY_N].fd = 9;
+    handle.gpios[BMC_PLTRST_B].fd = 8;
+    handle.gpios[BMC_CPU_PWRGD].fd = 7;
+    handle.gpios[BMC_XDP_PRST_IN].fd = 6;
+    handle.gpios[BMC_PWRGD2].fd = -1;
+    handle.gpios[BMC_PWRGD3].fd = -1;
+    handle.event_cfg.report_PRDY = true;
+    handle.dbus = NULL;
+    target_fdarr_t fds;
+    int num_fds;
+
+    // Set up mock SPP handler with device file descriptors
+    memset(&mock_spp_handler, 0, sizeof(mock_spp_handler));
+    for (int i = 0; i < MAX_SPP_BUS_DEVICES; i++)
+    {
+        mock_spp_handler.spp_dev_handlers[i] = 100 + i;  // Distinct FDs: 100, 101, ..., 107
+    }
+    handle.spp_handler = &mock_spp_handler;
+
+    // Test 1: SPP device count = 0 (no SPP devices, only GPIO FDs)
+    SPP_DEVICE_COUNT = 0;
+    memset(&fds, 0, sizeof(fds));
+    num_fds = 0;
+    assert_int_equal(ST_OK, target_get_fds(&handle, &fds, &num_fds));
+    assert_int_equal(4, num_fds);  // Only 4 GPIO FDs
+
+    // Test 2: SPP device count = 1 (one SPP device)
+    SPP_DEVICE_COUNT = 1;
+    memset(&fds, 0, sizeof(fds));
+    num_fds = 0;
+    assert_int_equal(ST_OK, target_get_fds(&handle, &fds, &num_fds));
+    assert_int_equal(5, num_fds);  // 4 GPIO + 1 SPP FD
+    assert_int_equal(100, fds[4].fd);  // SPP FD at index 4
+
+    // Test 3: SPP device count = MAX_SPP_BUS_DEVICES (8, at limit)
+    SPP_DEVICE_COUNT = MAX_SPP_BUS_DEVICES;
+    memset(&fds, 0, sizeof(fds));
+    num_fds = 0;
+    assert_int_equal(ST_OK, target_get_fds(&handle, &fds, &num_fds));
+    assert_int_equal(4 + MAX_SPP_BUS_DEVICES, num_fds);  // 4 GPIO + 8 SPP FDs
+    for (int i = 0; i < MAX_SPP_BUS_DEVICES; i++)
+    {
+        assert_int_equal(100 + i, fds[4 + i].fd);  // All 8 SPP FDs present
+    }
+
+    // Test 4: SPP device count = MAX_SPP_BUS_DEVICES + 1 (9, over limit)
+    // The fix ensures loop stops at MAX_SPP_BUS_DEVICES to prevent overrun
+    SPP_DEVICE_COUNT = MAX_SPP_BUS_DEVICES + 1;
+    memset(&fds, 0, sizeof(fds));
+    num_fds = 0;
+    assert_int_equal(ST_OK, target_get_fds(&handle, &fds, &num_fds));
+    // Should still only get 8 SPP devices, not 9 (bounds check prevents overrun)
+    assert_int_equal(4 + MAX_SPP_BUS_DEVICES, num_fds);
+    for (int i = 0; i < MAX_SPP_BUS_DEVICES; i++)
+    {
+        assert_int_equal(100 + i, fds[4 + i].fd);  // Only first 8 SPP FDs
+    }
+
+    // Reset global for other tests
+    SPP_DEVICE_COUNT = 0;
+}
+
 void target_event_invalid_state_test(void** state)
 {
     (void)state; /* unused */
@@ -2656,6 +2730,7 @@ int main()
         cmocka_unit_test(target_wait_PRDY_poll_error_test),
         cmocka_unit_test(target_get_fds_not_initialized_test),
         cmocka_unit_test(target_get_fds_success_test),
+        cmocka_unit_test(target_get_fds_spp_handler_test),
         cmocka_unit_test(target_event_invalid_state_test),
         cmocka_unit_test_setup_teardown(
             target_event_power_event_gpio_get_value_failure_test, setup,

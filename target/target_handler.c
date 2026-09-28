@@ -965,7 +965,11 @@ STATUS find_gpio_base(char* gpio_name, int* gpio_base)
 #endif
         return ST_ERR;
     }
-    lseek(fd, 0, SEEK_SET);
+    if (lseek(fd, 0, SEEK_SET) < 0)
+    {
+        close(fd);
+        return ST_ERR;
+    }
     // read all characters in the file
     while (read(fd, &ch, 1))
     {
@@ -1843,7 +1847,7 @@ STATUS target_get_fds(Target_Control_Handle* state, target_fdarr_t* fds,
         result = spp_bus_device_count(state->spp_handler, &count);
         if (result == ST_OK)
         {
-            for(i = 0; i<count; i++)
+            for(i = 0; i<count && i < MAX_SPP_BUS_DEVICES; i++)
             {
                 if (index >= NUM_GPIOS + NUM_DBUS_FDS)
                 {

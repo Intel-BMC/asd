@@ -2,7 +2,7 @@ project(at-scale-debug-jtag-test-tests C)
 
 #
 # CMake options
-cmake_minimum_required(VERSION 3.0)
+cmake_minimum_required(VERSION 3.5)
 include(FindPkgConfig)
 #
 # import cmocka

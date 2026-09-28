@@ -90,6 +90,7 @@ void ASD_log(ASD_LogLevel level, ASD_LogStream stream, ASD_LogOption options,
 
     if (ASD_get_timestamp(log_buffer))
     {
+        // coverity[uninit_use_in_call] va_start() initializes args despite Coverity C23 analysis
         va_list args;
         va_start(args, format);
         if (local_log)
@@ -110,15 +111,19 @@ void ASD_log(ASD_LogLevel level, ASD_LogStream stream, ASD_LogOption options,
         }
         if (remoteLog)
         {
+            va_list args_copy;
+            va_copy(args_copy, args);
             vsnprintf(&log_buffer[LOG_TIMESTAMP_LENGTH -1],
                       CALLBACK_LOG_MESSAGE_LENGTH - LOG_TIMESTAMP_LENGTH,
-                      format, args);
+                      format, args_copy);
+            va_end(args_copy);
             loggingCallback(level, stream, log_buffer);
         }
         va_end(args);
     }
     else
     {
+        // coverity[uninit_use_in_call] va_start() initializes args despite Coverity C23 analysis
         va_list args;
         va_start(args, format);
         if (local_log)
@@ -135,7 +140,11 @@ void ASD_log(ASD_LogLevel level, ASD_LogStream stream, ASD_LogOption options,
         }
         if (remoteLog)
         {
-            vsnprintf(log_buffer, CALLBACK_LOG_MESSAGE_LENGTH, format, args);
+            va_list args_copy;
+            va_copy(args_copy, args);
+            vsnprintf(log_buffer, CALLBACK_LOG_MESSAGE_LENGTH, format,
+                      args_copy);
+            va_end(args_copy);
             loggingCallback(level, stream, log_buffer);
         }
         va_end(args);

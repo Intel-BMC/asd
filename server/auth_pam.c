@@ -242,8 +242,9 @@ static auth_ret_t auth_track_attempt(auth_ret_t err_code)
 #ifdef ENABLE_DEBUG_LOGGING
                 ASD_log(ASD_LogLevel_Debug, ASD_LogStream_Network,
                         ASD_LogOption_None,
-                        "Invalid auth attempt [%d] %ld > %ld", i,
-                        ats_attempts[i], (t_now - INVALID_AUTH_PERIOD_NSECS));
+                        "Invalid auth attempt [%d] %lld > %lld", i,
+                        (long long)ats_attempts[i],
+                        (long long)(t_now - INVALID_AUTH_PERIOD_NSECS));
 #endif
                 n_invalid_in_period++;
             }
@@ -256,9 +257,9 @@ static auth_ret_t auth_track_attempt(auth_ret_t err_code)
         }
 #ifdef ENABLE_DEBUG_LOGGING
         ASD_log(ASD_LogLevel_Debug, ASD_LogStream_Network, ASD_LogOption_None,
-                "Invalid auth attempt #%d/%d [%d] %ld err %d",
+                "Invalid auth attempt #%d/%d [%d] %lld err %d",
                 n_invalid_in_period, INVALID_AUTH_MAX_ATTEMPTS, n_oldest_index,
-                t_now, err_code);
+                (long long)t_now, err_code);
 #endif
     }
     return err_code;

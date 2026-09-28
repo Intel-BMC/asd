@@ -151,7 +151,10 @@ STATUS gpio_set_value(int fd, int value)
 
     if (fd >= 0)
     {
-        lseek(fd, 0, SEEK_SET);
+        if (lseek(fd, 0, SEEK_SET) < 0)
+        {
+            return result;
+        }
         ssize_t written = write(fd, value == 1 ? "1" : "0", sizeof(char));
         if (written == sizeof(char))
         {

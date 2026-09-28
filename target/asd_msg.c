@@ -763,12 +763,19 @@ STATUS asd_msg_on_msg_recv(void)
                                 msg_state.asd_cfg->jtag.mode ==
                                     JTAG_DRIVER_MODE_SOFTWARE) != ST_OK)
             {
-                result = ST_ERR;
                 ASD_log(ASD_LogLevel_Error, ASD_LogStream_SDK,
                         ASD_LogOption_None,
                         "Failed to initialize the jtag handler");
-                send_error_message(msg, ASD_FAILURE_INIT_JTAG_HANDLER);
-                return result;
+                if (!msg_state.buscfg->enable_spp)
+                {
+                    result = ST_ERR;
+                    send_error_message(msg, ASD_FAILURE_INIT_JTAG_HANDLER);
+                    return result;
+                }
+                // i3c_dbg is enabled, continue without JTAG support.
+                ASD_log(ASD_LogLevel_Warning, ASD_LogStream_SDK,
+                        ASD_LogOption_None,
+                        "Continuing without JTAG since i3c_dbg is enabled");
             }
 
             if (msg_state.buscfg->enable_i2c)
@@ -961,6 +968,15 @@ void process_message()
 
     if (msg->header.type == JTAG_TYPE)
     {
+        if (msg_state.jtag_handler == NULL ||
+            msg_state.jtag_handler->JTAG_driver_handle == -1)
+        {
+            ASD_log(ASD_LogLevel_Error, ASD_LogStream_SDK, ASD_LogOption_None,
+                    "JTAG is not available, rejecting JTAG message");
+            send_error_message(msg, ASD_FAILURE_PROCESS_JTAG_MSG);
+            return;
+        }
+
         if (process_jtag_message(msg) != ST_OK)
         {
             ASD_log(ASD_LogLevel_Error, ASD_LogStream_SDK, ASD_LogOption_None,
@@ -3435,7 +3451,7 @@ STATUS do_bus_select_command(struct packet_data* packet, struct asd_message* msg
     if (data_ptr == NULL)
     {
         ASD_log(ASD_LogLevel_Error, ASD_LogStream_I2C | ASD_LogStream_SPP,
-                ASD_LogOption_None, "Failed to read data for %s"
+                ASD_LogOption_None, "Failed to read data for "
                 "I2C_WRITE_CFG_BUS_SELECT, short packet");
         return ST_ERR;
     }

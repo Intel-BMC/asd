@@ -1190,6 +1190,7 @@ STATUS on_client_connect(asd_state* state, extnet_conn_t* p_extcon)
             // Non-fatal: proceed with all buses disabled (JTAG-only).
             // target_bus_options is already initialized to
             // BUS_CONFIG_NOT_ALLOWED by target_get_i2c_i3c_config.
+            // coverity[unused_value] intentional: error recovery signaling
             result = ST_OK;
         }
 
